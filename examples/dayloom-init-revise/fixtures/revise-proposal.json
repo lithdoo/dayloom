@@ -1,0 +1,19 @@
+{
+  "summary": "更新校园世界的叙事风格并添加图书馆场景",
+  "operations": [
+    {
+      "op": "replace_canon",
+      "section": "style",
+      "content": "# Style\n\n使用轻松、细腻的校园日常叙事风格。\n"
+    },
+    {
+      "op": "upsert_scene",
+      "id": "scene_library",
+      "profileMd": "# 图书馆\n\n安静的校内图书馆，适合复习和偶遇。\n",
+      "meta": {
+        "status": "active",
+        "tags": ["campus", "study"]
+      }
+    }
+  ]
+}

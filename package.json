@@ -1,39 +1,15 @@
 {
-  "name": "dayloom",
-  "version": "0.1.0-beta.0",
-  "description": "dayloom: scaffold package",
-  "main": "dist/index.js",
-  "bin": {
-    "dayloom": "dist/index.js"
-  },
+  "name": "dayloom-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "prepare": "npm run build",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "test": "npm run build && node --test test/init/*.test.js test/revise/*.test.js test/daily/*.test.js test/play/*.test.js test/settle/*.test.js"
+    "build": "npm run build -w dayloom",
+    "test": "npm run test -w dayloom"
   },
-  "keywords": [
-    "dayloom",
-    "command-line"
-  ],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "files": [
-    "dist",
-    "prompts",
-    "README.md",
-    "package.json"
-  ],
-  "dependencies": {
-    "commander": "^14.0.3",
-    "promptpile": "^0.1.0-beta.0",
-    "promptpile-mcp": "^0.1.0-beta.0"
-  },
-  "devDependencies": {
-    "@types/node": "^25.5.2",
-    "ts-node": "^10.9.2",
-    "typescript": "~5.9.3"
+  "engines": {
+    "node": ">=18"
   }
 }
