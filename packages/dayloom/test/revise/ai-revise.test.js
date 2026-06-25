@@ -67,6 +67,14 @@ test('allowed directory helpers compare canonical path shapes', () => {
     extractAllowedDirectories('{"directories":["/home/me/world"]}'),
     ['/home/me/world']
   );
+  assert.deepEqual(
+    extractAllowedDirectories('{"content":[{"type":"text","text":"Allowed directories:\\nC:\\\\Users\\\\zpb\\\\story"}]}'),
+    ['C:\\Users\\zpb\\story']
+  );
+  assert.deepEqual(
+    extractAllowedDirectories('{"result":{"content":[{"type":"text","text":"Allowed directories: C:\\\\Users\\\\zpb\\\\story"}]}}'),
+    ['C:\\Users\\zpb\\story']
+  );
   assert.equal(isWorldRootAllowed('C:\\Users\\me\\world', ['C:/Users/me/world']), true);
   assert.equal(isWorldRootAllowed('C:\\Users\\me\\world', ['c:\\users\\me']), true);
   assert.equal(isWorldRootAllowed('/home/me/world', ['/home/me']), true);

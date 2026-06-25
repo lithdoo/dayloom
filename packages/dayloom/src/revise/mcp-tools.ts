@@ -89,13 +89,18 @@ export async function assertAllowedWorldRoot(baseUrl: string, token: string | un
 
 export function extractAllowedDirectories(content: string): string[] {
   const parsed = tryParseJson(content);
-  if (parsed !== undefined) return extractDirectoriesFromValue(parsed);
+  const texts = parsed === undefined ? [content] : extractDirectoryTextsFromValue(parsed);
+  return [...new Set(texts.flatMap(extractDirectoriesFromText))];
+}
+
+function extractDirectoriesFromText(content: string): string[] {
   return content
     .split(/\r?\n/)
     .map(line => line.trim())
+    .map(line => line.replace(/^allowed directories:\s*/i, '').trim())
     .filter(line => line && !/^allowed directories:?$/i.test(line))
     .map(line => line.replace(/^[-*]\s+/, '').trim())
-    .filter(Boolean);
+    .filter(looksLikeAbsolutePath);
 }
 
 export function isWorldRootAllowed(worldRoot: string, allowedDirs: string[]): boolean {
@@ -125,14 +130,19 @@ function tryParseJson(content: string): unknown | undefined {
   catch { return undefined; }
 }
 
-function extractDirectoriesFromValue(value: unknown): string[] {
+function extractDirectoryTextsFromValue(value: unknown): string[] {
   if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(extractDirectoriesFromValue);
+  if (Array.isArray(value)) return value.flatMap(extractDirectoryTextsFromValue);
   if (value && typeof value === 'object') {
     const object = value as Record<string, unknown>;
     for (const key of ['directories', 'allowedDirectories', 'allowed_directories', 'roots']) {
-      if (key in object) return extractDirectoriesFromValue(object[key]);
+      if (key in object) return extractDirectoryTextsFromValue(object[key]);
     }
+    return Object.values(object).flatMap(extractDirectoryTextsFromValue);
   }
   return [];
+}
+
+function looksLikeAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[/\\]{2}[^/\\]+[/\\]+[^/\\]+/.test(value) || value.startsWith('/');
 }
