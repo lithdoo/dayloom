@@ -8,6 +8,8 @@ import { InitCancelledError } from './errors';
 import { parseInterviewStatus } from './parse-assistant';
 import { assertPromptpileOk, runPromptpile } from './promptpile-run';
 import { readUserInput } from './read-user-input';
+import { askYesNo } from '../revise/read-user-input';
+import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import {
   appendUserMessage,
   buildTranscript,
@@ -17,18 +19,17 @@ import {
 } from './session';
 import type { InitSession } from './types';
 
-async function runInterviewRound(session: InitSession, onDelta?: (text: string) => void): Promise<string> {
-  let userText: string;
-  try {
-    userText = await readUserInput();
-  } catch (err) {
-    if (err instanceof InitCancelledError) {
-      throw new InitCancelledError(err.message, session);
-    }
-    throw err;
-  }
-  appendUserMessage(session.messagesDir, userText);
+type InitCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
 
+const INIT_COMMANDS: Array<SessionCommandSpec<InitCommand>> = [
+  { name: 'help', summary: 'Show init commands.' },
+  { name: 'status', summary: 'Show likely missing World setup topics.' },
+  { name: 'save', summary: 'Finalize and write the World save.' },
+  { name: 'cancel', summary: 'Cancel initialization.' },
+  { name: 'exit', summary: 'Exit initialization.' },
+];
+
+async function runInterviewRound(session: InitSession, onDelta?: (text: string) => void): Promise<string> {
   const result = await runPromptpile(session, [
     '--config',
     'promptpile.toml',
@@ -49,11 +50,62 @@ export async function runInterviewLoop(
   writeOpeningAssistant(session.messagesDir, OPENING_ASSISTANT);
 
   process.stdout.write('\n--- World building interview ---\n\n');
+  process.stdout.write(formatAvailableCommands(INIT_COMMANDS));
+  process.stdout.write('\n');
   process.stdout.write(stripDisplay(OPENING_ASSISTANT));
   process.stdout.write('\n');
 
   for (let round = 1; round <= maxRounds; round += 1) {
     session.round = round;
+    let userText: string;
+    try {
+      userText = await readUserInput();
+    } catch (err) {
+      if (err instanceof InitCancelledError) {
+        throw new InitCancelledError(err.message, session);
+      }
+      throw err;
+    }
+
+    const command = parseSessionCommand(userText, INIT_COMMANDS);
+    if (command.kind === 'unknown') {
+      process.stdout.write(formatUnknownCommand(command.raw));
+      round -= 1;
+      continue;
+    }
+    if (command.kind === 'command') {
+      if (command.name === 'help') {
+        process.stdout.write(formatCommandHelp(INIT_COMMANDS));
+        round -= 1;
+        continue;
+      }
+      if (command.name === 'status') {
+        printMissingTopics(buildTranscript(session.messagesDir));
+        round -= 1;
+        continue;
+      }
+      if (command.name === 'cancel') {
+        throw new InitCancelledError('Initialization cancelled.', session);
+      }
+      if (command.name === 'exit') {
+        throw new InitCancelledError('Initialization exited.', session);
+      }
+      if (command.name === 'save') {
+        const transcript = buildTranscript(session.messagesDir);
+        const missing = getInterviewMissingFromTranscript(transcript);
+        if (missing.length > 0) {
+          process.stdout.write(`Possible missing topics: ${missing.join(', ')}.\n`);
+          if (!await askYesNo('Continue saving anyway? (Y/N): ')) {
+            round -= 1;
+            continue;
+          }
+        }
+        process.stdout.write('\nInterview complete. Finalizing world save...\n');
+        return { session, transcript };
+      }
+    }
+
+    appendUserMessage(session.messagesDir, userText);
     process.stdout.write('\n--- Assistant ---\n\n');
     const displayStream = createInitDisplayStream();
     const assistantText = await runInterviewRound(session, text => displayStream.push(text));
@@ -127,4 +179,11 @@ function createInitDisplayStream(): { push(text: string): void; flush(): void } 
       }
     }
   };
+}
+
+function printMissingTopics(transcript: string): void {
+  const missing = getInterviewMissingFromTranscript(transcript);
+  process.stdout.write(missing.length > 0
+    ? `Likely missing topics: ${missing.join(', ')}\n`
+    : 'No likely missing topics.\n');
 }

@@ -5,6 +5,7 @@ import { connectOrStartGateway } from '../daily/mcp-gateway';
 import { assertAllowedPlayerContextRoot, exportReadonlyTools } from '../daily/mcp-tools';
 import { readDailyUserInput } from '../daily/read-user-input';
 import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
+import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { callPlayAi } from './ai';
 import { buildPlayContext } from './player-context';
 import { parseEventResult, parseEventStatus, parseGeneratedEvent, parseReplan } from './parse-assistant';
@@ -12,6 +13,15 @@ import { applyEventResult, applyReplan, buildResultReplan, eventId, eventRoot, f
 import { normalizeReplanPayload, validateEventResult, validateEventStatus, validateGeneratedEvent, validateReplan } from './validate';
 import type { EventResult, EventStatus, PlayOptions, ReplanPayload } from './types';
 import { withLoading } from '../utils/loading';
+
+type PlayCommand = 'help' | 'status' | 'exit' | 'end-day';
+
+const PLAY_COMMANDS: Array<SessionCommandSpec<PlayCommand>> = [
+  { name: 'help', summary: 'Show play commands.' },
+  { name: 'status', summary: 'Show the current event definition.' },
+  { name: 'exit', summary: 'Exit play and keep progress in the World save.' },
+  { name: 'end-day', summary: 'End the current day after this event.' },
+];
 
 export async function runPlayLoop(worldRoot:string,day:string,options:PlayOptions={}):Promise<void>{
   if(!process.env.DEEPSEEK_API_KEY?.trim())throw new Error('DEEPSEEK_API_KEY is not set. Play requires an API key.');
@@ -85,13 +95,18 @@ async function dialogue(worldRoot:string,day:string,id:string,tools:string,base:
   let transcript=fs.readFileSync(path.join(dir,'transcript.md'),'utf8');
   process.stdout.write('\n--- '+event.title+' ---\n\n'+event.opening+'\n\n'+event.situation+'\n');
   if(event.suggested_actions.length)process.stdout.write(event.suggested_actions.map((x:string,i:number)=>(i+1)+'. '+x).join('\n')+'\n');
+  process.stdout.write('\n'+formatAvailableCommands(PLAY_COMMANDS));
   while(true){
     const rounds=(transcript.match(/^## User$/gm)??[]).length;
     if(rounds>=maxRounds)throw new Error('Event exceeded max dialogue rounds ('+maxRounds+')');
     const input=await readDailyUserInput();
-    if(input===undefined||input==='/exit')return true;
-    if(input==='/status'){process.stdout.write(fs.readFileSync(path.join(dir,'event.json'),'utf8'));continue;}
-    if(input==='/end-day'){
+    if(input===undefined)return true;
+    const command=parseSessionCommand(input,PLAY_COMMANDS);
+    if(command.kind==='unknown'){process.stdout.write(formatUnknownCommand(command.raw));continue;}
+    if(command.kind==='command'&&command.name==='help'){process.stdout.write(formatCommandHelp(PLAY_COMMANDS));continue;}
+    if(command.kind==='command'&&command.name==='exit')return true;
+    if(command.kind==='command'&&command.name==='status'){process.stdout.write(fs.readFileSync(path.join(dir,'event.json'),'utf8'));continue;}
+    if(command.kind==='command'&&command.name==='end-day'){
       const status:EventStatus={status:'resolved',situation:'The player explicitly ended the day.',needs_user_action:false,resolution_summary:'The player explicitly ended the current day.',end_day:true};
       const machine='```event-status\n'+JSON.stringify(status,null,2)+'\n```';
       transcript+='\n## User\n\n/end-day\n\n## Assistant\n\nThe day ends here.\n\n'+machine+'\n';

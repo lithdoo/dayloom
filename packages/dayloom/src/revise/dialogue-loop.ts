@@ -16,7 +16,18 @@ import { projectRevisePayload } from './project-payload';
 import { validateRevisePayload } from './validate-payload';
 import type { ReviseOptions } from './types';
 import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
+import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { withLoading } from '../utils/loading';
+
+type ReviseCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
+
+const REVISE_COMMANDS: Array<SessionCommandSpec<ReviseCommand>> = [
+  { name: 'help', summary: 'Show revise commands.' },
+  { name: 'status', aliases: ['pending'], summary: 'Show the current pending revision draft.' },
+  { name: 'save', aliases: ['apply'], summary: 'Finalize and apply the revision.' },
+  { name: 'cancel', summary: 'Cancel the revision session.' },
+  { name: 'exit', summary: 'Exit and preserve the revision session.' },
+];
 
 export async function reviseWorldInteractive(dir: string, options: ReviseOptions = {}): Promise<void> {
   if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error('DEEPSEEK_API_KEY is not set. Interactive revise requires an API key.');
@@ -34,15 +45,17 @@ export async function reviseWorldInteractive(dir: string, options: ReviseOptions
       await assertAllowedWorldRoot(gateway.baseUrl, gateway.token, worldRoot, session.root);
     });
     if (!gateway) throw new Error('Failed to initialize readonly gateway');
-    process.stdout.write(`\n--- World revision session ---\n\n${OPENING_ASSISTANT}\n`);
+    process.stdout.write(`\n--- World revision session ---\n\n${formatAvailableCommands(REVISE_COMMANDS)}\n${OPENING_ASSISTANT}\n`);
     while (true) {
         const input = await readReviseUserInput();
         if (input === undefined) { preserveSession = true; process.stdout.write(`Revision draft saved in session: ${session.root}\n`); return; }
-        if (input === '/help') { process.stdout.write('/pending  /apply  /cancel  /exit\n'); continue; }
-        if (input === '/pending') { process.stdout.write(`${JSON.stringify(readDraft(session), null, 2)}\n`); continue; }
-        if (input === '/cancel') { process.stdout.write('Revision cancelled.\n'); return; }
-        if (input === '/exit') { preserveSession = true; process.stdout.write(`Revision draft saved in session: ${session.root}\n`); return; }
-        if (input === '/apply') {
+        const command = parseSessionCommand(input, REVISE_COMMANDS);
+        if (command.kind === 'unknown') { process.stdout.write(formatUnknownCommand(command.raw)); continue; }
+        if (command.kind === 'command' && command.name === 'help') { process.stdout.write(formatCommandHelp(REVISE_COMMANDS)); continue; }
+        if (command.kind === 'command' && command.name === 'status') { process.stdout.write(`${JSON.stringify(readDraft(session), null, 2)}\n`); continue; }
+        if (command.kind === 'command' && command.name === 'cancel') { process.stdout.write('Revision cancelled.\n'); return; }
+        if (command.kind === 'command' && command.name === 'exit') { preserveSession = true; process.stdout.write(`Revision draft saved in session: ${session.root}\n`); return; }
+        if (command.kind === 'command' && command.name === 'save') {
           const draft = readDraft(session);
           if (!draft.pending_changes.length) { process.stdout.write('No pending changes.\n'); continue; }
           const payload = await withLoading('正在生成修订方案...', () =>

@@ -1,4 +1,5 @@
 import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
+import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { withLoading } from '../utils/loading';
 import { DEFAULT_MAX_TOOL_ROUNDS, OPENING_ASSISTANT } from './constants';
 import { applyDailyPlan, describeChanges } from './apply-plan';
@@ -15,6 +16,16 @@ import { askYesNo, readDailyUserInput } from './read-user-input';
 import { appendUserMessage, buildTranscript, cleanupSession, createDailySession, getLatestAssistantText, readDraft, writeDraft } from './session';
 import type { DailyAction, DailyOptions, DailySession } from './types';
 import { validateDailyPlan } from './validate-plan';
+
+type DailyCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
+
+const DAILY_COMMANDS: Array<SessionCommandSpec<DailyCommand>> = [
+  { name: 'help', summary: 'Show daily commands.' },
+  { name: 'status', aliases: ['pending'], summary: 'Show the current daily draft.' },
+  { name: 'save', aliases: ['start'], summary: 'Finalize and apply the daily plan.' },
+  { name: 'cancel', summary: 'Discard the current daily draft.' },
+  { name: 'exit', summary: 'Exit and preserve the daily session.' },
+];
 
 export async function dailyInteractive(dir: string, options: DailyOptions = {}): Promise<void> {
   if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error('DEEPSEEK_API_KEY is not set. Interactive daily requires an API key.');
@@ -38,7 +49,7 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
       await assertAllowedPlayerContextRoot(gateway.baseUrl, gateway.token, session.playerContextRoot, session.root);
     });
     if (!gateway) throw new Error('Failed to initialize readonly gateway');
-    process.stdout.write(`\n--- Daily planning session ---\n\n${OPENING_ASSISTANT}\n`);
+    process.stdout.write(`\n--- Daily planning session ---\n\n${formatAvailableCommands(DAILY_COMMANDS)}\n${OPENING_ASSISTANT}\n`);
 
     while (true) {
       const input = await readDailyUserInput();
@@ -48,43 +59,26 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
         return;
       }
 
-      const explicit = parseExplicitDailyAction(input);
-      if (explicit === 'help') {
-        printHelp();
+      const command = parseSessionCommand(input, DAILY_COMMANDS);
+      if (command.kind === 'unknown') {
+        process.stdout.write(formatUnknownCommand(command.raw));
+        continue;
+      }
+      if (command.kind === 'command' && command.name === 'help') {
+        process.stdout.write(formatCommandHelp(DAILY_COMMANDS));
         continue;
       }
 
-      let action: DailyAction;
-      if (explicit) action = explicit;
-      else {
-        let intent = fallbackDailyIntent('Intent router was not called');
-        try {
-          intent = await withLoading('正在识别操作...', () => routeDailyIntent(
-            input,
-            readDraft(session),
-            getLatestAssistantText(session.messagesDir),
-            gateway!.baseUrl,
-            gateway!.token,
-            maxToolRounds,
-            false,
-          ));
-        } catch (error) {
-          process.stderr.write(`Warning: daily intent router failed; treating input as a planning message: ${error instanceof Error ? error.message : error}\n`);
-          intent = fallbackDailyIntent('Router failure');
-        }
-        action = effectiveDailyAction(intent);
-      }
-
-      if (action === 'pending') {
+      if (command.kind === 'command' && command.name === 'status') {
         process.stdout.write(`${JSON.stringify(readDraft(session), null, 2)}\n`);
         continue;
       }
-      if (action === 'exit') {
+      if (command.kind === 'command' && command.name === 'exit') {
         preserveSession = true;
         process.stdout.write(`Daily draft saved in session: ${session.root}\n`);
         return;
       }
-      if (action === 'cancel') {
+      if (command.kind === 'command' && command.name === 'cancel') {
         if (await askYesNo('Discard the current daily draft? (Y/N): ')) {
           process.stdout.write('Daily planning cancelled.\n');
           return;
@@ -92,8 +86,7 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
         process.stdout.write('Daily planning continues.\n');
         continue;
       }
-      if (action === 'start') {
-        if (!explicit) appendUserMessage(session.messagesDir, input);
+      if (command.kind === 'command' && command.name === 'save') {
         const applied = await finalizeAndApplyPlan(worldRoot, day, lastCommittedDay, session, gateway.baseUrl, gateway.token, maxToolRounds, options);
         if (applied) return;
         continue;
@@ -153,8 +146,4 @@ async function finalizeAndApplyPlan(
   applyDailyPlan(worldRoot, plan, changes);
   process.stdout.write('Applied daily plan.\n');
   return true;
-}
-
-function printHelp(): void {
-  process.stdout.write('Use natural language to discuss, inspect, confirm, cancel, or save the plan. Commands remain available: /pending /start /cancel /exit\n');
 }
