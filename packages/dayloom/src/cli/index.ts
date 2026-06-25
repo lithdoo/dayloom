@@ -13,7 +13,7 @@ export function parseCli(argv: string[] = process.argv): void {
   program
     .name('dayloom')
     .description(t('cli.description'))
-    .version('0.0.0', '-V, --version', t('cli.version'))
+    .version(readPackageVersion(), '-V, --version', t('cli.version'))
     .helpOption('-h, --help', t('cli.help'))
     .helpCommand('help [command]', t('cli.helpCommand'));
   addLangOption(program, t);
@@ -26,4 +26,9 @@ export function parseCli(argv: string[] = process.argv): void {
   registerReviseCommand(program, t);
 
   program.parse(argv);
+}
+
+function readPackageVersion(): string {
+  const packageJson = require('../../package.json') as { version?: string };
+  return packageJson.version ?? '0.0.0';
 }
