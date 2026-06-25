@@ -73,9 +73,66 @@ export async function assertAllowedWorldRoot(baseUrl: string, token: string | un
     const resultFile = await executeReadonlyCalls(baseUrl, token, callFile);
     const row = JSON.parse(fs.readFileSync(resultFile, 'utf8').trim()) as { content: string };
     const allowedText = row.content;
-    if (!allowedText.includes(worldRoot)) throw new Error(`MCP allowed directories do not include World root: ${worldRoot}`);
+    const allowedDirs = extractAllowedDirectories(allowedText);
+    if (!isWorldRootAllowed(worldRoot, allowedDirs)) {
+      throw new Error([
+        `MCP allowed directories do not include World root: ${worldRoot}`,
+        'Allowed directories:',
+        ...(allowedDirs.length ? allowedDirs.map(dir => `  - ${dir}`) : ['  (none parsed)']),
+      ].join('\n'));
+    }
     fs.rmSync(resultFile, { force: true });
   } finally {
     fs.rmSync(callFile, { force: true });
   }
+}
+
+export function extractAllowedDirectories(content: string): string[] {
+  const parsed = tryParseJson(content);
+  if (parsed !== undefined) return extractDirectoriesFromValue(parsed);
+  return content
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !/^allowed directories:?$/i.test(line))
+    .map(line => line.replace(/^[-*]\s+/, '').trim())
+    .filter(Boolean);
+}
+
+export function isWorldRootAllowed(worldRoot: string, allowedDirs: string[]): boolean {
+  const world = normalizeMcpPathForCompare(worldRoot);
+  return allowedDirs.some(dir => {
+    const allowed = normalizeMcpPathForCompare(dir);
+    if (!allowed) return false;
+    return world === allowed || world.startsWith(allowed.endsWith('/') ? allowed : `${allowed}/`);
+  });
+}
+
+export function normalizeMcpPathForCompare(filePath: string): string {
+  let normalized = filePath.trim();
+  if (!normalized) return '';
+  if (/^[A-Za-z]:[\\/]/.test(normalized)) {
+    return path.win32.normalize(normalized).replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
+  }
+  try { normalized = fs.realpathSync.native(normalized); }
+  catch { normalized = path.resolve(normalized); }
+  normalized = path.normalize(normalized).replace(/\\/g, '/').replace(/\/+$/g, '');
+  if (process.platform === 'win32') normalized = normalized.toLowerCase();
+  return normalized;
+}
+
+function tryParseJson(content: string): unknown | undefined {
+  try { return JSON.parse(content); }
+  catch { return undefined; }
+}
+
+function extractDirectoriesFromValue(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(extractDirectoriesFromValue);
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    for (const key of ['directories', 'allowedDirectories', 'allowed_directories', 'roots']) {
+      if (key in object) return extractDirectoriesFromValue(object[key]);
+    }
+  }
+  return [];
 }

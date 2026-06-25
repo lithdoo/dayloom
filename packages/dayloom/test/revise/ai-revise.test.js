@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { buildUnifiedDiff } = require('../../dist/revise/diff.js');
 const { snapshotChanges, assertSnapshotsUnchanged } = require('../../dist/revise/file-hash.js');
-const { parseAndAssertReadonlyCalls } = require('../../dist/revise/mcp-tools.js');
+const { extractAllowedDirectories, isWorldRootAllowed, parseAndAssertReadonlyCalls } = require('../../dist/revise/mcp-tools.js');
 const { parseReviseStatus, parseRevisePayload, stripReviseStatus } = require('../../dist/revise/parse-assistant.js');
 
 function tempDir() {
@@ -52,6 +52,25 @@ test('parseAndAssertReadonlyCalls rejects forged filesystem write calls', () => 
   fs.writeFileSync(callFile, `${JSON.stringify({ id: 'x', type: 'function', function: { name: 'mcp__world__write_file', arguments: '{}' } })}\n`, 'utf8');
   assert.throws(() => parseAndAssertReadonlyCalls(callFile), /Refusing non-readonly MCP tool call/);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('allowed directory helpers compare canonical path shapes', () => {
+  assert.deepEqual(
+    extractAllowedDirectories('Allowed directories:\nC:\\Users\\me\\world\n'),
+    ['C:\\Users\\me\\world']
+  );
+  assert.deepEqual(
+    extractAllowedDirectories('["C:\\\\Users\\\\me\\\\world"]'),
+    ['C:\\Users\\me\\world']
+  );
+  assert.deepEqual(
+    extractAllowedDirectories('{"directories":["/home/me/world"]}'),
+    ['/home/me/world']
+  );
+  assert.equal(isWorldRootAllowed('C:\\Users\\me\\world', ['C:/Users/me/world']), true);
+  assert.equal(isWorldRootAllowed('C:\\Users\\me\\world', ['c:\\users\\me']), true);
+  assert.equal(isWorldRootAllowed('/home/me/world', ['/home/me']), true);
+  assert.equal(isWorldRootAllowed('/home/me/world', ['/tmp']), false);
 });
 
 test('MCP helpers export readonly tools, verify root, and persist results', async () => {
