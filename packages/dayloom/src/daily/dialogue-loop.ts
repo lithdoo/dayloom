@@ -1,4 +1,5 @@
 import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
+import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { withLoading } from '../utils/loading';
 import { DEFAULT_MAX_TOOL_ROUNDS, OPENING_ASSISTANT } from './constants';
@@ -20,14 +21,15 @@ import { validateDailyPlan } from './validate-plan';
 type DailyCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
 
 const DAILY_COMMANDS: Array<SessionCommandSpec<DailyCommand>> = [
-  { name: 'help', summary: 'Show daily commands.' },
-  { name: 'status', aliases: ['pending'], summary: 'Show the current daily draft.' },
-  { name: 'save', aliases: ['start'], summary: 'Finalize and apply the daily plan.' },
-  { name: 'cancel', summary: 'Discard the current daily draft.' },
-  { name: 'exit', summary: 'Exit and preserve the daily session.' },
+  { name: 'help', summary: 'Show daily commands.', summaryKey: 'commands.help.summary', hintKey: 'commands.help.hint' },
+  { name: 'status', aliases: ['pending'], summary: 'Show the current daily draft.', summaryKey: 'commands.status.summary', hintKey: 'commands.status.hint' },
+  { name: 'save', aliases: ['start'], summary: 'Finalize and apply the daily plan.', summaryKey: 'commands.save.summary', hintKey: 'commands.save.hint' },
+  { name: 'cancel', summary: 'Discard the current daily draft.', summaryKey: 'commands.cancel.summary', hintKey: 'commands.cancel.hint' },
+  { name: 'exit', summary: 'Exit and preserve the daily session.', summaryKey: 'commands.exit.summary', hintKey: 'commands.exit.hint' },
 ];
 
 export async function dailyInteractive(dir: string, options: DailyOptions = {}): Promise<void> {
+  const t = createTranslator();
   if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error('DEEPSEEK_API_KEY is not set. Interactive daily requires an API key.');
   const worldRoot = resolveWorldRoot(dir);
   assertInitializedWorld(worldRoot);
@@ -49,10 +51,10 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
       await assertAllowedPlayerContextRoot(gateway.baseUrl, gateway.token, session.playerContextRoot, session.root);
     });
     if (!gateway) throw new Error('Failed to initialize readonly gateway');
-    process.stdout.write(`\n--- Daily planning session ---\n\n${formatAvailableCommands(DAILY_COMMANDS)}\n${OPENING_ASSISTANT}\n`);
+    process.stdout.write(`\n--- Daily planning session ---\n\n${OPENING_ASSISTANT}\n`);
 
     while (true) {
-      const input = await readDailyUserInput();
+      const input = await readDailyUserInput({ commandHint: formatAvailableCommands(DAILY_COMMANDS, t), t });
       if (input === undefined) {
         preserveSession = true;
         process.stdout.write(`Daily draft saved in session: ${session.root}\n`);
@@ -61,11 +63,11 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
 
       const command = parseSessionCommand(input, DAILY_COMMANDS);
       if (command.kind === 'unknown') {
-        process.stdout.write(formatUnknownCommand(command.raw));
+        process.stdout.write(formatUnknownCommand(command.raw, DAILY_COMMANDS, t));
         continue;
       }
       if (command.kind === 'command' && command.name === 'help') {
-        process.stdout.write(formatCommandHelp(DAILY_COMMANDS));
+        process.stdout.write(formatCommandHelp(DAILY_COMMANDS, t));
         continue;
       }
 

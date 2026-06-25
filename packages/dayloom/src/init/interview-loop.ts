@@ -9,6 +9,7 @@ import { parseInterviewStatus } from './parse-assistant';
 import { assertPromptpileOk, runPromptpile } from './promptpile-run';
 import { readUserInput } from './read-user-input';
 import { askYesNo } from '../revise/read-user-input';
+import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import {
   appendUserMessage,
@@ -22,11 +23,11 @@ import type { InitSession } from './types';
 type InitCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
 
 const INIT_COMMANDS: Array<SessionCommandSpec<InitCommand>> = [
-  { name: 'help', summary: 'Show init commands.' },
-  { name: 'status', summary: 'Show likely missing World setup topics.' },
-  { name: 'save', summary: 'Finalize and write the World save.' },
-  { name: 'cancel', summary: 'Cancel initialization.' },
-  { name: 'exit', summary: 'Exit initialization.' },
+  { name: 'help', summary: 'Show init commands.', summaryKey: 'commands.help.summary', hintKey: 'commands.help.hint' },
+  { name: 'status', summary: 'Show likely missing World setup topics.', summaryKey: 'commands.status.summary', hintKey: 'commands.status.hint' },
+  { name: 'save', summary: 'Finalize and write the World save.', summaryKey: 'commands.save.summary', hintKey: 'commands.save.hint' },
+  { name: 'cancel', summary: 'Cancel initialization.', summaryKey: 'commands.cancel.summary', hintKey: 'commands.cancel.hint' },
+  { name: 'exit', summary: 'Exit initialization.', summaryKey: 'commands.exit.summary', hintKey: 'commands.exit.hint' },
 ];
 
 async function runInterviewRound(session: InitSession, onDelta?: (text: string) => void): Promise<string> {
@@ -46,12 +47,11 @@ async function runInterviewRound(session: InitSession, onDelta?: (text: string) 
 export async function runInterviewLoop(
   maxRounds: number = DEFAULT_MAX_INTERVIEW_ROUNDS
 ): Promise<{ session: InitSession; transcript: string }> {
+  const t = createTranslator();
   const session = createSession();
   writeOpeningAssistant(session.messagesDir, OPENING_ASSISTANT);
 
   process.stdout.write('\n--- World building interview ---\n\n');
-  process.stdout.write(formatAvailableCommands(INIT_COMMANDS));
-  process.stdout.write('\n');
   process.stdout.write(stripDisplay(OPENING_ASSISTANT));
   process.stdout.write('\n');
 
@@ -59,7 +59,7 @@ export async function runInterviewLoop(
     session.round = round;
     let userText: string;
     try {
-      userText = await readUserInput();
+      userText = await readUserInput({ commandHint: formatAvailableCommands(INIT_COMMANDS, t), t });
     } catch (err) {
       if (err instanceof InitCancelledError) {
         throw new InitCancelledError(err.message, session);
@@ -69,13 +69,13 @@ export async function runInterviewLoop(
 
     const command = parseSessionCommand(userText, INIT_COMMANDS);
     if (command.kind === 'unknown') {
-      process.stdout.write(formatUnknownCommand(command.raw));
+      process.stdout.write(formatUnknownCommand(command.raw, INIT_COMMANDS, t));
       round -= 1;
       continue;
     }
     if (command.kind === 'command') {
       if (command.name === 'help') {
-        process.stdout.write(formatCommandHelp(INIT_COMMANDS));
+        process.stdout.write(formatCommandHelp(INIT_COMMANDS, t));
         round -= 1;
         continue;
       }

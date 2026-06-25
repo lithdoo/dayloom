@@ -5,6 +5,7 @@ import { connectOrStartGateway } from '../daily/mcp-gateway';
 import { assertAllowedPlayerContextRoot, exportReadonlyTools } from '../daily/mcp-tools';
 import { readDailyUserInput } from '../daily/read-user-input';
 import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
+import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { callPlayAi } from './ai';
 import { buildPlayContext } from './player-context';
@@ -17,10 +18,10 @@ import { withLoading } from '../utils/loading';
 type PlayCommand = 'help' | 'status' | 'exit' | 'end-day';
 
 const PLAY_COMMANDS: Array<SessionCommandSpec<PlayCommand>> = [
-  { name: 'help', summary: 'Show play commands.' },
-  { name: 'status', summary: 'Show the current event definition.' },
-  { name: 'exit', summary: 'Exit play and keep progress in the World save.' },
-  { name: 'end-day', summary: 'End the current day after this event.' },
+  { name: 'help', summary: 'Show play commands.', summaryKey: 'commands.help.summary', hintKey: 'commands.help.hint' },
+  { name: 'status', summary: 'Show the current event definition.', summaryKey: 'commands.status.summary', hintKey: 'commands.status.hint' },
+  { name: 'exit', summary: 'Exit play and keep progress in the World save.', summaryKey: 'commands.exit.summary', hintKey: 'commands.exit.hint' },
+  { name: 'end-day', summary: 'End the current day after this event.', summaryKey: 'commands.endDay.summary', hintKey: 'commands.endDay.hint' },
 ];
 
 export async function runPlayLoop(worldRoot:string,day:string,options:PlayOptions={}):Promise<void>{
@@ -90,20 +91,20 @@ async function generate(worldRoot:string,day:string,plan:any,state:any,beatId:st
 }
 
 async function dialogue(worldRoot:string,day:string,id:string,tools:string,base:string,token:string|undefined,maxTools:number,maxRounds:number,context:string):Promise<boolean>{
+  const t=createTranslator();
   const dir=eventRoot(worldRoot,day,id);
   const event=JSON.parse(fs.readFileSync(path.join(dir,'event.json'),'utf8'));
   let transcript=fs.readFileSync(path.join(dir,'transcript.md'),'utf8');
   process.stdout.write('\n--- '+event.title+' ---\n\n'+event.opening+'\n\n'+event.situation+'\n');
   if(event.suggested_actions.length)process.stdout.write(event.suggested_actions.map((x:string,i:number)=>(i+1)+'. '+x).join('\n')+'\n');
-  process.stdout.write('\n'+formatAvailableCommands(PLAY_COMMANDS));
   while(true){
     const rounds=(transcript.match(/^## User$/gm)??[]).length;
     if(rounds>=maxRounds)throw new Error('Event exceeded max dialogue rounds ('+maxRounds+')');
-    const input=await readDailyUserInput();
+    const input=await readDailyUserInput({commandHint:formatAvailableCommands(PLAY_COMMANDS,t),t});
     if(input===undefined)return true;
     const command=parseSessionCommand(input,PLAY_COMMANDS);
-    if(command.kind==='unknown'){process.stdout.write(formatUnknownCommand(command.raw));continue;}
-    if(command.kind==='command'&&command.name==='help'){process.stdout.write(formatCommandHelp(PLAY_COMMANDS));continue;}
+    if(command.kind==='unknown'){process.stdout.write(formatUnknownCommand(command.raw,PLAY_COMMANDS,t));continue;}
+    if(command.kind==='command'&&command.name==='help'){process.stdout.write(formatCommandHelp(PLAY_COMMANDS,t));continue;}
     if(command.kind==='command'&&command.name==='exit')return true;
     if(command.kind==='command'&&command.name==='status'){process.stdout.write(fs.readFileSync(path.join(dir,'event.json'),'utf8'));continue;}
     if(command.kind==='command'&&command.name==='end-day'){

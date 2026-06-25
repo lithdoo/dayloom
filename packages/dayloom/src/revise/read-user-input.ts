@@ -1,10 +1,22 @@
 import readline from 'readline';
+import { createTranslator, type Translator } from '../i18n';
+import { readTerminalInput } from '../shared/terminal-input';
 
-export async function readReviseUserInput(): Promise<string | undefined> {
+interface ReadReviseUserInputOptions {
+  commandHint?: string;
+  t?: Translator;
+}
+
+export async function readReviseUserInput(options: ReadReviseUserInputOptions = {}): Promise<string | undefined> {
+  const t = options.t ?? createTranslator();
   while (true) {
-    const text = (await readMultilineInput()).trim();
+    const text = (await readTerminalInput({
+      commandHint: options.commandHint,
+      instruction: t('input.messageInstruction'),
+      userPrompt: t('input.userPrompt'),
+    })).trim();
     if (text) return text;
-    if (await askYesNo('Empty input. Save draft and exit revise session? (Y/N): ')) return undefined;
+    if (await askYesNo(t('input.emptySaveDraft'))) return undefined;
   }
 }
 
@@ -16,13 +28,4 @@ export function askYesNo(question: string): Promise<boolean> {
       resolve(/^y(es)?$/i.test(answer.trim()));
     });
   });
-}
-
-async function readMultilineInput(): Promise<string> {
-  process.stdout.write('\nEnter your message. Finish with Ctrl+Z then Enter (Windows), or Ctrl+D (macOS/Linux).\n');
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const lines: string[] = [];
-  for await (const line of rl) lines.push(line);
-  rl.close();
-  return lines.join('\n');
 }
