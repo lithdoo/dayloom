@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createTranslator, type Translator } from '../i18n';
 
 export type WorldPhase = 'idle' | 'planned' | 'playing' | 'settling';
 export type NextAction = 'init' | 'daily' | 'play' | 'settle';
@@ -43,36 +44,36 @@ export function inspectNextState(dir: string): NextWorldState {
   };
 }
 
-export function formatNextStatus(state: NextWorldState): string {
-  const lines = [`World: ${state.worldRoot}`];
+export function formatNextStatus(state: NextWorldState, t: Translator = createTranslator('en')): string {
+  const lines = [t('next.world', { worldRoot: state.worldRoot })];
   if (state.kind === 'uninitialized') {
-    lines.push('Current: uninitialized');
-    lines.push('Next action: init');
-    lines.push('Recommended command:');
+    lines.push(t('next.currentUninitialized'));
+    lines.push(t('next.nextAction', { action: 'init' }));
+    lines.push(t('next.recommendedCommand'));
     lines.push(`  dayloom init -d ${state.worldRoot}`);
     return lines.join('\n');
   }
 
-  lines.push(`Current: ${state.day} / phase=${state.phase}`);
-  if (state.lastCommittedDay) lines.push(`Last committed day: ${state.lastCommittedDay}`);
-  lines.push(`Next action: ${state.action}`);
-  lines.push('Recommended command:');
+  lines.push(t('next.currentPhase', { day: state.day, phase: state.phase }));
+  if (state.lastCommittedDay) lines.push(t('next.lastCommittedDay', { lastCommittedDay: state.lastCommittedDay }));
+  lines.push(t('next.nextAction', { action: state.action }));
+  lines.push(t('next.recommendedCommand'));
   lines.push(`  dayloom ${state.action} -d ${state.worldRoot}`);
   return lines.join('\n');
 }
 
-export function describeNextAction(state: NextWorldState): string {
+export function describeNextAction(state: NextWorldState, t: Translator = createTranslator('en')): string {
   switch (state.action) {
     case 'init':
-      return 'This will create a new World save.';
+      return t('next.actionInit');
     case 'daily':
-      return "This will start today's planning session.";
+      return t('next.actionDaily');
     case 'play':
       return state.kind === 'initialized' && state.phase === 'playing'
-        ? 'This will continue the current play session.'
-        : "This will start today's play session.";
+        ? t('next.actionPlayContinue')
+        : t('next.actionPlayStart');
     case 'settle':
-      return 'This will settle the completed day and advance to the next idle day.';
+      return t('next.actionSettle');
   }
 }
 

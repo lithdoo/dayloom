@@ -1,22 +1,24 @@
 import { Command } from 'commander';
 import { InitCancelledError } from '../init/errors';
 import { initWorldInteractive, initWorldQuick } from '../init';
+import { addLangOption, type Translator } from '../i18n';
 
-export function registerInitCommand(program: Command): void {
-  program
+export function registerInitCommand(program: Command, t: Translator): void {
+  const command = program
     .command('init')
-    .description('Initialize a new World save directory (see prompts/spec.md)')
-    .requiredOption('-d, --dir <path>', 'World save root directory')
-    .option('--quick', 'Empty scaffold only, no AI interview')
-    .option('--id <id>', 'World id (default: directory basename or payload id)')
-    .option('--title <title>', 'World title')
+    .description(t('cli.init.description'))
+    .requiredOption('-d, --dir <path>', t('cli.common.dir'))
+    .option('--quick', t('cli.init.quick'))
+    .option('--id <id>', t('cli.init.id'))
+    .option('--title <title>', t('cli.init.title'))
     .option(
       '--max-rounds <n>',
-      'Maximum interview rounds',
+      t('cli.init.maxRounds'),
       (v: string) => parseInt(v, 10),
       12
     )
-    .option('--keep-session', 'On failure, preserve temp interview session path')
+    .option('--keep-session', t('cli.init.keepSession'));
+  addLangOption(command, t)
     .action(async (opts: {
       dir: string;
       quick?: boolean;
@@ -40,10 +42,10 @@ export function registerInitCommand(program: Command): void {
         process.stdout.write(`Initialized World save: ${worldRoot}\n`);
       } catch (err) {
         if (err instanceof InitCancelledError) {
-          process.stderr.write(`${err.message}\n`);
+        process.stderr.write(`${err.message}\n`);
           process.exit(0);
         }
-        console.error('Error:', err instanceof Error ? err.message : err);
+        console.error(t('cli.error'), err instanceof Error ? err.message : err);
         process.exit(1);
       }
     });

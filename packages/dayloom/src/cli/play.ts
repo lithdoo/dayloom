@@ -1,3 +1,44 @@
-import { Command } from 'commander'; import { playInteractive } from '../play';
-export function registerPlayCommand(program:Command):void{program.command('play').description('Execute the planned day one event at a time').requiredOption('-d, --dir <path>','World save root directory').option('--keep-session','Preserve temporary MCP service session').option('--max-tool-rounds <n>','Maximum MCP tool rounds per AI call',positive,8).option('--max-event-rounds <n>','Maximum user turns in one event',positive,20).option('--mcp-base-url <url>','Use an existing promptpile-mcp gateway').option('--mcp-token <token>','Bearer token for an existing promptpile-mcp gateway').action(async(opts:{dir:string;keepSession?:boolean;maxToolRounds:number;maxEventRounds:number;mcpBaseUrl?:string;mcpToken?:string})=>{try{await playInteractive(opts.dir,{keepSession:opts.keepSession,maxToolRounds:opts.maxToolRounds,maxEventRounds:opts.maxEventRounds,mcpBaseUrl:opts.mcpBaseUrl,mcpToken:opts.mcpToken??process.env.PROMPTPILE_MCP_TOKEN});}catch(err){console.error('Error:',err instanceof Error?err.message:err);process.exitCode=1;}});}
-function positive(value:string):number{const n=Number(value);if(!Number.isInteger(n)||n<1)throw new Error('value must be a positive integer');return n;}
+import { Command } from 'commander';
+import { addLangOption, type Translator } from '../i18n';
+import { playInteractive } from '../play';
+
+export function registerPlayCommand(program: Command, t: Translator): void {
+  const command = program.command('play')
+    .description(t('cli.play.description'))
+    .requiredOption('-d, --dir <path>', t('cli.common.dir'))
+    .option('--keep-session', t('cli.play.keepSession'))
+    .option('--max-tool-rounds <n>', t('cli.play.maxToolRounds'), positive(t), 8)
+    .option('--max-event-rounds <n>', t('cli.play.maxEventRounds'), positive(t), 20)
+    .option('--mcp-base-url <url>', t('cli.common.mcpBaseUrl'))
+    .option('--mcp-token <token>', t('cli.common.mcpToken'));
+  addLangOption(command, t)
+    .action(async (opts: {
+      dir: string;
+      keepSession?: boolean;
+      maxToolRounds: number;
+      maxEventRounds: number;
+      mcpBaseUrl?: string;
+      mcpToken?: string;
+    }) => {
+      try {
+        await playInteractive(opts.dir, {
+          keepSession: opts.keepSession,
+          maxToolRounds: opts.maxToolRounds,
+          maxEventRounds: opts.maxEventRounds,
+          mcpBaseUrl: opts.mcpBaseUrl,
+          mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN,
+        });
+      } catch (err) {
+        console.error(t('cli.error'), err instanceof Error ? err.message : err);
+        process.exitCode = 1;
+      }
+    });
+}
+
+function positive(t: Translator): (value: string) => number {
+  return value => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1) throw new Error(t('cli.positiveInteger'));
+    return n;
+  };
+}

@@ -1,23 +1,25 @@
 import { Command } from 'commander';
+import { addLangOption, type Translator } from '../i18n';
 import { InitCancelledError, runNext } from '../next';
 
-export function registerNextCommand(program: Command): void {
-  program.command('next')
-    .description('Inspect a World save and run the next appropriate dayloom phase')
-    .requiredOption('-d, --dir <path>', 'World save root directory')
-    .option('--status', 'Only show current state and recommended next command')
-    .option('--confirm', 'Ask before running the next action')
-    .option('--quick', 'When uninitialized, scaffold an empty World without AI interview')
-    .option('--id <id>', 'World id for init')
-    .option('--title <title>', 'World title for init')
-    .option('--max-rounds <n>', 'Maximum init interview rounds', parsePositiveInt, 12)
-    .option('--dry-run', 'Pass dry-run mode to daily or settle')
-    .option('--yes', 'Apply generated daily or settlement changes without prompting where supported')
-    .option('--keep-session', 'Preserve temporary AI and MCP sessions where supported')
-    .option('--max-tool-rounds <n>', 'Maximum MCP tool rounds per AI call', parsePositiveInt, 8)
-    .option('--max-event-rounds <n>', 'Maximum user turns in one play event', parsePositiveInt, 20)
-    .option('--mcp-base-url <url>', 'Use an existing promptpile-mcp gateway')
-    .option('--mcp-token <token>', 'Bearer token for an existing promptpile-mcp gateway')
+export function registerNextCommand(program: Command, t: Translator): void {
+  const command = program.command('next')
+    .description(t('cli.next.description'))
+    .requiredOption('-d, --dir <path>', t('cli.common.dir'))
+    .option('--status', t('cli.next.status'))
+    .option('--confirm', t('cli.next.confirm'))
+    .option('--quick', t('cli.next.quick'))
+    .option('--id <id>', t('cli.next.id'))
+    .option('--title <title>', t('cli.next.title'))
+    .option('--max-rounds <n>', t('cli.next.maxRounds'), parsePositiveInt(t), 12)
+    .option('--dry-run', t('cli.next.dryRun'))
+    .option('--yes', t('cli.next.yes'))
+    .option('--keep-session', t('cli.next.keepSession'))
+    .option('--max-tool-rounds <n>', t('cli.next.maxToolRounds'), parsePositiveInt(t), 8)
+    .option('--max-event-rounds <n>', t('cli.next.maxEventRounds'), parsePositiveInt(t), 20)
+    .option('--mcp-base-url <url>', t('cli.common.mcpBaseUrl'))
+    .option('--mcp-token <token>', t('cli.common.mcpToken'));
+  addLangOption(command, t)
     .action(async (opts: {
       dir: string;
       status?: boolean;
@@ -49,20 +51,23 @@ export function registerNextCommand(program: Command): void {
           maxEventRounds: opts.maxEventRounds,
           mcpBaseUrl: opts.mcpBaseUrl,
           mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN,
+          t,
         });
       } catch (err) {
         if (err instanceof InitCancelledError) {
           process.stderr.write(`${err.message}\n`);
           process.exit(0);
         }
-        console.error('Error:', err instanceof Error ? err.message : err);
+        console.error(t('cli.error'), err instanceof Error ? err.message : err);
         process.exitCode = 1;
       }
     });
 }
 
-function parsePositiveInt(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error('Expected a positive integer');
-  return parsed;
+function parsePositiveInt(t: Translator): (value: string) => number {
+  return value => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) throw new Error(t('cli.positiveInteger'));
+    return parsed;
+  };
 }

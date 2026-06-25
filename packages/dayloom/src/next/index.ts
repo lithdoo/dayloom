@@ -1,4 +1,5 @@
 import { dailyInteractive } from '../daily';
+import { createTranslator, type Translator } from '../i18n';
 import { initWorldInteractive, initWorldQuick } from '../init';
 import { InitCancelledError } from '../init/errors';
 import { playInteractive } from '../play';
@@ -20,6 +21,7 @@ export interface NextOptions {
   maxEventRounds?: number;
   mcpBaseUrl?: string;
   mcpToken?: string;
+  t?: Translator;
 }
 
 export interface NextResult {
@@ -29,14 +31,15 @@ export interface NextResult {
 }
 
 export async function runNext(dir: string, options: NextOptions = {}): Promise<NextResult> {
+  const t = options.t ?? createTranslator('en');
   const state = inspectNextState(dir);
-  process.stdout.write(`${formatNextStatus(state)}\n`);
+  process.stdout.write(`${formatNextStatus(state, t)}\n`);
 
   if (options.statusOnly) return { state, action: state.action, executed: false };
 
-  process.stdout.write(`${describeNextAction(state)}\n`);
-  if (options.confirm && !(await askYesNo(`Proceed with ${state.action}? (Y/N): `))) {
-    process.stdout.write('Cancelled.\n');
+  process.stdout.write(`${describeNextAction(state, t)}\n`);
+  if (options.confirm && !(await askYesNo(t('next.proceed', { action: state.action })))) {
+    process.stdout.write(`${t('next.cancelled')}\n`);
     return { state, action: state.action, executed: false };
   }
 
@@ -51,7 +54,7 @@ export async function runNext(dir: string, options: NextOptions = {}): Promise<N
       const worldRoot = options.quick
         ? initWorldQuick(state.worldRoot, initOptions)
         : await initWorldInteractive(state.worldRoot, initOptions);
-      process.stdout.write(`Initialized World save: ${worldRoot}\n`);
+      process.stdout.write(`${t('next.initialized', { worldRoot })}\n`);
       break;
     }
     case 'daily':
@@ -69,11 +72,11 @@ export async function runNext(dir: string, options: NextOptions = {}): Promise<N
     case 'settle': {
       const result = await settleWithAi(state.worldRoot, commonAiOptions(options));
       process.stdout.write(`${result.description}\n`);
-      if (result.applied) process.stdout.write(`Settled ${result.day}; advanced to ${result.nextDay}.\n`);
+      if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
       else if (result.proposalPath) {
-        process.stdout.write(`Generated settlement proposal: ${result.proposalPath}\nReview it, then rerun dayloom settle with --proposal and --yes.\n`);
+        process.stdout.write(`${t('cli.settle.generatedProposal', { proposalPath: result.proposalPath })}\n${t('cli.settle.reviewProposal')}\n`);
       } else {
-        process.stdout.write('Dry run only. No files changed.\n');
+        process.stdout.write(`${t('cli.common.dryRunOnly')}\n`);
       }
       break;
     }

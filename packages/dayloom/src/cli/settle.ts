@@ -1,17 +1,19 @@
 import { Command } from 'commander';
 import { settleFromProposal, settleWithAi } from '../settle';
+import { addLangOption, type Translator } from '../i18n';
 
-export function registerSettleCommand(program: Command): void {
-  program.command('settle')
-    .description('Settle the completed day and advance to the next idle day')
-    .requiredOption('-d, --dir <path>', 'World save root directory')
-    .option('--proposal <path>', 'Apply an existing settlement proposal JSON file')
-    .option('--dry-run', 'Show projected file changes without committing the settlement')
-    .option('--yes', 'Apply the validated settlement without stopping at a generated draft')
-    .option('--keep-session', 'Preserve temporary AI and MCP sessions')
-    .option('--max-tool-rounds <n>', 'Maximum MCP tool rounds for the AI call', parsePositiveInt, 8)
-    .option('--mcp-base-url <url>', 'Use an existing promptpile-mcp gateway')
-    .option('--mcp-token <token>', 'Bearer token for an existing promptpile-mcp gateway')
+export function registerSettleCommand(program: Command, t: Translator): void {
+  const command = program.command('settle')
+    .description(t('cli.settle.description'))
+    .requiredOption('-d, --dir <path>', t('cli.common.dir'))
+    .option('--proposal <path>', t('cli.settle.proposal'))
+    .option('--dry-run', t('cli.settle.dryRun'))
+    .option('--yes', t('cli.settle.yes'))
+    .option('--keep-session', t('cli.settle.keepSession'))
+    .option('--max-tool-rounds <n>', t('cli.settle.maxToolRounds'), parsePositiveInt(t), 8)
+    .option('--mcp-base-url <url>', t('cli.common.mcpBaseUrl'))
+    .option('--mcp-token <token>', t('cli.common.mcpToken'));
+  addLangOption(command, t)
     .action(async (opts: { dir: string; proposal?: string; dryRun?: boolean; yes?: boolean; keepSession?: boolean; maxToolRounds: number; mcpBaseUrl?: string; mcpToken?: string }) => {
       try {
         const common = { dryRun: opts.dryRun, yes: opts.yes };
@@ -19,18 +21,20 @@ export function registerSettleCommand(program: Command): void {
           ? settleFromProposal(opts.dir, opts.proposal, common)
           : await settleWithAi(opts.dir, { ...common, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN });
         process.stdout.write(`${result.description}\n`);
-        if (result.applied) process.stdout.write(`Settled ${result.day}; advanced to ${result.nextDay}.\n`);
-        else if ('proposalPath' in result && result.proposalPath) process.stdout.write(`Generated settlement proposal: ${result.proposalPath}\nReview it, then rerun with --proposal and --yes.\n`);
-        else process.stdout.write('Dry run only. No files changed.\n');
+        if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
+        else if ('proposalPath' in result && typeof result.proposalPath === 'string') process.stdout.write(`${t('cli.settle.generatedProposal', { proposalPath: result.proposalPath })}\n${t('cli.settle.reviewProposal')}\n`);
+        else process.stdout.write(`${t('cli.common.dryRunOnly')}\n`);
       } catch (err) {
-        console.error('Error:', err instanceof Error ? err.message : err);
+        console.error(t('cli.error'), err instanceof Error ? err.message : err);
         process.exitCode = 1;
       }
     });
 }
 
-function parsePositiveInt(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error('--max-tool-rounds must be a positive integer');
-  return parsed;
+function parsePositiveInt(t: Translator): (value: string) => number {
+  return value => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) throw new Error(t('cli.positiveInteger'));
+    return parsed;
+  };
 }
