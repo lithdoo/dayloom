@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { registerDailyCommand } from './daily';
 import { registerInitCommand } from './init';
+import { registerNextCommand } from './next';
 import { registerReviseCommand } from './revise';
 import { registerPlayCommand } from './play';
 import { registerSettleCommand } from './settle';
@@ -14,6 +15,7 @@ export function parseCli(argv: string[] = process.argv): void {
     .helpOption('-h, --help', '显示帮助');
 
   registerInitCommand(program);
+  registerNextCommand(program);
   registerDailyCommand(program);
   registerPlayCommand(program);
   registerSettleCommand(program);
