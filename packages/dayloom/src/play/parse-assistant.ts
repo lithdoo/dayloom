@@ -21,5 +21,13 @@ export function parseEventStatus(text: string): EventStatus {
     };
   }
 }
+export function parseEventStatusJson(text: string): EventStatus {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{')) {
+    try { return JSON.parse(trimmed) as EventStatus; }
+    catch (error) { throw new Error('Failed to parse event-status JSON: ' + (error instanceof Error ? error.message : String(error))); }
+  }
+  return parseEventStatus(text);
+}
 export const parseEventResult = (text: string): EventResult => parse(text, 'event-result');
 export const parseReplan = (text: string): ReplanPayload => parse(text, 'play-replan');

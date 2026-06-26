@@ -4,12 +4,11 @@ import path from 'path';
 import { connectOrStartGateway } from '../daily/mcp-gateway';
 import { assertAllowedPlayerContextRoot, exportReadonlyTools } from '../daily/mcp-tools';
 import { readDailyUserInput } from '../daily/read-user-input';
-import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
 import { callPlayAi } from './ai';
 import { buildPlayContext } from './player-context';
-import { parseEventResult, parseEventStatus, parseGeneratedEvent, parseReplan } from './parse-assistant';
+import { parseEventResult, parseEventStatusJson, parseGeneratedEvent, parseReplan } from './parse-assistant';
 import { applyEventResult, applyReplan, buildResultReplan, eventId, eventRoot, finishPlay, initializePlay, loadPlan, loadState, nextExecutableBeat, savePlan, saveState } from './state';
 import { normalizeReplanPayload, validateEventResult, validateEventStatus, validateGeneratedEvent, validateReplan } from './validate';
 import type { EventResult, EventStatus, PlayOptions, ReplanPayload } from './types';
@@ -94,6 +93,7 @@ async function dialogue(worldRoot:string,day:string,id:string,tools:string,base:
   const t=createTranslator();
   const dir=eventRoot(worldRoot,day,id);
   const event=JSON.parse(fs.readFileSync(path.join(dir,'event.json'),'utf8'));
+  const plan=loadPlan(worldRoot,day);
   let transcript=fs.readFileSync(path.join(dir,'transcript.md'),'utf8');
   process.stdout.write('\n--- '+event.title+' ---\n\n'+event.opening+'\n\n'+event.situation+'\n');
   if(event.suggested_actions.length)process.stdout.write(event.suggested_actions.map((x:string,i:number)=>(i+1)+'. '+x).join('\n')+'\n');
@@ -109,8 +109,7 @@ async function dialogue(worldRoot:string,day:string,id:string,tools:string,base:
     if(command.kind==='command'&&command.name==='status'){process.stdout.write(fs.readFileSync(path.join(dir,'event.json'),'utf8'));continue;}
     if(command.kind==='command'&&command.name==='end-day'){
       const status:EventStatus={status:'resolved',situation:'The player explicitly ended the day.',needs_user_action:false,resolution_summary:'The player explicitly ended the current day.',end_day:true};
-      const machine='```event-status\n'+JSON.stringify(status,null,2)+'\n```';
-      transcript+='\n## User\n\n/end-day\n\n## Assistant\n\nThe day ends here.\n\n'+machine+'\n';
+      transcript+='\n## User\n\n/end-day\n\n## Assistant\n\nThe day ends here.\n';
       fs.writeFileSync(path.join(dir,'transcript.md'),transcript,'utf8');
       writeJson(path.join(dir,'status.json'),status);
       const state=loadState(worldRoot,day);state.step='resolving';saveState(worldRoot,state);
@@ -120,17 +119,20 @@ async function dialogue(worldRoot:string,day:string,id:string,tools:string,base:
     fs.writeFileSync(path.join(dir,'transcript.md'),transcript,'utf8');
     buildPlayContext(worldRoot,day,context);
     process.stdout.write('\nAI> ');
-    const stream=createFilteredStreamOutput({hiddenBlocks:['event-status']});
-    const reply=await callPlayAi('play-event-dialogue','# Event\n\n'+JSON.stringify(event,null,2)+'\n\n# Transcript\n\n'+transcript,tools,base,token,maxTools,text=>stream.push(text));
-    stream.flush();process.stdout.write('\n');
-    transcript+='\n## Assistant\n\n'+reply+'\n';
+    const reply=await callPlayAi('play-event-dialogue',buildDialogueInput(event,transcript),tools,base,token,maxTools,text=>process.stdout.write(text));
+    process.stdout.write('\n');
+    transcript+='\n## Assistant\n\n'+reply.trim()+'\n';
     fs.writeFileSync(path.join(dir,'transcript.md'),transcript,'utf8');
     let status:EventStatus;
-    try{status=parseEventStatus(reply);validateEventStatus(status);}catch(error){process.stderr.write('Warning: invalid event-status metadata; continuing the event: '+(error instanceof Error?error.message:String(error))+'\n');continue;}
+    try{status=await generateEventStatus(event,plan,transcript,tools,base,token,maxTools);}catch(error){process.stderr.write('Warning: invalid event-status metadata; continuing the event: '+(error instanceof Error?error.message:String(error))+'\n');continue;}
     writeJson(path.join(dir,'status.json'),status);
     if(status.status==='resolved'){const state=loadState(worldRoot,day);state.step='resolving';saveState(worldRoot,state);return false;}
   }
 }
+
+function buildDialogueInput(event:unknown,transcript:string):string{return '# Event\n\n'+JSON.stringify(event,null,2)+'\n\n# Transcript\n\n'+transcript;}
+function buildStatusInput(event:unknown,plan:unknown,transcript:string):string{return '# Event\n\n'+JSON.stringify(event,null,2)+'\n\n# Current plan\n\n'+JSON.stringify(plan,null,2)+'\n\n# Transcript\n\n'+transcript+'\n\n# Required output\n\nReturn only EventStatus JSON.';}
+async function generateEventStatus(event:unknown,plan:unknown,transcript:string,tools:string,base:string,token:string|undefined,maxTools:number):Promise<EventStatus>{const reply=await callPlayAi('play-event-status',buildStatusInput(event,plan,transcript),tools,base,token,maxTools);const status=parseEventStatusJson(reply);validateEventStatus(status);return status;}
 
 async function resolveEvent(worldRoot:string,day:string,id:string,beatId:string,tools:string,base:string,token:string|undefined,max:number,context:string):Promise<void>{
   const dir=eventRoot(worldRoot,day,id);
