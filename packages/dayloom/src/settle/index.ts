@@ -14,6 +14,8 @@ import { describeSettlementChanges, projectSettlement } from './project';
 import type { SettlementOptions, SettlementResult } from './types';
 import { nextDayId, validateSettlementNarrative, validateSettlementProposal } from './validate';
 import { withLoading } from '../utils/loading';
+import { askYesNo } from '../revise/read-user-input';
+import { createTranslator } from '../i18n';
 
 export function settleFromProposal(dir: string, proposalPath: string, options: SettlementOptions = {}): SettlementResult {
   const worldRoot = resolveWorldRoot(dir);
@@ -31,6 +33,7 @@ export function settleFromProposal(dir: string, proposalPath: string, options: S
 }
 
 export async function settleWithAi(dir: string, options: SettlementOptions = {}): Promise<SettlementResult & { proposalPath?: string }> {
+  const t = options.t ?? createTranslator();
   if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error('DEEPSEEK_API_KEY is not set. AI settlement requires an API key.');
   const worldRoot = resolveWorldRoot(dir);
   const { day } = assertSettlementCanStart(worldRoot);
@@ -60,10 +63,13 @@ export async function settleWithAi(dir: string, options: SettlementOptions = {})
     const description = describeSettlementChanges(worldRoot, changes);
 
     if (options.dryRun) return { worldRoot, day, nextDay, description, applied: false };
+    const proposalPath = path.join(worldRoot, 'days', day, 'ending', 'settlement.proposal.json');
     if (!options.yes) {
-      const proposalPath = path.join(worldRoot, 'days', day, 'ending', 'settlement.proposal.json');
       writeJsonAtomic(proposalPath, proposal);
-      return { worldRoot, day, nextDay, description, applied: false, proposalPath };
+      const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      if (!interactive || !(await askYesNo(t('cli.settle.applyProposal', { nextDay })))) {
+        return { worldRoot, day, nextDay, description, applied: false, proposalPath };
+      }
     }
     applySettlement(worldRoot, proposal, changes, nextDay);
     return { worldRoot, day, nextDay, description, applied: true };

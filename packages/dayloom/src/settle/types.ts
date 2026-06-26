@@ -1,3 +1,5 @@
+import type { Translator } from '../i18n';
+
 export interface SettlementPatch {
   op: 'replace' | 'append';
   path: string;
@@ -35,6 +37,7 @@ export interface SettlementOptions {
   maxToolRounds?: number;
   mcpBaseUrl?: string;
   mcpToken?: string;
+  t?: Translator;
 }
 
 export interface WorldFileChange {

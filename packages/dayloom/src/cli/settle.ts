@@ -16,7 +16,7 @@ export function registerSettleCommand(program: Command, t: Translator): void {
   addLangOption(command, t)
     .action(async (opts: { dir: string; proposal?: string; dryRun?: boolean; yes?: boolean; keepSession?: boolean; maxToolRounds: number; mcpBaseUrl?: string; mcpToken?: string }) => {
       try {
-        const common = { dryRun: opts.dryRun, yes: opts.yes };
+        const common = { dryRun: opts.dryRun, yes: opts.yes, t };
         const result = opts.proposal
           ? settleFromProposal(opts.dir, opts.proposal, common)
           : await settleWithAi(opts.dir, { ...common, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN });

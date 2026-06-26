@@ -70,7 +70,7 @@ export async function runNext(dir: string, options: NextOptions = {}): Promise<N
       });
       break;
     case 'settle': {
-      const result = await settleWithAi(state.worldRoot, commonAiOptions(options));
+      const result = await settleWithAi(state.worldRoot, { ...commonAiOptions(options), t });
       process.stdout.write(`${result.description}\n`);
       if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
       else if (result.proposalPath) {

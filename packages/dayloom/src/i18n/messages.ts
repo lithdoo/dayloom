@@ -50,6 +50,7 @@ export const messages = {
     'cli.settle.settled': 'Settled {day}; advanced to {nextDay}.',
     'cli.settle.generatedProposal': 'Generated settlement proposal: {proposalPath}',
     'cli.settle.reviewProposal': 'Review it, then rerun with --proposal and --yes.',
+    'cli.settle.applyProposal': 'Apply this settlement and advance to {nextDay}? (Y/N): ',
 
     'cli.revise.description': 'Discuss and apply controlled revisions to an initialized World save',
     'cli.revise.proposal': 'Apply a revision proposal JSON file instead of starting AI chat',
@@ -153,6 +154,7 @@ export const messages = {
     'cli.settle.settled': '已结算 {day}；已推进到 {nextDay}。',
     'cli.settle.generatedProposal': '已生成结算提案：{proposalPath}',
     'cli.settle.reviewProposal': '请检查后使用 --proposal 和 --yes 重新运行。',
+    'cli.settle.applyProposal': '是否应用这次结算并进入 {nextDay}？(Y/N)：',
 
     'cli.revise.description': '通过对话检查并应用受控的 World 设定修订',
     'cli.revise.proposal': '应用 revision proposal JSON 文件，而不是启动 AI 对话',
