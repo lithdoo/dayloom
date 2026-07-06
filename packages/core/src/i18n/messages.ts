@@ -50,6 +50,9 @@ export const messages = {
     'cli.settle.settled': 'Settled {day}; advanced to {nextDay}.',
     'cli.settle.generatedProposal': 'Generated settlement proposal: {proposalPath}',
     'cli.settle.reviewProposal': 'Review it, then rerun with --proposal and --yes.',
+    'cli.settle.reviewSummary': 'Summary:',
+    'cli.settle.reviewDiary': 'Diary preview:',
+    'cli.settle.reviewChanges': 'Projected file changes:',
     'cli.settle.applyProposal': 'Apply this settlement and advance to {nextDay}? (Y/N): ',
 
     'cli.revise.description': 'Discuss and apply controlled revisions to an initialized World save',
@@ -73,6 +76,12 @@ export const messages = {
     'input.userPrompt': 'You > ',
     'input.emptyExit': 'Empty input. Exit? (Y/N): ',
     'input.emptySaveDraft': 'Empty input. Save draft and exit session? (Y/N): ',
+
+    'tui.input.replyCaption': 'Enter your reply below.',
+    'tui.input.messageCaption': 'Enter your message below.',
+    'tui.input.defaultCaption': 'Type below.',
+    'tui.input.multilineHint': 'Enter: new line · Ctrl+Enter: send · Alt+Enter: send (macOS)',
+    'tui.input.confirmHint': '[Y] Confirm  [N] Cancel',
 
     'commands.available': 'Available commands',
     'commands.availableSeparator': ': ',
@@ -171,6 +180,9 @@ export const messages = {
     'cli.settle.settled': '已结算 {day}；已推进到 {nextDay}。',
     'cli.settle.generatedProposal': '已生成结算提案：{proposalPath}',
     'cli.settle.reviewProposal': '请检查后使用 --proposal 和 --yes 重新运行。',
+    'cli.settle.reviewSummary': '摘要：',
+    'cli.settle.reviewDiary': '日记预览：',
+    'cli.settle.reviewChanges': '预计文件改动：',
     'cli.settle.applyProposal': '是否应用这次结算并进入 {nextDay}？(Y/N)：',
 
     'cli.revise.description': '通过对话检查并应用受控的 World 设定修订',
@@ -194,6 +206,12 @@ export const messages = {
     'input.userPrompt': '你 > ',
     'input.emptyExit': '输入为空。是否退出？(Y/N)：',
     'input.emptySaveDraft': '输入为空。是否保存草稿并退出会话？(Y/N)：',
+
+    'tui.input.replyCaption': '请在下方输入回复。',
+    'tui.input.messageCaption': '请在下方输入消息。',
+    'tui.input.defaultCaption': '请在下方输入。',
+    'tui.input.multilineHint': 'Enter 换行 · Ctrl+Enter 发送 · macOS 可用 Alt+Enter 发送',
+    'tui.input.confirmHint': '[Y] 确认  [N] 取消',
 
     'commands.available': '可用指令',
     'commands.availableSeparator': '：',

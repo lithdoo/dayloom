@@ -10,6 +10,7 @@ import { buildProgramSettlementProposal } from './derive';
 import { assertNextDayAvailable, assertSettlementCanStart, resolveWorldRoot } from './guard';
 import { parseSettlementNarrative } from './parse-assistant';
 import { readSettlementProposal } from './parse-payload';
+import { formatSettlementReview } from './format-review';
 import { describeSettlementChanges, projectSettlement } from './project';
 import type { SettlementOptions, SettlementResult } from './types';
 import { nextDayId, validateSettlementNarrative, validateSettlementProposal } from './validate';
@@ -73,6 +74,7 @@ export async function runSettleInteractive(
     const proposalPath = path.join(worldRoot, 'days', day, 'ending', 'settlement.proposal.json');
     if (!settleOptions.yes) {
       writeJsonAtomic(proposalPath, proposal);
+      io.write(`${formatSettlementReview(proposal, description, t)}\n`);
       if (!(await io.confirm(t('cli.settle.applyProposal', { nextDay })))) {
         return { kind: 'completed', result: { worldRoot, day, nextDay, description, applied: false, proposalPath } };
       }

@@ -58,4 +58,5 @@ export async function runNext(dir: string, options: NextOptions = {}): Promise<N
 }
 
 export { InitCancelledError, describeNextAction, formatNextStatus, inspectNextState };
+export { inspectTuiHeader, type TuiHeaderSnapshot } from './inspect-header';
 export { runRecommendedAction, type RecommendedActionOptions } from './recommended-action';

@@ -460,10 +460,12 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ## Phase 4：新建 @dayloom/tui
 
+> **2026-07**：`packages/tui` 内第一版实现已删除；详细设计与重做清单见 [`packages/tui/TODO.md`](packages/tui/TODO.md)。下列勾选为**曾完成项**，重做时以 tui 包内 TODO 为准。
+
 ### 4.1 脚手架
 
-- [ ] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`
-- [ ] 依赖 `@dayloom/core`、bindtty
+- [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`（当前 bin 为占位，提示未实现）
+- [x] 依赖 `@dayloom/core`、bindtty（依赖仍保留在 package.json）
 
 ### 4.2 `createTuiSessionIO(vm)`
 
@@ -479,15 +481,17 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 4.4 验证
 
-- [ ] init → daily → play → settle 全流程
-- [ ] play 中 `/revise` 可打断并返回
-- [ ] warning / error 显示在 TUI 内，真实 stderr 无泄漏
+- [ ] init → daily → play → settle 全流程（需 API key 手工 smoke）
+- [ ] play 中 `/revise` 可打断并返回（需 API key 手工 smoke）
+- [ ] warning / error 显示在 TUI 内，真实 stderr 无泄漏（SessionIO 契约 + 单测）
 
-**预估**：3–5 天 | **风险**：中
+**预估**：3–5 天 | **风险**：中（bindtty `focus` API + 输入焦点为已知阻塞项，见 tui TODO §0）
 
 ---
 
 ## Phase 5：TUI 体验补齐
+
+> 实现已回退；规格见 [`packages/tui/TODO.md`](packages/tui/TODO.md) §8、§11 Phase C。
 
 - [ ] 多行输入（Enter 换行，Ctrl+Enter 提交）
 - [ ] 顶栏：day、phase、event、suggested_actions

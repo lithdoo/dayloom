@@ -23,7 +23,8 @@ export async function runShellNext(ctx: ShellRoutingContext): Promise<void> {
       ctx.actionOpts.io.error(`${err.message}\n`);
       return;
     }
-    throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.actionOpts.io.error(`${message}\n`);
   }
 }
 
@@ -33,15 +34,24 @@ export async function handleShellCommand(
 ): Promise<void> {
   switch (exit.command) {
     case 'revise':
-      await runReviseInteractive(ctx.worldDir, {
-        io: ctx.actionOpts.io,
-        dryRun: ctx.actionOpts.dryRun,
-        yes: ctx.actionOpts.yes,
-        keepSession: ctx.actionOpts.keepSession,
-        maxToolRounds: ctx.actionOpts.maxToolRounds,
-        mcpBaseUrl: ctx.actionOpts.mcpBaseUrl,
-        mcpToken: ctx.actionOpts.mcpToken,
-      });
+      try {
+        await runReviseInteractive(ctx.worldDir, {
+          io: ctx.actionOpts.io,
+          dryRun: ctx.actionOpts.dryRun,
+          yes: ctx.actionOpts.yes,
+          keepSession: ctx.actionOpts.keepSession,
+          maxToolRounds: ctx.actionOpts.maxToolRounds,
+          mcpBaseUrl: ctx.actionOpts.mcpBaseUrl,
+          mcpToken: ctx.actionOpts.mcpToken,
+        });
+      } catch (err) {
+        if (err instanceof InitCancelledError) {
+          ctx.actionOpts.io.error(`${err.message}\n`);
+          return;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.actionOpts.io.error(`${message}\n`);
+      }
       return;
     case 'next':
       await runShellNext(ctx);

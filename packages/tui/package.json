@@ -1,0 +1,33 @@
+{
+  "name": "@dayloom/tui",
+  "version": "0.1.0-beta.5",
+  "description": "Fullscreen TUI for Dayloom (bindtty + runGameShell).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dayloom-tui": "./dist/main.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build"
+  },
+  "dependencies": {
+    "@bindtty/interaction": "0.1.0-alpha.3",
+    "@bindtty/terminal": "0.1.0-alpha.3",
+    "@bindtty/text": "0.1.0-alpha.3",
+    "@bindtty/widgets": "0.1.0-alpha.3",
+    "@dayloom/core": "*",
+    "bindtty": "0.1.0-alpha.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "TODO.md",
+    "package.json"
+  ]
+}
