@@ -191,7 +191,7 @@ CLI 读取 `exit.result` 时无需到处类型断言。
 
 - [x] Phase 2：各 loop 在 `parseSessionCommand` 之后、处理 session 命令之前，先检测 shell-level 命令
 - [x] `runPlay` / `runDaily` / `runRevise` / `runInit` 等 interactive 函数返回 `Promise<SessionExit>`（而非 `void`）
-- [ ] `runGameShell` 收到 `shell-command: revise` 时调用 `runRevise`，完成后回到 shell 等待层
+- [x] `runGameShell` 收到 `shell-command: revise` 时调用 `runRevise`，完成后回到 shell 等待层
 
 ---
 
@@ -245,7 +245,7 @@ runNext(worldDir, { io, ... }): Promise<NextResult>
   // NextResult.exit 承载 SessionExit（含 completed.result），兼容现有返回风格
 ```
 
-- [ ] Phase 3 明确：`runGameShell` 调 `runRecommendedAction`，**不**直接调 `runNext`
+- [x] Phase 3 明确：`runGameShell` 调 `runRecommendedAction`，**不**直接调 `runNext`
 - [ ] `dayloom next`（cli）继续调 `runNext`（含打印，保持现有 CLI 输出）
 
 ---
@@ -430,29 +430,29 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 3.1 core：`shell/`
 
-- [ ] `runGameShell({ worldDir, io, autoStart? })` 主循环
-- [ ] shell 等待层直接处理：`/status`、`/help`（不进 `ShellCommand`，不打断 session）
-- [ ] 收到 `SessionExit.shell-command` 时路由：
+- [x] `runGameShell({ worldDir, io, autoStart? })` 主循环
+- [x] shell 等待层直接处理：`/status`、`/help`（不进 `ShellCommand`，不打断 session）
+- [x] 收到 `SessionExit.shell-command` 时路由：
   - `revise` → `runReviseInteractive`
   - `next` → `runRecommendedAction`
   - `quit` → 退出
-- [ ] `SessionExit.completed` → 读取可选 `result` 供 CLI 打印（如 worldRoot、day/nextDay），再回 shell 等待层
-- [ ] `SessionExit.saved | cancelled` → 刷新状态，回 shell 等待层
+- [x] `SessionExit.completed` → 读取可选 `result` 供 CLI 打印（如 worldRoot、day/nextDay），再回 shell 等待层
+- [x] `SessionExit.saved | cancelled` → 刷新状态，回 shell 等待层
 
 ### 3.2 core：`next/` 拆层
 
-- [ ] 提取 `runRecommendedAction(state, { io, ... })`
-- [ ] `runNext` 改为：`inspect` + `io.write(format...)` + `io.write(describe...)` + `runRecommendedAction`，将 `exit` 填入 `NextResult`
-- [ ] `runGameShell` **只**调 `runRecommendedAction`，不重复 print
+- [x] 提取 `runRecommendedAction(state, { io, ... })`
+- [x] `runNext` 改为：`inspect` + `io.write(format...)` + `io.write(describe...)` + `runRecommendedAction`，将 `exit` 填入 `NextResult`
+- [x] `runGameShell` **只**调 `runRecommendedAction`，不重复 print
 
 ### 3.3 cli 可选
 
-- [ ] `dayloom shell -d <dir>` → `runGameShell({ io: createCliSessionIO() })`
+- [x] `dayloom shell -d <dir>` → `runGameShell({ io: createCliSessionIO() })`
 
 ### 3.4 验证
 
-- [ ] `test/shell/*.test.js`：mock `SessionIO` 验证路由与 `SessionExit`
-- [ ] play 中输入 `/revise` 能交还 shell 并进入 revise session
+- [x] `test/shell/*.test.js`：mock `SessionIO` 验证路由与 `SessionExit`
+- [x] play 中输入 `/revise` 能交还 shell 并进入 revise session（`handleShellCommand` 路由已实现；完整 play 路径需手工 smoke）
 
 **预估**：1–2 天 | **风险**：低–中
 

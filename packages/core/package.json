@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "test": "npm run build && node --test test/init/*.test.js test/revise/*.test.js test/daily/*.test.js test/play/*.test.js test/settle/*.test.js test/next/*.test.js test/i18n/*.test.js test/session-commands/*.test.js test/session-io/*.test.js"
+    "test": "npm run build && node --test test/init/*.test.js test/revise/*.test.js test/daily/*.test.js test/play/*.test.js test/settle/*.test.js test/next/*.test.js test/shell/*.test.js test/i18n/*.test.js test/session-commands/*.test.js test/session-io/*.test.js"
   },
   "keywords": [
     "dayloom",

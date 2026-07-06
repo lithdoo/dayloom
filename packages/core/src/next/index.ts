@@ -1,10 +1,7 @@
-import { runDailyInteractive } from '../daily';
 import { createTranslator, type Translator } from '../i18n';
-import { runInitInteractive, initWorldQuick } from '../init';
 import { InitCancelledError } from '../init/errors';
-import { runPlayInteractive } from '../play';
-import { runSettleInteractive } from '../settle';
 import { describeNextAction, formatNextStatus, inspectNextState, type NextAction, type NextWorldState } from './inspect';
+import { runRecommendedAction } from './recommended-action';
 import type { SessionExit, SessionIO } from '../session-io';
 
 export interface NextOptions {
@@ -55,72 +52,10 @@ export async function runNext(dir: string, options: NextOptions = {}): Promise<N
     return { state, action: state.action, executed: false };
   }
 
-  let exit: SessionExit | undefined;
-
-  switch (state.action) {
-    case 'init': {
-      const initOptions = {
-        id: options.id,
-        title: options.title,
-        maxRounds: options.maxRounds,
-        keepSessionOnError: options.keepSession,
-        io,
-      };
-      if (options.quick) {
-        const worldRoot = initWorldQuick(state.worldRoot, initOptions);
-        io.write(`${t('next.initialized', { worldRoot })}\n`);
-        exit = { kind: 'completed', result: { worldRoot } };
-      } else {
-        const initExit = await runInitInteractive(state.worldRoot, initOptions);
-        exit = initExit;
-        if (initExit.kind === 'completed' && initExit.result) {
-          io.write(`${t('next.initialized', { worldRoot: initExit.result.worldRoot })}\n`);
-        }
-      }
-      break;
-    }
-    case 'daily':
-      exit = await runDailyInteractive(state.worldRoot, { ...commonAiOptions(options), io });
-      break;
-    case 'play':
-      exit = await runPlayInteractive(state.worldRoot, {
-        keepSession: options.keepSession,
-        maxToolRounds: options.maxToolRounds,
-        maxEventRounds: options.maxEventRounds,
-        mcpBaseUrl: options.mcpBaseUrl,
-        mcpToken: options.mcpToken,
-        io,
-      });
-      break;
-    case 'settle': {
-      const settleExit = await runSettleInteractive(state.worldRoot, { ...commonAiOptions(options), t, io });
-      exit = settleExit;
-      if (settleExit.kind === 'completed' && settleExit.result) {
-        const result = settleExit.result;
-        io.write(`${result.description}\n`);
-        if (result.applied) io.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
-        else if (result.proposalPath) {
-          io.write(`${t('cli.settle.generatedProposal', { proposalPath: result.proposalPath })}\n${t('cli.settle.reviewProposal')}\n`);
-        } else {
-          io.write(`${t('cli.common.dryRunOnly')}\n`);
-        }
-      }
-      break;
-    }
-  }
+  const exit = await runRecommendedAction(state, { io, t, ...options });
 
   return { state, action: state.action, executed: true, exit };
 }
 
 export { InitCancelledError, describeNextAction, formatNextStatus, inspectNextState };
-
-function commonAiOptions(options: NextOptions) {
-  return {
-    dryRun: options.dryRun,
-    yes: options.yes,
-    keepSession: options.keepSession,
-    maxToolRounds: options.maxToolRounds,
-    mcpBaseUrl: options.mcpBaseUrl,
-    mcpToken: options.mcpToken,
-  };
-}
+export { runRecommendedAction, type RecommendedActionOptions } from './recommended-action';

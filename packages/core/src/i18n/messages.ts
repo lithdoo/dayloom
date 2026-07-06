@@ -60,6 +60,9 @@ export const messages = {
     'cli.revise.maxToolRounds': 'Maximum MCP tool rounds per user message',
     'cli.revise.applied': 'Applied World revision: {revisionId}',
 
+    'cli.shell.description': 'Interactive game shell with unified slash-command routing',
+    'cli.shell.autoStart': 'Run the recommended action immediately before entering the shell prompt',
+
     'cli.common.dir': 'World save root directory',
     'cli.common.mcpBaseUrl': 'Use an existing promptpile-mcp gateway',
     'cli.common.mcpToken': 'Bearer token for an existing promptpile-mcp gateway',
@@ -102,6 +105,20 @@ export const messages = {
     'next.proceed': 'Proceed with {action}? (Y/N): ',
     'next.cancelled': 'Cancelled.',
     'next.initialized': 'Initialized World save: {worldRoot}',
+
+    'shell.prompt': 'shell > ',
+    'shell.promptInstruction': 'Enter a shell command such as /status, /next, /revise, or /quit.',
+    'shell.unknownCommand': 'Unknown shell command: {command}',
+    'shell.status.hint': 'status',
+    'shell.status.summary': 'Show World overview and recommended next action.',
+    'shell.help.hint': 'help',
+    'shell.help.summary': 'Show shell commands.',
+    'shell.next.hint': 'next',
+    'shell.next.summary': 'Run the recommended action for the current World state.',
+    'shell.revise.hint': 'revise',
+    'shell.revise.summary': 'Start a World revision session.',
+    'shell.quit.hint': 'quit',
+    'shell.quit.summary': 'Exit the game shell.',
   },
   zh: {
     'cli.description': 'dayloom：按天推进的文件式 AI 生活模拟引擎',
@@ -164,6 +181,9 @@ export const messages = {
     'cli.revise.maxToolRounds': '每条用户消息的最大 MCP 工具轮数',
     'cli.revise.applied': '已应用 World 修订：{revisionId}',
 
+    'cli.shell.description': '交互式游戏 shell，统一处理斜杠命令路由',
+    'cli.shell.autoStart': '进入 shell 提示符前先执行一次推荐操作',
+
     'cli.common.dir': 'World 存档根目录',
     'cli.common.mcpBaseUrl': '使用已有 promptpile-mcp gateway',
     'cli.common.mcpToken': '已有 promptpile-mcp gateway 的 Bearer token',
@@ -206,6 +226,20 @@ export const messages = {
     'next.proceed': '是否执行 {action}？(Y/N)：',
     'next.cancelled': '已取消。',
     'next.initialized': '已初始化 World 存档：{worldRoot}',
+
+    'shell.prompt': 'shell > ',
+    'shell.promptInstruction': '输入 shell 指令，例如 /status、/next、/revise 或 /quit。',
+    'shell.unknownCommand': '未知 shell 指令：{command}',
+    'shell.status.hint': '状态',
+    'shell.status.summary': '显示 World 概览与推荐下一步操作。',
+    'shell.help.hint': '帮助',
+    'shell.help.summary': '显示 shell 指令列表。',
+    'shell.next.hint': '下一步',
+    'shell.next.summary': '执行当前 World 状态的推荐操作。',
+    'shell.revise.hint': '修订',
+    'shell.revise.summary': '开始 World 设定修订会话。',
+    'shell.quit.hint': '退出',
+    'shell.quit.summary': '退出游戏 shell。',
   },
 } as const;
 

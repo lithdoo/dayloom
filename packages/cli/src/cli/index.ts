@@ -6,6 +6,7 @@ import { registerNextCommand } from './next';
 import { registerReviseCommand } from './revise';
 import { registerPlayCommand } from './play';
 import { registerSettleCommand } from './settle';
+import { registerShellCommand } from './shell';
 
 export function parseCli(argv: string[] = process.argv): void {
   const t = createTranslator(detectLocale(argv, process.env));
@@ -24,6 +25,7 @@ export function parseCli(argv: string[] = process.argv): void {
   registerPlayCommand(program, t);
   registerSettleCommand(program, t);
   registerReviseCommand(program, t);
+  registerShellCommand(program, t);
 
   program.parse(argv);
 }

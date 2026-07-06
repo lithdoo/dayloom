@@ -2,7 +2,7 @@
 
 dayloom 是一个以“天”为推进单位的 AI 生活模拟与日记生成工具。
 
-这个仓库采用 monorepo 布局（Phase 2：`@dayloom/core` 零终端依赖 + `@dayloom/cli` 提供 `createCliSessionIO`；`@dayloom/tui` 见 [TODO.md](TODO.md)）：
+这个仓库采用 monorepo 布局（Phase 3：`runGameShell` + `runRecommendedAction`；`@dayloom/tui` 见 [TODO.md](TODO.md)）：
 
 - [`packages/core`](packages/core/)：引擎 API、prompts、测试（`@dayloom/core`）
 - [`packages/cli`](packages/cli/)：`dayloom` CLI、`createCliSessionIO()`（`@dayloom/cli`）
@@ -18,3 +18,9 @@ npm test
 ```
 
 CLI 由 `@dayloom/cli` 提供；交互命令通过 `createCliSessionIO()` 注入 `SessionIO`。根目录 `npm install` 后可用 `npx dayloom`。
+
+统一 shell 入口（支持 `/status`、`/next`、`/revise` 等斜杠命令路由）：
+
+```bash
+npx dayloom shell -d ./world
+```
