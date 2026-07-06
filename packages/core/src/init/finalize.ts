@@ -9,14 +9,14 @@ import {
 import { cleanupSession } from './cleanup';
 import type { InitPayload } from './types';
 import { FINALIZE_USER_PROMPT } from './constants';
-import { withLoading } from '../utils/loading';
+import type { SessionIO } from '../session-io';
 
-export async function finalizeWorld(transcript: string): Promise<InitPayload> {
+export async function finalizeWorld(transcript: string, io: SessionIO): Promise<InitPayload> {
   const session = createFinalizeSession(transcript);
   appendUserMessage(session.messagesDir, FINALIZE_USER_PROMPT);
 
   try {
-    const result = await withLoading('正在生成世界文件...', () => runPromptpile(session, [
+    const result = await io.withLoading('正在生成世界文件...', () => runPromptpile(session, [
       '--config',
       'promptpile.toml',
       '-d',
@@ -28,16 +28,11 @@ export async function finalizeWorld(transcript: string): Promise<InitPayload> {
     assertPromptpileOk(result, 'Finalize');
 
     const assistantText =
-      result.stdout.trim() || getLatestAssistantText(session.messagesDir);
-
+      getLatestAssistantText(session.messagesDir);
     const payload = parseInitPayload<InitPayload>(assistantText);
-    const missing = isPayloadComplete(payload);
-    if (missing.length > 0) {
-      throw new Error(
-        `Init payload incomplete: ${missing.join(', ')}. Re-run init or edit prompts.`
-      );
+    if (!isPayloadComplete(payload)) {
+      throw new Error('Finalize payload is incomplete.');
     }
-
     return payload;
   } finally {
     cleanupSession(session);

@@ -2,10 +2,11 @@ import { Command } from 'commander';
 import {
   InitCancelledError,
   addLangOption,
-  initWorldInteractive,
   initWorldQuick,
+  runInitInteractive,
   type Translator,
 } from '@dayloom/core';
+import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerInitCommand(program: Command, t: Translator): void {
   const command = program
@@ -39,14 +40,26 @@ export function registerInitCommand(program: Command, t: Translator): void {
           keepSessionOnError: opts.keepSession,
         };
 
-        const worldRoot = opts.quick
-          ? initWorldQuick(opts.dir, options)
-          : await initWorldInteractive(opts.dir, options);
+        if (opts.quick) {
+          const worldRoot = initWorldQuick(opts.dir, options);
+          process.stdout.write(`Initialized World save: ${worldRoot}\n`);
+          return;
+        }
 
-        process.stdout.write(`Initialized World save: ${worldRoot}\n`);
+        const io = createCliSessionIO();
+        const exit = await runInitInteractive(opts.dir, { io, ...options });
+        if (exit.kind === 'completed' && exit.result) {
+          process.stdout.write(`Initialized World save: ${exit.result.worldRoot}\n`);
+        } else if (exit.kind === 'cancelled') {
+          process.stderr.write('Initialization cancelled.\n');
+          process.exit(0);
+        } else if (exit.kind === 'shell-command') {
+          process.stderr.write(`Shell command /${exit.command} is not available in CLI mode (Phase 3: runGameShell).\n`);
+          process.exit(1);
+        }
       } catch (err) {
         if (err instanceof InitCancelledError) {
-        process.stderr.write(`${err.message}\n`);
+          process.stderr.write(`${err.message}\n`);
           process.exit(0);
         }
         console.error(t('cli.error'), err instanceof Error ? err.message : err);

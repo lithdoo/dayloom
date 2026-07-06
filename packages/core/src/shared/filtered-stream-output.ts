@@ -5,9 +5,9 @@ export interface FilteredStreamOutput {
 
 export function createFilteredStreamOutput(options: {
   hiddenBlocks: string[];
-  write?: (text: string) => void;
+  write: (text: string) => void;
 }): FilteredStreamOutput {
-  const write = options.write ?? (text => process.stdout.write(text));
+  const { write } = options;
   const hidden = new Set(options.hiddenBlocks.map(label => label.toLowerCase()));
   let buffer = '';
   let suppressing = false;

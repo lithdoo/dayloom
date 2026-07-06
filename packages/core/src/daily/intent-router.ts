@@ -39,6 +39,8 @@ export function effectiveDailyAction(intent: DailyIntent): DailyAction {
   return intent.confidence >= MIN_CONFIDENCE ? intent.action : 'continue';
 }
 
+import type { SessionIO } from '../session-io';
+
 export async function routeDailyIntent(
   input: string,
   draft: DailyDraft,
@@ -47,12 +49,13 @@ export async function routeDailyIntent(
   token: string | undefined,
   maxToolRounds: number,
   keepSession = false,
+  io?: SessionIO,
 ): Promise<DailyIntent> {
   const session = createIntentSession({ input, draft, latestAssistantReply });
   try {
     return parseDailyIntent(await runPromptpileUntilText(session, baseUrl, token, maxToolRounds, () => undefined, true));
   } finally {
-    if (keepSession) process.stderr.write(`Daily intent session preserved at: ${session.root}\n`);
+    if (keepSession) io?.warn(`Daily intent session preserved at: ${session.root}\n`);
     else cleanupSession(session);
   }
 }

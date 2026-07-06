@@ -3,6 +3,8 @@ import path from 'path';
 import { runPromptpileUntilText } from '../daily/promptpile-loop';
 import { cleanupSettlementSession, createSettlementSession } from './session';
 
+import type { SessionIO } from '../session-io';
+
 export async function callSettlementAi(
   userContent: string,
   toolsFile: string,
@@ -10,13 +12,14 @@ export async function callSettlementAi(
   token: string | undefined,
   maxToolRounds: number,
   keepSession = false,
+  io?: SessionIO,
 ): Promise<string> {
   const prompt = fs.readFileSync(path.resolve(__dirname, '..', '..', 'prompts', 'settle.system.md'), 'utf8');
   const session = createSettlementSession(prompt, userContent, toolsFile);
   try {
     return await runPromptpileUntilText(session, baseUrl, token, maxToolRounds);
   } finally {
-    if (keepSession) process.stderr.write(`Settlement AI session preserved at: ${session.root}\n`);
+    if (keepSession) io?.warn(`Settlement AI session preserved at: ${session.root}\n`);
     else cleanupSettlementSession(session);
   }
 }

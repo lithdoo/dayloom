@@ -1,5 +1,6 @@
 import { Command } from 'commander';
-import { addLangOption, playInteractive, type Translator } from '@dayloom/core';
+import { addLangOption, runPlayInteractive, type Translator } from '@dayloom/core';
+import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerPlayCommand(program: Command, t: Translator): void {
   const command = program.command('play')
@@ -20,13 +21,19 @@ export function registerPlayCommand(program: Command, t: Translator): void {
       mcpToken?: string;
     }) => {
       try {
-        await playInteractive(opts.dir, {
+        const io = createCliSessionIO();
+        const exit = await runPlayInteractive(opts.dir, {
           keepSession: opts.keepSession,
           maxToolRounds: opts.maxToolRounds,
           maxEventRounds: opts.maxEventRounds,
           mcpBaseUrl: opts.mcpBaseUrl,
           mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN,
+          io,
         });
+        if (exit.kind === 'shell-command') {
+          process.stderr.write(`Shell command /${exit.command} is not available in CLI mode (Phase 3: runGameShell).\n`);
+          process.exitCode = 1;
+        }
       } catch (err) {
         console.error(t('cli.error'), err instanceof Error ? err.message : err);
         process.exitCode = 1;

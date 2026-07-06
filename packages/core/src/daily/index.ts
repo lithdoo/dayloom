@@ -3,9 +3,9 @@ import { assertDailyCanStart, assertInitializedWorld, readCurrentDay, readLastCo
 import { readDailyPlan } from './parse-payload';
 import { projectDailyPlan } from './project-plan';
 import { validateDailyPlan } from './validate-plan';
-import type { DailyOptions } from './types';
+import type { DailyOptions, DailyResult } from './types';
 
-export interface DailyResult { worldRoot: string; description: string; applied: boolean; }
+export type { DailyResult };
 
 export function dailyFromProposal(dir: string, proposalPath: string, options: DailyOptions = {}): DailyResult {
   const worldRoot = resolveWorldRoot(dir);
@@ -22,4 +22,4 @@ export function dailyFromProposal(dir: string, proposalPath: string, options: Da
   return { worldRoot, description, applied: true };
 }
 
-export { dailyInteractive } from './dialogue-loop';
+export { runDailyInteractive, dailyInteractive } from './dialogue-loop';

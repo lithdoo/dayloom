@@ -1,10 +1,11 @@
 import { Command } from 'commander';
 import {
   addLangOption,
+  runSettleInteractive,
   settleFromProposal,
-  settleWithAi,
   type Translator,
 } from '@dayloom/core';
+import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerSettleCommand(program: Command, t: Translator): void {
   const command = program.command('settle')
@@ -21,13 +22,25 @@ export function registerSettleCommand(program: Command, t: Translator): void {
     .action(async (opts: { dir: string; proposal?: string; dryRun?: boolean; yes?: boolean; keepSession?: boolean; maxToolRounds: number; mcpBaseUrl?: string; mcpToken?: string }) => {
       try {
         const common = { dryRun: opts.dryRun, yes: opts.yes, t };
-        const result = opts.proposal
-          ? settleFromProposal(opts.dir, opts.proposal, common)
-          : await settleWithAi(opts.dir, { ...common, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN });
-        process.stdout.write(`${result.description}\n`);
-        if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
-        else if ('proposalPath' in result && typeof result.proposalPath === 'string') process.stdout.write(`${t('cli.settle.generatedProposal', { proposalPath: result.proposalPath })}\n${t('cli.settle.reviewProposal')}\n`);
-        else process.stdout.write(`${t('cli.common.dryRunOnly')}\n`);
+        if (opts.proposal) {
+          const result = settleFromProposal(opts.dir, opts.proposal, common);
+          process.stdout.write(`${result.description}\n`);
+          if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
+          else process.stdout.write(`${t('cli.common.dryRunOnly')}\n`);
+          return;
+        }
+        const io = createCliSessionIO();
+        const exit = await runSettleInteractive(opts.dir, { ...common, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN, io });
+        if (exit.kind === 'completed' && exit.result) {
+          const result = exit.result;
+          process.stdout.write(`${result.description}\n`);
+          if (result.applied) process.stdout.write(`${t('cli.settle.settled', { day: result.day, nextDay: result.nextDay })}\n`);
+          else if (result.proposalPath) process.stdout.write(`${t('cli.settle.generatedProposal', { proposalPath: result.proposalPath })}\n${t('cli.settle.reviewProposal')}\n`);
+          else process.stdout.write(`${t('cli.common.dryRunOnly')}\n`);
+        } else if (exit.kind === 'shell-command') {
+          process.stderr.write(`Shell command /${exit.command} is not available in CLI mode (Phase 3: runGameShell).\n`);
+          process.exitCode = 1;
+        }
       } catch (err) {
         console.error(t('cli.error'), err instanceof Error ? err.message : err);
         process.exitCode = 1;

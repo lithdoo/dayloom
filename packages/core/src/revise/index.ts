@@ -1,5 +1,5 @@
 import { applyChanges, describeChanges } from './apply-payload';
-import { reviseWorldInteractive } from './dialogue-loop';
+import { runReviseInteractive, reviseWorldInteractive } from './dialogue-loop';
 import { assertInitializedWorld, resolveWorldRoot } from './guard';
 import { readRevisePayload } from './parse-payload';
 import { projectRevisePayload } from './project-payload';
@@ -20,4 +20,4 @@ export function reviseWorldFromProposal(dir: string, proposalPath: string, optio
   return { worldRoot, description, revisionId: applyChanges(worldRoot, payload, changes) };
 }
 
-export { reviseWorldInteractive };
+export { runReviseInteractive, reviseWorldInteractive };

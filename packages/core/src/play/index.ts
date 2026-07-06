@@ -1,3 +1,15 @@
-import { readCurrent, resolveWorldRoot } from './guard'; import { runPlayLoop } from './event-loop'; import type { PlayOptions } from './types';
-export async function playInteractive(dir:string,options:PlayOptions={}):Promise<void>{const worldRoot=resolveWorldRoot(dir);const {day}=readCurrent(worldRoot);await runPlayLoop(worldRoot,day,options);}
+import { readCurrent, resolveWorldRoot } from './guard';
+import { runPlayLoop } from './event-loop';
+import type { PlayInteractiveOptions } from './event-loop';
+import type { SessionExit } from '../session-io';
+
+export async function runPlayInteractive(dir: string, options: PlayInteractiveOptions): Promise<SessionExit> {
+  const worldRoot = resolveWorldRoot(dir);
+  const { day } = readCurrent(worldRoot);
+  return runPlayLoop(worldRoot, day, options);
+}
+
+/** @deprecated Use runPlayInteractive */
+export const playInteractive = runPlayInteractive;
+
 export * from './types';

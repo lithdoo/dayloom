@@ -1,10 +1,7 @@
 import { Command } from 'commander';
-import {
-  InitCancelledError,
-  addLangOption,
-  runNext,
-  type Translator,
-} from '@dayloom/core';
+import { addLangOption, type Translator } from '@dayloom/core';
+import { InitCancelledError, runNext } from '@dayloom/core';
+import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerNextCommand(program: Command, t: Translator): void {
   const command = program.command('next')
@@ -41,7 +38,8 @@ export function registerNextCommand(program: Command, t: Translator): void {
       mcpToken?: string;
     }) => {
       try {
-        await runNext(opts.dir, {
+        const io = createCliSessionIO();
+        const result = await runNext(opts.dir, {
           statusOnly: opts.status,
           confirm: opts.confirm,
           quick: opts.quick,
@@ -56,7 +54,13 @@ export function registerNextCommand(program: Command, t: Translator): void {
           mcpBaseUrl: opts.mcpBaseUrl,
           mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN,
           t,
+          io,
         });
+        if (opts.status) return;
+        if (result.exit?.kind === 'shell-command') {
+          process.stderr.write(`Shell command /${result.exit.command} is not available in CLI mode (Phase 3: runGameShell).\n`);
+          process.exitCode = 1;
+        }
       } catch (err) {
         if (err instanceof InitCancelledError) {
           process.stderr.write(`${err.message}\n`);

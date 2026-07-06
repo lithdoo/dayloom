@@ -1,16 +1,14 @@
 import {
   DEFAULT_MAX_INTERVIEW_ROUNDS,
-  FINALIZE_USER_PROMPT,
   OPENING_ASSISTANT,
 } from './constants';
 import { isInterviewReady, getInterviewMissingFromTranscript } from './checklist';
 import { InitCancelledError } from './errors';
 import { parseInterviewStatus } from './parse-assistant';
 import { assertPromptpileOk, runPromptpile } from './promptpile-run';
-import { readUserInput } from './read-user-input';
-import { askYesNo } from '../revise/read-user-input';
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
+import { parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
 import {
   appendUserMessage,
   buildTranscript,
@@ -44,43 +42,58 @@ async function runInterviewRound(session: InitSession, onDelta?: (text: string) 
   return getLatestAssistantText(session.messagesDir);
 }
 
+export type InterviewLoopResult =
+  | { session: InitSession; transcript: string }
+  | SessionExit;
+
 export async function runInterviewLoop(
-  maxRounds: number = DEFAULT_MAX_INTERVIEW_ROUNDS
-): Promise<{ session: InitSession; transcript: string }> {
+  io: SessionIO,
+  maxRounds: number = DEFAULT_MAX_INTERVIEW_ROUNDS,
+): Promise<InterviewLoopResult> {
   const t = createTranslator();
   const session = createSession();
   writeOpeningAssistant(session.messagesDir, OPENING_ASSISTANT);
 
-  process.stdout.write('\n--- World building interview ---\n\n');
-  process.stdout.write(stripDisplay(OPENING_ASSISTANT));
-  process.stdout.write('\n');
+  io.write('\n--- World building interview ---\n\n');
+  io.write(stripDisplay(OPENING_ASSISTANT));
+  io.write('\n');
 
   for (let round = 1; round <= maxRounds; round += 1) {
     session.round = round;
-    let userText: string;
-    try {
-      userText = await readUserInput({ commandHint: formatAvailableCommands(INIT_COMMANDS, t), t });
-    } catch (err) {
-      if (err instanceof InitCancelledError) {
-        throw new InitCancelledError(err.message, session);
+    let userText: string | undefined;
+    while (userText === undefined) {
+      try {
+        const input = await io.readInput({
+          commandHint: formatAvailableCommands(INIT_COMMANDS, t),
+          instruction: t('input.replyInstruction'),
+          userPrompt: t('input.userPrompt'),
+          emptyBehavior: 'ask-exit',
+        });
+        if (input !== undefined) userText = input;
+      } catch (err) {
+        if (err instanceof InitCancelledError) {
+          throw new InitCancelledError(err.message, session);
+        }
+        throw err;
       }
-      throw err;
     }
 
     const command = parseSessionCommand(userText, INIT_COMMANDS);
     if (command.kind === 'unknown') {
-      process.stdout.write(formatUnknownCommand(command.raw, INIT_COMMANDS, t));
+      const shell = parseShellLevelCommand(userText);
+      if (shell) return { kind: 'shell-command', command: shell, raw: userText };
+      io.write(formatUnknownCommand(command.raw, INIT_COMMANDS, t));
       round -= 1;
       continue;
     }
     if (command.kind === 'command') {
       if (command.name === 'help') {
-        process.stdout.write(formatCommandHelp(INIT_COMMANDS, t));
+        io.write(formatCommandHelp(INIT_COMMANDS, t));
         round -= 1;
         continue;
       }
       if (command.name === 'status') {
-        printMissingTopics(buildTranscript(session.messagesDir));
+        printMissingTopics(io, buildTranscript(session.messagesDir));
         round -= 1;
         continue;
       }
@@ -94,29 +107,29 @@ export async function runInterviewLoop(
         const transcript = buildTranscript(session.messagesDir);
         const missing = getInterviewMissingFromTranscript(transcript);
         if (missing.length > 0) {
-          process.stdout.write(`Possible missing topics: ${missing.join(', ')}.\n`);
-          if (!await askYesNo('Continue saving anyway? (Y/N): ')) {
+          io.write(`Possible missing topics: ${missing.join(', ')}.\n`);
+          if (!await io.confirm('Continue saving anyway? (Y/N): ')) {
             round -= 1;
             continue;
           }
         }
-        process.stdout.write('\nInterview complete. Finalizing world save...\n');
+        io.write('\nInterview complete. Finalizing world save...\n');
         return { session, transcript };
       }
     }
 
     appendUserMessage(session.messagesDir, userText);
-    process.stdout.write('\n--- Assistant ---\n\n');
-    const displayStream = createInitDisplayStream();
+    io.write('\n--- Assistant ---\n\n');
+    const displayStream = createInitDisplayStream(io);
     const assistantText = await runInterviewRound(session, text => displayStream.push(text));
     displayStream.flush();
-    process.stdout.write('\n');
+    io.write('\n');
 
     const status = parseInterviewStatus(assistantText);
     const transcript = buildTranscript(session.messagesDir);
 
     if (isInterviewReady(status, transcript)) {
-      process.stdout.write('\nInterview complete. Finalizing world save...\n');
+      io.write('\nInterview complete. Finalizing world save...\n');
       return { session, transcript };
     }
 
@@ -125,7 +138,7 @@ export async function runInterviewLoop(
         ...status.missing,
         ...getInterviewMissingFromTranscript(transcript),
       ];
-      process.stdout.write(
+      io.write(
         `\nNote: model marked ready but checklist incomplete (${[...new Set(gaps)].join(', ')}). Continuing...\n`
       );
     }
@@ -140,7 +153,7 @@ function stripDisplay(text: string): string {
   return text.replace(/```(?:json\s+)?init-status\s*\n[\s\S]*?```/gi, '').trim();
 }
 
-function createInitDisplayStream(): { push(text: string): void; flush(): void } {
+function createInitDisplayStream(io: SessionIO): { push(text: string): void; flush(): void } {
   let buffer = '';
   let suppressBlock = false;
 
@@ -156,9 +169,9 @@ function createInitDisplayStream(): { push(text: string): void; flush(): void } 
       suppressBlock = true;
       return;
     }
-    process.stdout.write(line);
+    io.write(line);
     if (hasNewline) {
-      process.stdout.write('\n');
+      io.write('\n');
     }
   };
 
@@ -181,9 +194,9 @@ function createInitDisplayStream(): { push(text: string): void; flush(): void } 
   };
 }
 
-function printMissingTopics(transcript: string): void {
+function printMissingTopics(io: SessionIO, transcript: string): void {
   const missing = getInterviewMissingFromTranscript(transcript);
-  process.stdout.write(missing.length > 0
+  io.write(missing.length > 0
     ? `Likely missing topics: ${missing.join(', ')}\n`
     : 'No likely missing topics.\n');
 }

@@ -1,21 +1,18 @@
-import { createFilteredStreamOutput } from '../shared/filtered-stream-output';
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
-import { withLoading } from '../utils/loading';
+import { parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
 import { DEFAULT_MAX_TOOL_ROUNDS, OPENING_ASSISTANT } from './constants';
 import { applyDailyPlan, describeChanges } from './apply-plan';
 import { finalizeDailyPlan } from './finalize';
 import { assertDailyCanStart, assertInitializedWorld, readCurrentDay, readLastCommittedDay, resolveWorldRoot } from './guard';
-import { effectiveDailyAction, fallbackDailyIntent, parseExplicitDailyAction, routeDailyIntent } from './intent-router';
 import { connectOrStartGateway } from './mcp-gateway';
 import { assertAllowedPlayerContextRoot, exportReadonlyTools } from './mcp-tools';
 import { parseDailyStatus } from './parse-assistant';
 import { buildPlayerContext } from './player-context';
 import { projectDailyPlan } from './project-plan';
 import { runPromptpileUntilText } from './promptpile-loop';
-import { askYesNo, readDailyUserInput } from './read-user-input';
 import { appendUserMessage, buildTranscript, cleanupSession, createDailySession, getLatestAssistantText, readDraft, writeDraft } from './session';
-import type { DailyAction, DailyOptions, DailySession } from './types';
+import type { DailyOptions, DailyResult, DailySession } from './types';
 import { validateDailyPlan } from './validate-plan';
 
 type DailyCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
@@ -28,7 +25,13 @@ const DAILY_COMMANDS: Array<SessionCommandSpec<DailyCommand>> = [
   { name: 'exit', summary: 'Exit and preserve the daily session.', summaryKey: 'commands.exit.summary', hintKey: 'commands.exit.hint' },
 ];
 
-export async function dailyInteractive(dir: string, options: DailyOptions = {}): Promise<void> {
+export type DailyInteractiveOptions = DailyOptions & { io: SessionIO };
+
+export async function runDailyInteractive(
+  dir: string,
+  options: DailyInteractiveOptions,
+): Promise<SessionExit<DailyResult>> {
+  const { io, ...dailyOptions } = options;
   const t = createTranslator();
   if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error('DEEPSEEK_API_KEY is not set. Interactive daily requires an API key.');
   const worldRoot = resolveWorldRoot(dir);
@@ -37,82 +40,92 @@ export async function dailyInteractive(dir: string, options: DailyOptions = {}):
   const day = readCurrentDay(worldRoot);
   const lastCommittedDay = readLastCommittedDay(worldRoot);
   const session = createDailySession();
-  let preserveSession = options.keepSession ?? false;
+  let preserveSession = dailyOptions.keepSession ?? false;
   let gateway: Awaited<ReturnType<typeof connectOrStartGateway>> | undefined;
-  const maxToolRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+  const maxToolRounds = dailyOptions.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
 
   try {
-    await withLoading('正在准备当日计划...', async loading => {
+    await io.withLoading('正在准备当日计划...', async loading => {
       buildPlayerContext(worldRoot, session.playerContextRoot);
       loading.update('正在启动只读服务...');
-      gateway = await connectOrStartGateway(session.root, session.playerContextRoot, options.mcpBaseUrl, options.mcpToken);
+      gateway = await connectOrStartGateway(session.root, session.playerContextRoot, dailyOptions.mcpBaseUrl, dailyOptions.mcpToken);
       loading.update('正在准备主角上下文...');
       await exportReadonlyTools(gateway.baseUrl, gateway.token, session.toolsFile);
       await assertAllowedPlayerContextRoot(gateway.baseUrl, gateway.token, session.playerContextRoot, session.root);
     });
     if (!gateway) throw new Error('Failed to initialize readonly gateway');
-    process.stdout.write(`\n--- Daily planning session ---\n\n${OPENING_ASSISTANT}\n`);
+    io.write(`\n--- Daily planning session ---\n\n${OPENING_ASSISTANT}\n`);
 
     while (true) {
-      const input = await readDailyUserInput({ commandHint: formatAvailableCommands(DAILY_COMMANDS, t), t });
+      const input = await io.readInput({
+        commandHint: formatAvailableCommands(DAILY_COMMANDS, t),
+        instruction: t('input.messageInstruction'),
+        userPrompt: t('input.userPrompt'),
+        emptyBehavior: 'ask-save-draft',
+      });
       if (input === undefined) {
         preserveSession = true;
-        process.stdout.write(`Daily draft saved in session: ${session.root}\n`);
-        return;
+        io.write(`Daily draft saved in session: ${session.root}\n`);
+        return { kind: 'saved', sessionPath: session.root };
       }
 
       const command = parseSessionCommand(input, DAILY_COMMANDS);
       if (command.kind === 'unknown') {
-        process.stdout.write(formatUnknownCommand(command.raw, DAILY_COMMANDS, t));
+        const shell = parseShellLevelCommand(input);
+        if (shell) return { kind: 'shell-command', command: shell, raw: input };
+        io.write(formatUnknownCommand(command.raw, DAILY_COMMANDS, t));
         continue;
       }
       if (command.kind === 'command' && command.name === 'help') {
-        process.stdout.write(formatCommandHelp(DAILY_COMMANDS, t));
+        io.write(formatCommandHelp(DAILY_COMMANDS, t));
         continue;
       }
 
       if (command.kind === 'command' && command.name === 'status') {
-        process.stdout.write(`${JSON.stringify(readDraft(session), null, 2)}\n`);
+        io.write(`${JSON.stringify(readDraft(session), null, 2)}\n`);
         continue;
       }
       if (command.kind === 'command' && command.name === 'exit') {
         preserveSession = true;
-        process.stdout.write(`Daily draft saved in session: ${session.root}\n`);
-        return;
+        io.write(`Daily draft saved in session: ${session.root}\n`);
+        return { kind: 'saved', sessionPath: session.root };
       }
       if (command.kind === 'command' && command.name === 'cancel') {
-        if (await askYesNo('Discard the current daily draft? (Y/N): ')) {
-          process.stdout.write('Daily planning cancelled.\n');
-          return;
+        if (await io.confirm('Discard the current daily draft? (Y/N): ')) {
+          io.write('Daily planning cancelled.\n');
+          return { kind: 'cancelled' };
         }
-        process.stdout.write('Daily planning continues.\n');
+        io.write('Daily planning continues.\n');
         continue;
       }
       if (command.kind === 'command' && command.name === 'save') {
-        const applied = await finalizeAndApplyPlan(worldRoot, day, lastCommittedDay, session, gateway.baseUrl, gateway.token, maxToolRounds, options);
-        if (applied) return;
+        const result = await finalizeAndApplyPlan(worldRoot, day, lastCommittedDay, session, gateway.baseUrl, gateway.token, maxToolRounds, io, dailyOptions);
+        if (result) return { kind: 'completed', result };
         continue;
       }
 
       appendUserMessage(session.messagesDir, input);
-      process.stdout.write('\nAI> ');
-      const stream = createFilteredStreamOutput({ hiddenBlocks: ['daily-status'] });
+      io.write('\nAI> ');
+      const stream = io.createStreamWriter({ hiddenBlocks: ['daily-status'] });
       const reply = await runPromptpileUntilText(session, gateway.baseUrl, gateway.token, maxToolRounds, text => stream.push(text));
       stream.flush();
       try {
         const status = parseDailyStatus(reply);
         if (status) writeDraft(session, status);
       } catch (error) {
-        process.stderr.write(`Warning: ${error instanceof Error ? error.message : error}\n`);
+        io.warn(`Warning: ${error instanceof Error ? error.message : error}\n`);
       }
-      process.stdout.write('\n');
+      io.write('\n');
     }
   } finally {
     if (gateway) await gateway.stop();
-    if (preserveSession) process.stderr.write(`Daily session preserved at: ${session.root}\n`);
+    if (preserveSession) io.warn(`Daily session preserved at: ${session.root}\n`);
     else cleanupSession(session);
   }
 }
+
+/** @deprecated Use runDailyInteractive */
+export const dailyInteractive = runDailyInteractive;
 
 async function finalizeAndApplyPlan(
   worldRoot: string,
@@ -122,30 +135,31 @@ async function finalizeAndApplyPlan(
   baseUrl: string,
   token: string | undefined,
   maxToolRounds: number,
+  io: SessionIO,
   options: DailyOptions,
-): Promise<boolean> {
+): Promise<DailyResult | null> {
   const draft = readDraft(session);
   if (!draft.user_intent.trim()) {
-    process.stdout.write('No daily intent collected yet.\n');
-    return false;
+    io.write('No daily intent collected yet.\n');
+    return null;
   }
   const transcript = buildTranscript(session.messagesDir);
-  const plan = await withLoading('正在生成正式计划...', () =>
-    finalizeDailyPlan(transcript, draft, day, session.toolsFile, baseUrl, token, maxToolRounds, options.keepSession));
+  const plan = await io.withLoading('正在生成正式计划...', () =>
+    finalizeDailyPlan(transcript, draft, day, session.toolsFile, baseUrl, token, maxToolRounds, options.keepSession, io));
   validateDailyPlan(plan, day);
   const changes = projectDailyPlan(plan, transcript, lastCommittedDay);
   const description = describeChanges(worldRoot, changes);
-  process.stdout.write(`\n${description}\n`);
+  io.write(`\n${description}\n`);
   if (options.dryRun) {
-    process.stdout.write('Dry run only. No files changed.\n');
-    return false;
+    io.write('Dry run only. No files changed.\n');
+    return null;
   }
-  if (!options.yes && !await askYesNo(`Generate and apply the ${day} plan? (Y/N): `)) {
-    process.stdout.write('Daily plan not applied.\n');
-    return false;
+  if (!options.yes && !await io.confirm(`Generate and apply the ${day} plan? (Y/N): `)) {
+    io.write('Daily plan not applied.\n');
+    return null;
   }
   assertDailyCanStart(worldRoot);
   applyDailyPlan(worldRoot, plan, changes);
-  process.stdout.write('Applied daily plan.\n');
-  return true;
+  io.write('Applied daily plan.\n');
+  return { worldRoot, description, applied: true };
 }

@@ -12,6 +12,8 @@ export interface RunProcessOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   quiet?: boolean;
+  onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
   outputPile?: {
     fd: number;
     onData: (chunk: string) => void;
@@ -41,12 +43,12 @@ export function runProcess(command: string, args: string[], options: RunProcessO
     child.stdout?.on('data', chunk => {
       const text = chunk.toString();
       stdout += text;
-      if (!options.quiet) process.stdout.write(text);
+      if (!options.quiet) options.onStdout?.(text);
     });
     child.stderr?.on('data', chunk => {
       const text = chunk.toString();
       stderr += text;
-      if (!options.quiet) process.stderr.write(text);
+      if (!options.quiet) options.onStderr?.(text);
     });
 
     if (options.outputPile) {

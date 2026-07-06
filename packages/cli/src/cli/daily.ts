@@ -2,9 +2,10 @@ import { Command } from 'commander';
 import {
   addLangOption,
   dailyFromProposal,
-  dailyInteractive,
+  runDailyInteractive,
   type Translator,
 } from '@dayloom/core';
+import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerDailyCommand(program: Command, t: Translator): void {
   const command = program.command('daily')
@@ -21,7 +22,12 @@ export function registerDailyCommand(program: Command, t: Translator): void {
     .action(async (opts: { dir: string; proposal?: string; dryRun?: boolean; yes?: boolean; keepSession?: boolean; maxToolRounds: number; mcpBaseUrl?: string; mcpToken?: string }) => {
       try {
         if (!opts.proposal) {
-          await dailyInteractive(opts.dir, { dryRun: opts.dryRun, yes: opts.yes, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN });
+          const io = createCliSessionIO();
+          const exit = await runDailyInteractive(opts.dir, { dryRun: opts.dryRun, yes: opts.yes, keepSession: opts.keepSession, maxToolRounds: opts.maxToolRounds, mcpBaseUrl: opts.mcpBaseUrl, mcpToken: opts.mcpToken ?? process.env.PROMPTPILE_MCP_TOKEN, io });
+          if (exit.kind === 'shell-command') {
+            process.stderr.write(`Shell command /${exit.command} is not available in CLI mode (Phase 3: runGameShell).\n`);
+            process.exitCode = 1;
+          }
           return;
         }
         const result = dailyFromProposal(opts.dir, opts.proposal, { dryRun: opts.dryRun, yes: opts.yes });

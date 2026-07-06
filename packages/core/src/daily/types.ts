@@ -31,6 +31,8 @@ export interface DailyDraft {
   open_questions: string[];
 }
 
+export interface DailyResult { worldRoot: string; description: string; applied: boolean; }
+
 export interface DailyOptions {
   dryRun?: boolean;
   yes?: boolean;

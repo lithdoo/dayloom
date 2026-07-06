@@ -189,8 +189,8 @@ CLI 读取 `exit.result` 时无需到处类型断言。
 | shell 等待层级 | `/status`（World 概览）、`/help`（shell 命令表） | `runGameShell` 直接处理 |
 | shell 级（可打断 session） | `/revise`、`/next`、`/quit` | session loop 返回 `shell-command` |
 
-- [ ] Phase 2：各 loop 在 `parseSessionCommand` 之后、处理 session 命令之前，先检测 shell-level 命令
-- [ ] `runPlay` / `runDaily` / `runRevise` / `runInit` 等 interactive 函数返回 `Promise<SessionExit>`（而非 `void`）
+- [x] Phase 2：各 loop 在 `parseSessionCommand` 之后、处理 session 命令之前，先检测 shell-level 命令
+- [x] `runPlay` / `runDaily` / `runRevise` / `runInit` 等 interactive 函数返回 `Promise<SessionExit>`（而非 `void`）
 - [ ] `runGameShell` 收到 `shell-command: revise` 时调用 `runRevise`，完成后回到 shell 等待层
 
 ---
@@ -374,22 +374,22 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 2.1 core：`session-io/types.ts`
 
-- [ ] 定义完整 `SessionIO`、`InputOptions`、`SessionExit`（见上文）
-- [ ] 仅导出类型，无实现
+- [x] 定义完整 `SessionIO`、`InputOptions`、`SessionExit`（见上文）
+- [x] 仅导出类型，无实现
 
 ### 2.2 从 core 迁出 terminal I/O → cli
 
-- [ ] `terminal-input.ts`、`read-user-input` / `askYesNo`、`utils/loading` spinner 迁入 `packages/cli/src/session-io/`
-- [ ] core 删除上述文件及所有 `readline` / `process.stdout` / `process.stderr` 直接调用
+- [x] `terminal-input.ts`、`read-user-input` / `askYesNo`、`utils/loading` spinner 迁入 `packages/cli/src/session-io/`
+- [x] core 删除上述文件及所有 `readline` / `process.stdout` / `process.stderr` 直接调用
 
 ### 2.3 cli：`createCliSessionIO()`
 
-- [ ] 实现 `write` / `warn` / `error`（warn/error 写 stderr，与现行为一致）
-- [ ] `readInput` 按 `emptyBehavior` 分支：
+- [x] 实现 `write` / `warn` / `error`（warn/error 写 stderr，与现行为一致）
+- [x] `readInput` 按 `emptyBehavior` 分支：
   - `ask-exit` → init 逻辑
   - `ask-save-draft` → daily/revise 逻辑
   - `ignore` → play / shell 逻辑（空输入 no-op，继续等待）
-- [ ] `withLoading` → `loading-spinner.ts`
+- [x] `withLoading` → `loading-spinner.ts`
 
 ### 2.4 改造 core interactive loop
 
@@ -402,25 +402,25 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 | `settle/index.ts` | `io.warn` / `io.error` 替换 `process.stderr.write` |
 | `next/index.ts` | 拆层准备（Phase 3 完成拆分） |
 
-- [ ] 所有 `process.stderr.write`（warning、session path）→ `io.warn` 或 `io.write`
-- [ ] 各 loop 识别 shell 级命令并返回 `SessionExit`，不吞掉 `/revise`
+- [x] 所有 `process.stderr.write`（warning、session path）→ `io.warn` 或 `io.write`
+- [x] 各 loop 识别 shell 级命令并返回 `SessionExit`，不吞掉 `/revise`
 
 ### 2.5 API 重命名
 
-- [ ] 交互函数加 `Interactive` 后缀，`io` 必填，返回 `Promise<SessionExit<TResult>>`（分模块收紧泛型）
-- [ ] 非交互函数保持 `FromProposal` / `Quick` 命名，无 `io`
-- [ ] deprecated alias 保留一个版本周期
+- [x] 交互函数加 `Interactive` 后缀，`io` 必填，返回 `Promise<SessionExit<TResult>>`（分模块收紧泛型）
+- [x] 非交互函数保持 `FromProposal` / `Quick` 命名，无 `io`
+- [x] deprecated alias 保留一个版本周期
 
 ### 2.6 cli 适配
 
-- [ ] 各 action：`const io = createCliSessionIO(); await runPlayInteractive(dir, { io, ... })`
+- [x] 各 action：`const io = createCliSessionIO(); await runPlayInteractive(dir, { io, ... })`
 
 ### 2.7 验证
 
-- [ ] `npm test` 全绿
-- [ ] examples smoke 通过
-- [ ] **core 必须无** readline / stdout / stderr / spinner / commander import
-- [ ] cli 提供完整 `createCliSessionIO`
+- [x] `npm test` 全绿
+- [x] examples smoke 通过
+- [x] **core 必须无** readline / stdout / stderr / spinner / commander import
+- [x] cli 提供完整 `createCliSessionIO`
 
 **预估**：2–3 天 | **风险**：中
 

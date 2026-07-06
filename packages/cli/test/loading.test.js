@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startLoading, withLoading } = require('../../dist/utils/loading.js');
+const { startLoading, withLoading } = require('../dist/session-io/loading-spinner.js');
 
 function captureStream(isTTY = true) {
   let output = '';
