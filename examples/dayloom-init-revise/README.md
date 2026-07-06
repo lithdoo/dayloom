@@ -1,17 +1,17 @@
 # dayloom init + revise example
 
-验证 [`packages/dayloom`](../../packages/dayloom/) 的 World 初始化与设定维护流程。
+验证 monorepo 根目录下 `@dayloom/cli` 的 World 初始化与设定维护流程。
 
 - `init --quick`：创建空骨架，用于自动化 smoke。
 - `revise --proposal`：对固定提案执行 dry-run 与受控写盘，用于自动化 smoke。
 - `init` + `revise` interactive：首次运行通过 AI 创建 World，后续运行通过 AI + MCP 查询和维护现有设定。
 
-存档布局见 [`packages/dayloom/prompts/spec.md`](../../packages/dayloom/prompts/spec.md) §4。
+存档布局见 [`packages/core/prompts/spec.md`](../../packages/core/prompts/spec.md) §4。
 
 ## Prerequisites
 
 - Node.js
-- 脚本会在 [`packages/dayloom`](../../packages/dayloom/) 安装依赖并重新构建，无需在本目录安装 dayloom。
+- 脚本会在 [monorepo 根目录](../../) 安装依赖并重新构建，无需在本目录安装 dayloom。
 - Quick 与 proposal smoke 无需 API key。
 - Interactive 需要 `DEEPSEEK_API_KEY`。
 - Interactive revise 需要可用的 `promptpile-mcp` CLI，或已运行的 promptpile-mcp gateway。
@@ -148,7 +148,7 @@ rm -rf output/world-interactive
 | 现象 | 处理 |
 |------|------|
 | `DEEPSEEK_API_KEY is not set` | 设置环境变量或创建 `.env`；Windows 使用 `setx` 后需新开 cmd。 |
-| `spawn promptpile ENOENT` | 在 `packages/dayloom` 执行 `npm install`，或重新运行脚本。 |
+| `spawn promptpile ENOENT` | 在 monorepo 根目录执行 `npm install`，或重新运行脚本。 |
 | `spawn promptpile-mcp ENOENT` | 设置 `PROMPTPILE_MCP_BIN`，安装 `promptpile-mcp` CLI，或使用 `PROMPTPILE_MCP_BASE_URL`。 |
 | filesystem MCP 首次安装失败 | 确认网络可访问 npm registry；脚本会在 `.runtime/` 中执行最小安装。 |
 | 需要检查 AI 临时 session | interactive 脚本默认启用 `--keep-session`，路径会打印到 stderr。 |

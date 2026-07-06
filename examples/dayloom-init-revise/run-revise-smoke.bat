@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 set "OUT_DIR=%~dp0output\world-revise-smoke"
-set "DAY_LOOM_DIR=%~dp0..\..\packages\dayloom"
+set "DAY_LOOM_DIR=%~dp0..\.."
 
 call "%~dp0scripts\ensure-dayloom.bat" init
 if errorlevel 1 exit /b 1

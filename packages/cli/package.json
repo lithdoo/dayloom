@@ -1,0 +1,21 @@
+{
+  "name": "@dayloom/cli",
+  "version": "0.1.0-beta.5",
+  "description": "Command-line interface for Dayloom.",
+  "main": "./dist/index.js",
+  "bin": {
+    "dayloom": "./dist/main.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@dayloom/core": "*",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  }
+}

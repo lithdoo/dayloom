@@ -22,7 +22,7 @@ if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
 fi
 
 OUT_DIR="$SCRIPT_DIR/output/world-daily-interactive"
-export DAY_LOOM_DIR="$SCRIPT_DIR/../../packages/dayloom"
+export DAY_LOOM_DIR="$SCRIPT_DIR/../.."
 export DAY_LOOM_FILESYSTEM_MCP_BIN="$SCRIPT_DIR/.runtime/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"
 
 if [[ ! -f "$OUT_DIR/manifest.yaml" ]]; then

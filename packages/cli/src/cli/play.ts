@@ -1,6 +1,5 @@
 import { Command } from 'commander';
-import { addLangOption, type Translator } from '../i18n';
-import { playInteractive } from '../play';
+import { addLangOption, playInteractive, type Translator } from '@dayloom/core';
 
 export function registerPlayCommand(program: Command, t: Translator): void {
   const command = program.command('play')

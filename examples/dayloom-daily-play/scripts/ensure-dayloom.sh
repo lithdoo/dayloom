@@ -8,11 +8,11 @@ fi
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 EXAMPLE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
-DAY_LOOM_DIST="$DAY_LOOM_DIR/dist/index.js"
+DAY_LOOM_DIST="$DAY_LOOM_DIR/packages/cli/dist/main.js"
 FILESYSTEM_MCP_DIST="$EXAMPLE_ROOT/.runtime/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"
 
 if ! (cd "$DAY_LOOM_DIR" && node -e "require.resolve('promptpile/package.json')" >/dev/null 2>&1); then
-  echo "Installing dependencies in packages/dayloom..."
+  echo "Installing dependencies in dayloom monorepo..."
   (cd "$DAY_LOOM_DIR" && npm install)
 fi
 

@@ -1,6 +1,10 @@
 import { Command } from 'commander';
-import { settleFromProposal, settleWithAi } from '../settle';
-import { addLangOption, type Translator } from '../i18n';
+import {
+  addLangOption,
+  settleFromProposal,
+  settleWithAi,
+  type Translator,
+} from '@dayloom/core';
 
 export function registerSettleCommand(program: Command, t: Translator): void {
   const command = program.command('settle')

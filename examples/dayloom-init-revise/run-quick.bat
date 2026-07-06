@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "OUT_DIR=%~dp0output\world-quick"
-set "DAY_LOOM_DIR=%~dp0..\..\packages\dayloom"
+set "DAY_LOOM_DIR=%~dp0..\.."
 
 call "%~dp0scripts\ensure-dayloom.bat"
 if errorlevel 1 exit /b 1

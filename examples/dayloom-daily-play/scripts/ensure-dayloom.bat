@@ -7,14 +7,14 @@ if not defined DAY_LOOM_DIR (
 )
 
 set "EXAMPLE_ROOT=%~dp0.."
-set "DAY_LOOM_DIST=%DAY_LOOM_DIR%\dist\index.js"
+set "DAY_LOOM_DIST=%DAY_LOOM_DIR%\packages\cli\dist\main.js"
 set "FILESYSTEM_MCP_DIST=%EXAMPLE_ROOT%\.runtime\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js"
 
 pushd "%DAY_LOOM_DIR%"
 call node -e "require.resolve('promptpile/package.json')" >nul 2>nul
 if errorlevel 1 (
   popd
-  echo Installing dependencies in packages/dayloom...
+  echo Installing dependencies in dayloom monorepo...
   pushd "%DAY_LOOM_DIR%"
   call npm install
   if errorlevel 1 ( popd & exit /b 1 )

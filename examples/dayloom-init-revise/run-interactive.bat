@@ -23,7 +23,7 @@ if not defined DEEPSEEK_API_KEY (
 )
 
 set "OUT_DIR=%~dp0output\world-interactive"
-set "DAY_LOOM_DIR=%~dp0..\..\packages\dayloom"
+set "DAY_LOOM_DIR=%~dp0..\.."
 set "DAY_LOOM_FILESYSTEM_MCP_BIN=%~dp0.runtime\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js"
 
 if exist "%OUT_DIR%\manifest.yaml" goto revise

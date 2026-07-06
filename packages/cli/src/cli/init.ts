@@ -1,7 +1,11 @@
 import { Command } from 'commander';
-import { InitCancelledError } from '../init/errors';
-import { initWorldInteractive, initWorldQuick } from '../init';
-import { addLangOption, type Translator } from '../i18n';
+import {
+  InitCancelledError,
+  addLangOption,
+  initWorldInteractive,
+  initWorldQuick,
+  type Translator,
+} from '@dayloom/core';
 
 export function registerInitCommand(program: Command, t: Translator): void {
   const command = program

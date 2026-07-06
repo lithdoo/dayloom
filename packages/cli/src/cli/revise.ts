@@ -1,6 +1,10 @@
 import { Command } from 'commander';
-import { reviseWorldFromProposal, reviseWorldInteractive } from '../revise';
-import { addLangOption, type Translator } from '../i18n';
+import {
+  addLangOption,
+  reviseWorldFromProposal,
+  reviseWorldInteractive,
+  type Translator,
+} from '@dayloom/core';
 
 export function registerReviseCommand(program: Command, t: Translator): void {
   const command = program.command('revise')

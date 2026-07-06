@@ -339,30 +339,30 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 1.1 拆分 core
 
-- [ ] 新建 `packages/core/`，迁入引擎代码 + **暂留** legacy terminal I/O（`terminal-input`、`read-user-input`、`utils/loading` 等）
-- [ ] **仅迁出** `cli/` 目录（commander 注册）
-- [ ] `name: "@dayloom/core"`，无 `bin`
-- [ ] `src/index.ts` 仅 export，无 `parseCli()`
+- [x] 新建 `packages/core/`，迁入引擎代码 + **暂留** legacy terminal I/O（`terminal-input`、`read-user-input`、`utils/loading` 等）
+- [x] **仅迁出** `cli/` 目录（commander 注册）
+- [x] `name: "@dayloom/core"`，无 `bin`
+- [x] `src/index.ts` 仅 export，无 `parseCli()`
 
 ### 1.2 新建 cli 包
 
-- [ ] 迁入 `src/cli/*`
-- [ ] 新建 `src/index.ts`（`export { parseCli }`，无副作用）与 `src/main.ts`（`#!/usr/bin/env node` + `parseCli(process.argv)`）
-- [ ] `package.json`：`main: "./dist/index.js"`，`bin: { "dayloom": "./dist/main.js" }`
-- [ ] `import { parseCli } from '@dayloom/cli'` 不会自动执行 CLI，与 core 纯入口原则一致
-- [ ] 依赖 `@dayloom/core`；各 action 仍调用 core 现有函数（core 内 legacy I/O 照常工作）
+- [x] 迁入 `src/cli/*`
+- [x] 新建 `src/index.ts`（`export { parseCli }`，无副作用）与 `src/main.ts`（`#!/usr/bin/env node` + `parseCli(process.argv)`）
+- [x] `package.json`：`main: "./dist/index.js"`，`bin: { "dayloom": "./dist/main.js" }`
+- [x] `import { parseCli } from '@dayloom/cli'` 不会自动执行 CLI，与 core 纯入口原则一致
+- [x] 依赖 `@dayloom/core`；各 action 仍调用 core 现有函数（core 内 legacy I/O 照常工作）
 
 ### 1.3 根 monorepo + examples
 
-- [ ] 删除 `packages/dayloom/`
-- [ ] workspaces：`["packages/*", "examples/*"]`
-- [ ] examples 脚本指向 `@dayloom/cli` 的 `dayloom` bin
+- [x] 删除 `packages/dayloom/`
+- [x] workspaces：`["packages/*", "examples/*"]`
+- [x] examples 脚本指向 `@dayloom/cli` 的 `dayloom` bin
 
 ### 1.4 验证
 
-- [ ] `npm install && npm run build && npm test` 全绿
-- [ ] 全子命令行为与改造前一致
-- [ ] **允许** core 仍含 readline / stdout / spinner（legacy 暂存）
+- [x] `npm install && npm run build && npm test` 全绿
+- [x] 全子命令行为与改造前一致
+- [x] **允许** core 仍含 readline / stdout / spinner（legacy 暂存）
 
 **预估**：1–2 天 | **风险**：低
 
@@ -522,8 +522,8 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 **Phase 1 完成时：**
 
-- [ ] 三包可 build / test；CLI 行为与改造前一致
-- [ ] core **允许** legacy terminal I/O 暂存
+- [x] 三包可 build / test；CLI 行为与改造前一致
+- [x] core **允许** legacy terminal I/O 暂存
 
 **全部 Phase 完成时：**
 

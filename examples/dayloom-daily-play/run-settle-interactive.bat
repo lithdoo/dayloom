@@ -14,7 +14,7 @@ if exist ".env" (
 )
 
 set "OUT_DIR=%~dp0output\world-daily-interactive"
-set "DAY_LOOM_DIR=%~dp0..\..\packages\dayloom"
+set "DAY_LOOM_DIR=%~dp0..\.."
 set "DAY_LOOM_FILESYSTEM_MCP_BIN=%~dp0.runtime\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js"
 
 if not exist "%OUT_DIR%\manifest.yaml" (

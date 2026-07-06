@@ -3,11 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
-    "build": "npm run build -w dayloom",
-    "test": "npm run test -w dayloom"
+    "build": "npm run build -w @dayloom/core && npm run build -w @dayloom/cli",
+    "test": "npm run test -w @dayloom/core"
   },
   "engines": {
     "node": ">=18"

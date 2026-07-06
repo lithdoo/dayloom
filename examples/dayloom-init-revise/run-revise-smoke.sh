@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$SCRIPT_DIR"
 
 OUT_DIR="$SCRIPT_DIR/output/world-revise-smoke"
-export DAY_LOOM_DIR="$SCRIPT_DIR/../../packages/dayloom"
+export DAY_LOOM_DIR="$SCRIPT_DIR/../.."
 
 "$SCRIPT_DIR/scripts/ensure-dayloom.sh" init
 rm -rf "$OUT_DIR"

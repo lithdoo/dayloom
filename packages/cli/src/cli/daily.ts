@@ -1,6 +1,10 @@
 import { Command } from 'commander';
-import { dailyFromProposal, dailyInteractive } from '../daily';
-import { addLangOption, type Translator } from '../i18n';
+import {
+  addLangOption,
+  dailyFromProposal,
+  dailyInteractive,
+  type Translator,
+} from '@dayloom/core';
 
 export function registerDailyCommand(program: Command, t: Translator): void {
   const command = program.command('daily')

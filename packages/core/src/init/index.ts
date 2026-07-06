@@ -72,3 +72,5 @@ export async function initWorldInteractive(
     throw err;
   }
 }
+
+export { InitCancelledError } from './errors';

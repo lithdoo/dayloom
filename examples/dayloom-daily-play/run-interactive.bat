@@ -22,7 +22,7 @@ if not defined DEEPSEEK_API_KEY (
 
 set "SOURCE_WORLD=%~dp0..\dayloom-init-revise\output\world-interactive"
 set "OUT_DIR=%~dp0output\world-daily-interactive"
-set "DAY_LOOM_DIR=%~dp0..\..\packages\dayloom"
+set "DAY_LOOM_DIR=%~dp0..\.."
 set "DAY_LOOM_FILESYSTEM_MCP_BIN=%~dp0.runtime\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js"
 
 if not exist "%SOURCE_WORLD%\manifest.yaml" (

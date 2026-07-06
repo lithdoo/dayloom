@@ -1,6 +1,10 @@
 import { Command } from 'commander';
-import { addLangOption, type Translator } from '../i18n';
-import { InitCancelledError, runNext } from '../next';
+import {
+  InitCancelledError,
+  addLangOption,
+  runNext,
+  type Translator,
+} from '@dayloom/core';
 
 export function registerNextCommand(program: Command, t: Translator): void {
   const command = program.command('next')
