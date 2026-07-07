@@ -1,21 +1,21 @@
 # @dayloom/tui 实施 TODO
 
-> **状态（2026-07）**：此前一版 TUI 实现已**全部删除**（`src/components`、`view-model`、`session-io`、`app.tsx`、测试与调试代码）。本文件汇总原设计、已做工作、踩坑记录与**可重新开工的完整清单**。  
+> **状态（2026-07）**：TUI MVP 已恢复：`view-model`、`session-io`、`argv`、bindtty 根布局、消息区、loading、输入区、确认框与基础测试已落地。本文继续记录第一版踩坑、当前约束与后续打磨清单。
 > 上层三包拆分计划见仓库根目录 [TODO.md](../../TODO.md)；`@dayloom/core` 与 `@dayloom/cli` **不受影响**。
 
 ---
 
 ## 0. 为什么要重做
 
-第一版实现完成了 bindtty 布局、`createTuiSessionIO`、`runGameShell` 接入、自研多行 `Textarea` 等，但在 Windows Terminal 下**输入区无法直接打字**（需多次 Tab 才能把焦点移到输入框）。经调试日志确认：
+第一版实现完成了 bindtty 布局、`createTuiSessionIO`、`runGameShell` 接入、自研多行 `Textarea` 等，但在 Windows Terminal 下**输入区默认不会自动获得焦点**（需 Tab 把焦点移到输入框）。经调试日志确认：
 
 | 现象 | 根因（有运行时证据） |
 |------|----------------------|
-| 输入提示出现后完全不能输入 | bindtty 焦点仍停留在 **MessageList**；字母键在 List 的 `onKey` 返回 `false` 被丢弃 |
+| 输入提示出现后直接打字无效 | bindtty 焦点仍停留在 **MessageList**；字母键在 List 的 `onKey` 返回 `false` 被丢弃 |
 | Tab 后 inverse 高亮出现，才能打字 | Tab 触发 `focusNext()`，`onFocusChange` 的 `reason` 为 `"next"`，Textarea 才获得焦点 |
 | 获得焦点后中英文、退格均正常 | `handleKey` → `applyChange` 链路正常；**不是** readline 或 `disabled` 问题 |
 
-**结论**：必须在 `io.readInput` / `beginInput` 显示输入区后，**程序化聚焦** Textarea（`id: dayloom-textarea`）。bindtty `0.1.0-alpha.3` 的 `BindTTYApp` **没有** `focus(id)` API，需在 bindtty 侧补齐或升级依赖后再接 dayloom。
+**当前决策**：TUI 重做不再要求 `BindTTYApp.focus(id)`，也不追求 `beginInput` 后自动聚焦输入框。MVP 接受通过 Tab / Shift+Tab 进入输入区；重点保证焦点进入 Textarea 后输入链路稳定、`readInput` 行为与 CLI 一致。
 
 次要问题（未完全验收）：
 
@@ -86,8 +86,7 @@ TUI **只做三件事**：
 |------|------|------|
 | `createNodeTerminal({ rawMode, useAltScreen, hideCursor })` | 全屏 raw 输入 | |
 | `createApp(view, { terminal })` → `start` / `dispose` | 根应用 | |
-| **`app.focus(targetId: string)`** | `beginInput` 后聚焦输入框 | **alpha.3 缺失**；lithdoo-lab/bindtty 源码已可加，需发版或 workspace link |
-| `interaction` 焦点遍历 Tab / Shift+Tab | 多焦点控件 | |
+| `interaction` 焦点遍历 Tab / Shift+Tab | 输入框、列表、确认框之间切换焦点 | MVP 依赖此能力 |
 | intrinsic：`screen` `vstack` `hstack` `box` `text` `show` `for` | 布局 | |
 | `createSignal` / `computed` | ViewModel | 与 widgets 共用 signal 实例 |
 | JSX：`jsxImportSource: "bindtty"` | TSX 组件 | |
@@ -216,7 +215,6 @@ interface ViewModel {
 
   setStickToBottom(value): void;
   setInputViewportRows(rows): void;
-  setFocusElementById(handler: (id: string) => void): void;  // 由 mountApp 注入 app.focus
 }
 ```
 
@@ -242,20 +240,43 @@ interface ViewModel {
 
 ```ts
 async readInput(options: InputOptions): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    vm.beginInput(options, resolve);
-  });
+  while (true) {
+    const text = await new Promise<string>((resolve) => {
+      vm.beginInput(options, resolve);
+    });
+    const trimmed = text.trim();
+
+    if (trimmed !== '') {
+      return trimmed;
+    }
+
+    switch (options.emptyBehavior) {
+      case 'ask-exit':
+        if (await confirm(vm.t('input.emptyExit'))) {
+          throw new InitCancelledError();
+        }
+        break;
+      case 'ask-save-draft':
+        if (await confirm(vm.t('input.emptySaveDraft'))) {
+          return undefined;
+        }
+        break;
+      case 'ignore':
+        return undefined;
+    }
+  }
 }
 ```
 
-- **原样**提交字符串给 core（含 `/revise` 等），**不得** `parseShellLevelCommand`
-- 空输入由 core 的 `emptyBehavior` 驱动（与 cli-io 一致）：
+- 与 CLI 一致提交 `trim()` 后的文本给 core（含 `/revise` 等），**不得** `parseShellLevelCommand`
+- 空输入由 `TuiSessionIO` 按 core 的 `emptyBehavior` 契约处理（与 cli-io 一致）：
   - `ask-exit` → confirm → `InitCancelledError`
   - `ask-save-draft` → confirm → `undefined`
   - `ignore` → `undefined`
 - 提交：`Ctrl+Enter` / `Meta+Enter`（**不是**单独 Enter；Enter = 换行）
-- `beginInput` 末尾：`queueMicrotask(() => focusElementById(TEXTAREA_ID))`  
-  - bindtty runtime 的 flush 也在 microtask 中，**顺序**为：先 flush 挂载 Textarea，再 focus（同一 tick 内两个 microtask FIFO）
+- `beginInput` 只负责显示输入区、重置 `inputValue` / `inputResetToken`、保存 resolver；不做程序化 focus
+- 用户可通过 Tab / Shift+Tab 进入输入框；Textarea 获得焦点后必须正常处理输入
+- `confirm(...)` 建议复用 `io.confirm` / `vm.beginConfirm`，避免在 `readInput` 里直接写 UI 分支
 
 ### 6.2 `withLoading` 与输入禁用
 
@@ -384,7 +405,6 @@ const app = createApp(
 );
 
 app.start();
-vm.setFocusElementById((id) => app.focus(id));
 
 return { app, terminal, dispose: () => app.dispose() };
 ```
@@ -393,7 +413,7 @@ return { app, terminal, dispose: () => app.dispose() };
 
 1. `parseArgv(process.argv)` — world-dir、help、`--locale`、`--no-auto-start`、dry-run 等透传 `GameShellOptions`
 2. `createViewModel({ worldDir, locale })`
-3. `mountApp(vm)` + `setFocusElementById`
+3. `mountApp(vm)`
 4. `createTuiSessionIO(vm)`
 5. `await runGameShell({ worldDir, io, autoStart: !noAutoStart, t: vm.t, ... })`
 6. catch `InitCancelledError` → `io.error`（不 exit）
@@ -429,24 +449,28 @@ Footer 显示 `inputHint`（shell 或 session 的 `commandHint`）。
 
 ## 11. 实施分期（建议顺序）
 
-### Phase A — bindtty 前置
+### Phase A — bindtty 基线
 
-- [ ] bindtty 发布含 `BindTTYApp.focus(targetId: string)` 的版本（或 monorepo `workspace:*` 链接 lithdoo-lab/bindtty）
-- [ ] 验证：`beginInput` 后 `onFocusChange` 的 `reason === 'programmatic'`，**无需 Tab** 即可输入
+- [x] 确认 `createNodeTerminal`、`createApp({ terminal })` 可构建接入
+- [x] 真实 PTY E2E：Tab 聚焦输入区、输入 `/status`、验证 shell 输出、Ctrl+C 退出
+- [ ] 验证：Shift+Tab 焦点遍历可用
+- [ ] 手工验证：Textarea 获得焦点后中英文、退格、方向键、提交链路正常
+- [x] 代码约束：MessageList 在 `inputMode === 'text'` 时不消费普通字母键
 
 ### Phase B — MVP（Phase 4）
 
-- [ ] 恢复 `view-model.ts`、`session-io.ts`、`argv.ts`
-- [ ] 恢复五组件 + `app.tsx` + `main.ts`
-- [ ] 单行或简易多行输入可先接 `@bindtty/widgets` `TextInput` **仅作 spike**；正式仍用自研 Textarea
-- [ ] `createTuiSessionIO` 单测：write/warn/error、readInput Promise、emptyBehavior 三分支、withLoading
-- [ ] Header：`inspectTuiHeader` + session 后 `refreshHeader`
-- [ ] 手工 smoke：`dayloom-tui ./world --quick`（examples/dayloom-tui）
+- [x] 恢复 `view-model.ts`、`session-io.ts`、`argv.ts`
+- [x] 恢复五组件 + `app.tsx` + `main.ts`
+- [x] 落地简易自研多行 Textarea（Enter 换行 / Ctrl+Enter 提交）
+- [x] `createTuiSessionIO` 单测：readInput Promise 循环、emptyBehavior 三分支、confirm、withLoading
+- [x] Header：`inspectTuiHeader` + session 后 `refreshHeader`
+- [x] 自动 smoke：真实 PTY 启动 `dayloom-tui <tmp-world> --no-auto-start` 并执行 `/status`
 
 ### Phase C — 多行 Textarea（Phase 5）
 
-- [ ] 恢复 `textarea/{layout,edit,textarea}.ts` + 单测
-- [ ] Enter 换行 / Ctrl+Enter 提交
+- [x] 恢复 `textarea/{layout,edit,textarea}.ts`
+- [x] Enter 换行 / Ctrl+Enter 提交
+- [ ] Textarea 软换行、视觉行光标移动、viewport clamp 完整单测
 - [ ] 流式 `appendStream` throttle（~50ms）+ `stickToBottom`
 - [ ] `inputViewportRows` 动态撑高 MessageList
 - [ ] confirm 框样式与 Y/N 键
@@ -468,26 +492,27 @@ Footer 显示 `inputHint`（shell 或 session 的 `commandHint`）。
 | **layout / edit 单测** | 纯函数，无 bindtty |
 | **session-io / view-model 单测** | mock VM |
 | **key-dispatch 集成** | 证明 `onKey: false` 导致控件不进焦点环；必须为函数 |
-| **手工 smoke** | `npx dayloom-tui <world> --no-auto-start`，输入区**无需 Tab**即可打字 |
+| **真实 PTY E2E** | `dayloom-tui <tmp-world> --no-auto-start`，Tab 进入输入区后输入 `/status`，验证输出并 Ctrl+C 退出 |
 | **不测** | 像素级渲染、真实 AI |
 
 ### 12.1 关键回归用例（第一版曾失败）
 
-1. `beginInput` 后立即按 `a` → `inputValue === 'a'`
+1. `beginInput` 后 Tab 进入 Textarea，再按 `a` → `inputValue === 'a'`
 2. Backspace 清空
 3. 中文 IME 连续输入
-4. Tab 不应是「唯一能输入」的前置步骤
+4. `onKey` 始终为函数；`disabled` 时内部返回 `false`，不从焦点环消失
 5. `loadingLabel` 非空时按键无效，结束后恢复
 
 ---
 
 ## 13. 验收标准
 
-- [ ] `npm run build` / `npm test` 在 monorepo 根通过
+- [x] `npm run build` / `npm test` 在 monorepo 根通过
 - [ ] `dayloom-tui ./world` 全屏启动，stderr 无用户可见泄漏
 - [ ] `runGameShell` 驱动全流程；tui 无 World 读写、phase 分支、AI import
 - [ ] play `/revise` 经 `SessionExit`，非 TuiSessionIO 拦截
-- [ ] 输入区自动聚焦；自绘 caret 可见；边框不压字
+- [x] Tab 可进入输入区；自绘 caret 可见；边框不压字
+- [ ] Shift+Tab 与连续 shell 命令后的焦点恢复仍需补强
 - [ ] code review 通过硬约束（见 §1.2）
 
 ---
@@ -501,7 +526,7 @@ Footer 显示 `inputHint`（shell 或 session 的 `commandHint`）。
 - examples：`examples/dayloom-tui/`（`run-tui.bat/sh`、`run-quick.*`）仍指向 `dayloom-tui`，可继续作 smoke 入口
 - 调试曾用 `debug-log.ts` → `dayloom/debug-3f5de9.log`（NDJSON）；结论见 §0
 
-**bindtty 补丁（未发版）**：`interaction.focus(id)` + `app.focus(target)`；若重做，优先正式合入 bindtty 而非 patch `node_modules`。
+**历史 bindtty 补丁（未发版）**：曾规划 `interaction.focus(id)` + `app.focus(target)` 来自动聚焦输入框；当前重做不再依赖此补丁。
 
 ---
 
@@ -521,7 +546,7 @@ Footer 显示 `inputHint`（shell 或 session 的 `commandHint`）。
 ## 16. 开放问题
 
 1. **bin 长期策略**：是否合并为 `dayloom` 默认 TUI — 另议  
-2. **bindtty 版本锁定**：重做前确定 `focus` API 所在最低版本  
+2. **bindtty 版本锁定**：重做前确认当前锁定版本是否满足 terminal / interaction / widgets 基线能力
 3. **Windows 非 Windows Terminal**：是否官方支持 classic conhost  
 4. **是否复用 `@bindtty/widgets` List**：MessageList 曾用 widgets `List`；需确认滚动与焦点 coexist  
 5. **locale**：复用 core `detectLocale`；argv `--locale` 覆盖

@@ -10,15 +10,21 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build"
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
-    "@bindtty/interaction": "0.1.0-alpha.3",
-    "@bindtty/terminal": "0.1.0-alpha.3",
-    "@bindtty/text": "0.1.0-alpha.3",
-    "@bindtty/widgets": "0.1.0-alpha.3",
+    "@bindtty/interaction": "file:../bindtty/packages/interaction",
+    "@bindtty/jsx-runtime": "file:../bindtty/packages/jsx-runtime",
+    "@bindtty/layout": "file:../bindtty/packages/layout",
+    "@bindtty/renderer-terminal": "file:../bindtty/packages/renderer-terminal",
+    "@bindtty/runtime": "file:../bindtty/packages/runtime",
+    "@bindtty/signal": "file:../bindtty/packages/signal",
+    "@bindtty/terminal": "file:../bindtty/packages/terminal",
+    "@bindtty/text": "file:../bindtty/packages/text",
+    "@bindtty/vnode": "file:../bindtty/packages/vnode",
+    "@bindtty/widgets": "file:../bindtty/packages/widgets",
     "@dayloom/core": "*",
-    "bindtty": "0.1.0-alpha.3"
+    "bindtty": "file:../bindtty/packages/bindtty"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
@@ -29,5 +35,8 @@
     "README.md",
     "TODO.md",
     "package.json"
-  ]
+  ],
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
 }
