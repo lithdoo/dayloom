@@ -73,14 +73,14 @@ TUI **只做三件事**：
 ```json
 {
   "@dayloom/core": "*",
-  "bindtty": "0.1.0-alpha.6",
-  "@bindtty/terminal": "0.1.0-alpha.6",
-  "@bindtty/interaction": "0.1.0-alpha.6",
-  "@bindtty/widgets": "0.1.0-alpha.6"
+  "bindtty": "0.1.0-alpha.8",
+  "@bindtty/terminal": "0.1.0-alpha.8",
+  "@bindtty/interaction": "0.1.0-alpha.8",
+  "@bindtty/widgets": "0.1.0-alpha.8"
 }
 ```
 
-> **版本**：锁定 **bindtty `0.1.0-alpha.6`**（`0.1.0-alpha.6` 修复 Textarea flex 剩余宽度软折行与空行 caret）；规格见 bindtty `packages/widgets/TEXTAREA.md`。
+> **版本**：锁定 **bindtty `0.1.0-alpha.8`**（含 CJK 感知 soft wrap、Textarea flex 软折行 / 空行 caret、ScrollView `focusStyle`）；规格见 bindtty `packages/widgets/TEXTAREA.md`。
 
 ### 2.2 bindtty 侧**必须先有**的能力
 
@@ -90,7 +90,7 @@ TUI **只做三件事**：
 | `createApp(view, { terminal })` → `start` / `dispose` | 根应用 | |
 | `interaction` 焦点遍历 Tab / Shift+Tab | 输入框、列表、确认框之间切换焦点 | MVP 依赖此能力 |
 | `@bindtty/widgets` **`Textarea`** | 多行受控输入、软换行、Ctrl+Enter 提交 | **禁止**在 dayloom 内自研 `layout.ts` / `edit.ts` |
-| `@bindtty/widgets` **`ScrollView`** | 消息区纵向滚动、`stickToBottom` | `scrollOnArrow` 仅在 `inputMode === 'hidden'` |
+| `@bindtty/widgets` **`VScrollView`** | 消息区纵向滚动、`stickToBottom` | `scrollOnArrow` 仅在 `inputMode === 'hidden'` |
 | intrinsic：`screen` `vstack` `hstack` `box` `text` `show` `for` | 布局 | |
 | `createSignal` / `computed` | ViewModel | 与 widgets 共用 signal 实例 |
 | JSX：`jsxImportSource: "bindtty"` | TSX 组件 | `Textarea` 从 `@bindtty/widgets` 导入 |
@@ -126,7 +126,7 @@ packages/tui/
       index.ts
       constants.ts        ← TEXTAREA_ID、CHROME_ROWS
       header.tsx
-      message-list.tsx    ← ScrollView 包装消息
+      message-list.tsx    ← VScrollView 包装消息
       loading-bar.tsx
       text-input.tsx      ← @bindtty/widgets Textarea + confirm 框
       footer.tsx
@@ -586,7 +586,7 @@ Footer 显示 `inputHint`（shell 或 session 的 `commandHint`）。
 
 ### Phase C — 体验（Phase 5）
 
-- [x] 消息区 `@bindtty/widgets` `ScrollView` + `stickToBottom`
+- [x] 消息区 `@bindtty/widgets` `VScrollView` + `stickToBottom`
 - [x] `Textarea`：`minRows`/`maxRows` 与 `onViewportRowsChange` 驱动 `listHeight`
 - [x] 流式 `appendStream` throttle（~50ms）+ `stickToBottom`
 - [x] confirm 框样式与 Y/N 键
@@ -643,7 +643,7 @@ npx dayloom-tui ./world
 - [x] 运行期用户可见错误走 `io.error`，不写真实 stderr（bootstrap 除外）
 - [x] `runGameShell` 驱动全流程；tui 无 World 读写、phase 分支、AI import
 - [x] play `/revise` 经 `SessionExit` / `handleShellCommand`，非 TuiSessionIO 拦截（`shell-recovery.test.js`）
-- [x] Tab 可进入 `@bindtty/widgets` Textarea；caret / 软折行依赖 bindtty `0.1.0-alpha.6`
+- [x] Tab 可进入 `@bindtty/widgets` Textarea；caret / 软折行 / ScrollView `focusStyle` / CJK wrap 依赖 bindtty `0.1.0-alpha.8`
 - [ ] Shift+Tab 与连续 shell 命令后的焦点恢复仍需补强（已知限制，见 §0）
 - [x] code review 通过硬约束（见 §1.2）
 
@@ -681,9 +681,9 @@ npx dayloom-tui ./world
 ## 16. 开放问题
 
 1. **bin 长期策略**：是否合并为 `dayloom` 默认 TUI — 另议  
-2. **bindtty 版本锁定**：锁定 **`0.1.0-alpha.6`**（含 Textarea flex 剩余宽度软折行、空行 caret）；本地开发可用 `file:../../../bindtty/packages/*`（sibling 仓库须同为 alpha.6）  
+2. **bindtty 版本锁定**：锁定 **`0.1.0-alpha.8`**（含 CJK soft wrap、Textarea flex 软折行、空行 caret、ScrollView `focusStyle`）；本地开发可用 `file:../../../bindtty/packages/*`（sibling 仓库须同为 alpha.8）
 3. **Windows 非 Windows Terminal**：是否官方支持 classic conhost  
-4. **ScrollView vs widgets List**：消息区已选 `ScrollView`；勿再引入 List 与 Textarea 焦点冲突  
+4. **VScrollView vs widgets List**：消息区已选 `VScrollView`；勿再引入 List 与 Textarea 焦点冲突
 5. **locale**：复用 core `detectLocale`；argv `--locale` 覆盖
 
 ---

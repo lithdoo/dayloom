@@ -86,6 +86,8 @@ export const messages = {
     'tui.input.placeholder': 'Type here…',
     'tui.footer.idle': 'Tab focus · Enter newline · Ctrl+Enter submit · y/n confirm · Ctrl+C quit',
     'tui.footer.loadingDisabled': 'Working… input is disabled until the current step finishes.',
+    'tui.messages.title': 'Messages',
+    'tui.messages.titleFocused': 'Messages  ↑↓',
 
     'commands.available': 'Available commands',
     'commands.availableSeparator': ': ',
@@ -220,6 +222,8 @@ export const messages = {
     'tui.input.placeholder': '在此输入…',
     'tui.footer.idle': 'Tab 聚焦 · Enter 换行 · Ctrl+Enter 发送 · y/n 确认 · Ctrl+C 退出',
     'tui.footer.loadingDisabled': '处理中…当前步骤完成前输入已禁用。',
+    'tui.messages.title': '消息',
+    'tui.messages.titleFocused': '消息  ↑↓',
 
     'commands.available': '可用指令',
     'commands.availableSeparator': '：',

@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createTranslator } from '@dayloom/core';
-import { footerHint, multilineInputHint } from '../dist/theme.js';
+import { footerHint, multilineInputHint, roleColor, roleLabel } from '../dist/theme.js';
+
+test('roleLabel and roleColor support user messages', () => {
+  assert.equal(roleLabel('user'), 'YOU ');
+  assert.equal(roleColor('user'), 'green');
+  assert.equal(roleLabel('output'), 'OUT ');
+  assert.equal(roleColor('output'), 'white');
+});
 
 test('multilineInputHint uses Ctrl+Enter on Windows and Linux', () => {
   const t = createTranslator('en');

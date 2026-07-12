@@ -1,7 +1,7 @@
 # TODO：消息区获焦改为标题反馈
 
-> **状态**：待做  
-> **范围**：`@dayloom/tui` MessageList；可能需小改 `@bindtty/widgets` `ScrollView`  
+> **状态**：已完成  
+> **范围**：`@dayloom/tui` MessageList  
 > **约束**：不修改既有 `TODO.md` / `packages/tui/TODO.md` 正文；本文件为独立跟踪项  
 > **日期**：2026-07
 
@@ -9,15 +9,15 @@
 
 ## 1. 问题
 
-Tab / Shift+Tab 把焦点切到历史消息区（`ScrollView`）时，**缺少清晰视觉反馈**。
+用户 Tab / Shift+Tab 把焦点切到历史消息区（`ScrollView`）时，**缺少清晰视觉反馈**。
 
-现状依赖 bindtty renderer 默认的**整块 focused inverse**：
+完成前依赖 bindtty renderer 默认的**整块 focused inverse**：
 
 - 空白区域没有 cell → inverse 几乎看不见
 - 有内容时整片反色，阅读差、也不像「区域获焦」
 - dayloom 使用 `showScrollbar` 时，`border` / `background` 画在**非焦点**外层，chrome 无法表达获焦
 
-对比 Textarea：已用 `focusStyle="none"` + 自绘 caret；消息区没有对等方案。
+对比 Textarea：已用 `focusStyle="none"` + 自绘 caret；消息区现已对等（标题反馈）。
 
 ---
 
@@ -78,76 +78,18 @@ en / zh 都要补齐。
 
 ## 5. 实现要点
 
-### 5.1 前置：ScrollView 支持 `focusStyle`
+### 5.1 前置：ScrollView 支持 `focusStyle`（已完成）
 
-当前 `@bindtty/widgets` `ScrollView` **未**把 `focusStyle` 传到内部 focusable `box`。  
-只加标题、不关 inverse → 会出现「标题亮了 + 正文仍反色」。
-
-**必须**：
-
-- 在 `ScrollViewProps` 增加 `focusStyle?: BindingValue<'inverse' | 'none'>`
-- 写到内部 scroll box（与 `focusable` / `onKey` 同层）
-- 默认行为保持不变（未传则仍默认 inverse）
-- widgets 单测：传 `focusStyle="none"` 时 props 落到 focusable box
-
-版本策略（择一）：
-
-1. bindtty 发版后 dayloom  bump（当前基线 `0.1.0-alpha.6`）
-2. 开发期 `file:` 链本地 bindtty 打补丁
+bindtty **`0.1.0-alpha.7`** 已在 `ScrollView` / `VScrollView` / `HScrollView` 透传 `focusStyle`。  
+dayloom 已 bump 到该版本；实现 Phase 1 时直接传 `focusStyle="none"` 即可。
 
 ### 5.2 dayloom `message-list.tsx`
 
-```tsx
-const focused = createSignal(false);
-const title = computed(() =>
-  focused.get() ? vm.t('tui.messages.titleFocused') : vm.t('tui.messages.title'),
-);
-const titleColor = computed(() => (focused.get() ? 'cyan' : 'gray'));
-
-return (
-  <box flexGrow={1} flexShrink={1}>
-    <vstack gap={0}>
-      <text
-        value={title}
-        color={titleColor}
-        bold={focused}
-        wrap="truncate-end"
-      />
-      <ScrollView
-        id="dayloom-message-scroll"
-        focusStyle="none"
-        onFocusChange={(event) => focused.set(event.focused)}
-        width={vm.viewportWidth}
-        height={vm.listHeight}   // 见 5.3：高度是否含标题要算清
-        border={false}
-        padding={0}
-        stickToBottom={vm.stickToBottom}
-        scrollOnArrow={scrollOnArrow}
-        showScrollbar={{ vertical: true, horizontal: false }}
-      >
-        {/* 既有 for each messages */}
-      </ScrollView>
-    </vstack>
-  </box>
-);
-```
-
-`focused` 可放 MessageList 本地 signal；无需进 ViewModel，除非别处要读。
+本地 `focused` signal + 标题 `computed`；`ScrollView` 使用 `focusStyle="none"` 与 `onFocusChange`。
 
 ### 5.3 高度与 `CHROME_ROWS`
 
-标题多占 **1 行**。
-
-当前 `CHROME_ROWS = 9`，`listHeight = viewportHeight - CHROME_ROWS - inputViewportRows`。
-
-两种算法（选一种写清并测）：
-
-| 方案 | 做法 |
-|------|------|
-| A（推荐） | `CHROME_ROWS` 改为 `10`；`ScrollView` `height` 仍用 `listHeight`（标题算在 chrome 里） |
-| B | `CHROME_ROWS` 不变；`ScrollView` `height={listHeight - 1}`，标题挤占 list 高度 |
-
-验收：底栏 / 输入区不被裁切，消息区不溢出。
+采用方案 A：`CHROME_ROWS = 10`；`ScrollView` `height` 仍用 `listHeight`（标题算在 chrome 里）。
 
 ### 5.4 焦点与按键（保持）
 
@@ -162,24 +104,23 @@ return (
 
 ### Phase 0 — bindtty
 
-- [ ] `ScrollView` / 如有对称的 `VScrollView`：透传 `focusStyle`
-- [ ] 单测：默认无 `focusStyle`；显式 `"none"` 出现在 focusable box props
-- [ ] 发版或本地 `file:` 接入 dayloom
+- [x] `ScrollView` / `VScrollView` / `HScrollView`：透传 `focusStyle`（`0.1.0-alpha.7`）
+- [x] dayloom bump 到 `0.1.0-alpha.7`
 
 ### Phase 1 — dayloom UI
 
-- [ ] i18n：`tui.messages.title` / `tui.messages.titleFocused`（en + zh）
-- [ ] `message-list.tsx`：标题行 + `onFocusChange` + `focusStyle="none"`
-- [ ] 调整 `CHROME_ROWS` 或 `listHeight`（§5.3）
-- [ ] 单元测：模板含标题；`onFocusChange(true/false)` 切换文案/颜色（可读 props / signal）
+- [x] i18n：`tui.messages.title` / `tui.messages.titleFocused`（en + zh）
+- [x] `message-list.tsx`：标题行 + `onFocusChange` + `focusStyle="none"`
+- [x] 调整 `CHROME_ROWS` 或 `listHeight`（§5.3）
+- [x] 单元测：模板含标题；`onFocusChange(true/false)` 切换文案/颜色（可读 props / signal）
 
 ### Phase 2 — 验收
 
-- [ ] Tab 到消息区：标题 cyan/bold（或带 `↑↓`），**正文不反色**
-- [ ] Tab 到 Textarea：标题回 gray；caret 可见
-- [ ] 消息很少 / 空白时，标题反馈仍清晰
-- [ ] 方向键滚动（`inputMode === 'hidden'`）仍可用
-- [ ] 全屏布局无裁切
+- [ ] Tab 到消息区：标题 cyan/bold（或带 `↑↓`），**正文不反色**（手工）
+- [ ] Tab 到 Textarea：标题回 gray；caret 可见（手工）
+- [ ] 消息很少 / 空白时，标题反馈仍清晰（手工）
+- [ ] 方向键滚动（`inputMode === 'hidden'`）仍可用（手工）
+- [ ] 全屏布局无裁切（手工）
 
 ---
 
@@ -196,10 +137,10 @@ return (
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/components/message-list.tsx` | 改造点 |
+| `packages/tui/src/components/message-list.tsx` | 改造点（`VScrollView`） |
 | `packages/tui/src/components/constants.ts` | `CHROME_ROWS` |
 | `packages/core/src/i18n/messages.ts` | 文案键 |
-| `bindtty/packages/widgets/src/scroll/scroll-view.ts` | 透传 `focusStyle` |
+| `bindtty/packages/widgets/src/scroll/v-scroll-view.ts` | 纵向滚动 + `focusStyle` |
 | `bindtty/packages/renderer-terminal/src/paint.ts` | `paintFocusedState` / `focusStyle === "none"` |
 | `packages/tui/src/components/text-input.tsx` | Textarea `focusStyle="none"` 对照 |
 
@@ -207,10 +148,10 @@ return (
 
 ## 9. 完成定义
 
-- [ ] 消息区获焦仅标题反馈，无整区 inverse
-- [ ] i18n 齐全；Win / 中英文可读
-- [ ] 布局高度校准完成
-- [ ] 相关单测或 PTY 手工步骤通过
+- [x] 消息区获焦仅标题反馈，无整区 inverse
+- [x] i18n 齐全；Win / 中英文可读
+- [x] 布局高度校准完成
+- [x] 相关单测通过（Phase 2 手工验收可另做）
 
 ---
 

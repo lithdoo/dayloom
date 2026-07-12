@@ -53,7 +53,24 @@ test('readInput returns trimmed non-empty text and clears input mode', async () 
   assert.equal(vm.inputMode.get(), 'hidden');
 });
 
-test('readInput emptyBehavior ignore returns undefined', async () => {
+test('readInput echoes non-empty user input into message history', async () => {
+  const { vm, io } = createHarness();
+  const pending = io.readInput({
+    instruction: 'type a command',
+    userPrompt: '> ',
+    emptyBehavior: 'ignore',
+  });
+
+  await submitWhenReady(vm, '  /status  ');
+  assert.equal(await pending, '/status');
+
+  const userMessages = vm.messages.get().filter((message) => message.role === 'user');
+  assert.equal(userMessages.length, 1);
+  assert.equal(userMessages[0].text, '/status');
+  assert.equal(vm.stickToBottom.get(), true);
+});
+
+test('readInput emptyBehavior ignore returns undefined without user echo', async () => {
   const { vm, io } = createHarness();
   const pending = io.readInput({
     instruction: 'type a command',
@@ -64,6 +81,52 @@ test('readInput emptyBehavior ignore returns undefined', async () => {
   await submitWhenReady(vm, '   ');
   assert.equal(await pending, undefined);
   assert.equal(vm.inputMode.get(), 'hidden');
+  assert.equal(
+    vm.messages.get().filter((message) => message.role === 'user').length,
+    0,
+  );
+});
+
+test('readInput preserves inner newlines after trim in user echo', async () => {
+  const { vm, io } = createHarness();
+  const pending = io.readInput({
+    instruction: 'type a command',
+    userPrompt: '> ',
+    emptyBehavior: 'ignore',
+  });
+
+  await submitWhenReady(vm, '  hello\nworld  ');
+  assert.equal(await pending, 'hello\nworld');
+
+  const userMessages = vm.messages.get().filter((message) => message.role === 'user');
+  assert.equal(userMessages.length, 1);
+  assert.equal(userMessages[0].text, 'hello\nworld');
+});
+
+test('readInput echoes consecutive user commands in order', async () => {
+  const { vm, io } = createHarness();
+
+  const first = io.readInput({
+    instruction: 'type a command',
+    userPrompt: '> ',
+    emptyBehavior: 'ignore',
+  });
+  await submitWhenReady(vm, '/status');
+  assert.equal(await first, '/status');
+
+  const second = io.readInput({
+    instruction: 'type a command',
+    userPrompt: '> ',
+    emptyBehavior: 'ignore',
+  });
+  await submitWhenReady(vm, '/quit');
+  assert.equal(await second, '/quit');
+
+  const userTexts = vm.messages
+    .get()
+    .filter((message) => message.role === 'user')
+    .map((message) => message.text);
+  assert.deepEqual(userTexts, ['/status', '/quit']);
 });
 
 test('readInput emptyBehavior ask-exit confirms exit with InitCancelledError', async () => {
@@ -95,6 +158,9 @@ test('readInput emptyBehavior ask-exit declines then accepts next input', async 
 
   assert.equal(await pending, 'continue');
   assert.equal(vm.inputMode.get(), 'hidden');
+  const userMessages = vm.messages.get().filter((message) => message.role === 'user');
+  assert.equal(userMessages.length, 1);
+  assert.equal(userMessages[0].text, 'continue');
 });
 
 test('readInput emptyBehavior ask-save-draft confirms save as undefined', async () => {

@@ -35,6 +35,8 @@ export function createTuiSessionIO(vm: ViewModel): SessionIO {
         const trimmed = text.trim();
 
         if (trimmed !== '') {
+          vm.appendMessage('user', trimmed);
+          vm.setStickToBottom(true);
           return trimmed;
         }
 

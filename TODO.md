@@ -460,12 +460,12 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ## Phase 4：新建 @dayloom/tui
 
-> **2026-07**：Phase A / B 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.6`**。
+> **2026-07**：Phase A / B 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.8`**。
 
 ### 4.1 脚手架
 
 - [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`
-- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.6`**
+- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.8`**
 
 ### 4.2 `createTuiSessionIO(vm)`
 

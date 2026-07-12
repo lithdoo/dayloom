@@ -1,6 +1,6 @@
 # TODO：历史消息显示用户输入
 
-> **状态**：待做  
+> **状态**：已完成  
 > **范围**：`@dayloom/tui`（`session-io` / `view-model` / `theme` / MessageList 展示）  
 > **约束**：不修改既有 `TODO.md` / `packages/tui/TODO.md` / `TODO-message-list-focus.md` 正文；本文件独立跟踪  
 > **日期**：2026-07  
@@ -12,7 +12,7 @@
 
 用户在 Textarea **Ctrl+Enter 提交**后，输入只通过 `readInput` Promise 交给 core，**不会**写入 `messages` 历史。
 
-现状：
+现状（完成前）：
 
 - `submitTextInput`：resolve + `clearInput`，无 `appendMessage`
 - `createTuiSessionIO.readInput`：非空则 `return trimmed`，无 echo
@@ -130,12 +130,12 @@ world
 
 ## 6. 任务清单
 
-- [ ] `TuiMessageRole` + `theme` 支持 `'user'`
-- [ ] `readInput` 非空成功路径 echo 到 `messages`
-- [ ] （推荐）用户发言后 `setStickToBottom(true)`
-- [ ] 单测：提交 `/status` → 存在 `role==='user'` 且 `text==='/status'`
-- [ ] 单测：`emptyBehavior: 'ignore'` 空提交 → 无新 user 消息
-- [ ] 单测：多行 trim 后保留中间 `\n`
+- [x] `TuiMessageRole` + `theme` 支持 `'user'`
+- [x] `readInput` 非空成功路径 echo 到 `messages`
+- [x] （推荐）用户发言后 `setStickToBottom(true)`
+- [x] 单测：提交 `/status` → 存在 `role==='user'` 且 `text==='/status'`
+- [x] 单测：`emptyBehavior: 'ignore'` 空提交 → 无新 user 消息
+- [x] 单测：多行 trim 后保留中间 `\n`
 - [ ] 手工：提交后历史先 `[YOU]` 再 `[OUT]`；连续两条命令顺序正确
 
 ---
@@ -174,10 +174,10 @@ world
 
 ## 10. 完成定义
 
-- [ ] 非空用户提交稳定出现在历史，角色为 `user`
-- [ ] 空输入 / 取消路径不污染历史
-- [ ] 主题与单测齐全
-- [ ] 硬约束：业务逻辑仍只在 core；TUI 仅 IO 展示
+- [x] 非空用户提交稳定出现在历史，角色为 `user`
+- [x] 空输入 / 取消路径不污染历史
+- [x] 主题与单测齐全
+- [x] 硬约束：业务逻辑仍只在 core；TUI 仅 IO 展示
 
 ---
 

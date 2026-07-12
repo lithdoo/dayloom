@@ -14,7 +14,7 @@ import {
 import { STREAM_THROTTLE_MS } from './components/constants.js';
 
 export type TuiInputMode = 'hidden' | 'text' | 'confirm';
-export type TuiMessageRole = 'output' | 'warn' | 'error' | 'system';
+export type TuiMessageRole = 'output' | 'warn' | 'error' | 'system' | 'user';
 
 export interface TuiMessage {
   id: string;

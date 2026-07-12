@@ -9,6 +9,8 @@ export function roleLabel(role: TuiMessageRole): string {
       return 'ERR ';
     case 'system':
       return 'SYS ';
+    case 'user':
+      return 'YOU ';
     case 'output':
       return 'OUT ';
     default: {
@@ -26,6 +28,8 @@ export function roleColor(role: TuiMessageRole): string {
       return 'red';
     case 'system':
       return 'cyan';
+    case 'user':
+      return 'green';
     case 'output':
       return 'white';
     default: {
