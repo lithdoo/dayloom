@@ -460,44 +460,49 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ## Phase 4：新建 @dayloom/tui
 
-> **2026-07**：`packages/tui` 内第一版实现已删除；详细设计与重做清单见 [`packages/tui/TODO.md`](packages/tui/TODO.md)。下列勾选为**曾完成项**，重做时以 tui 包内 TODO 为准。
+> **2026-07**：Phase A / B 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.6`**。
 
 ### 4.1 脚手架
 
-- [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`（当前 bin 为占位，提示未实现）
-- [x] 依赖 `@dayloom/core`、bindtty（依赖仍保留在 package.json）
+- [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`
+- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.6`**
 
 ### 4.2 `createTuiSessionIO(vm)`
 
-- [ ] `write` / `warn` / `error` → messages signal（不同 role/样式）
-- [ ] **不**在 `readInput` 拦截 shell 命令；空输入行为由 core 传入的 `emptyBehavior` 驱动
-- [ ] `withLoading` → `loadingLabel` signal
+- [x] `write` / `warn` / `error` → messages signal（不同 role/样式）
+- [x] **不**在 `readInput` 拦截 shell 命令；空输入行为由 core 传入的 `emptyBehavior` 驱动
+- [x] `withLoading` → `loadingLabel` signal
+- [x] SessionIO 单测：readInput / emptyBehavior / confirm / withLoading
 
 ### 4.3 UI + 入口
 
-- [ ] bindtty 布局：Header + List + Loading + TextInput + Footer
-- [ ] `main.ts`：`runGameShell({ worldDir, io: createTuiSessionIO(vm) })`
-- [ ] view-model / session-io 遵守硬约束（仅 UI 状态分支，无 World/phase/AI 逻辑）
+- [x] bindtty 布局：Header + ScrollView 消息区 + Loading + `@bindtty/widgets` Textarea + Footer
+- [x] `main.ts`：`runGameShell({ worldDir, io: createTuiSessionIO(vm) })`
+- [x] view-model / session-io 遵守硬约束（仅 UI 状态分支，无 World/phase/AI 逻辑）
 
 ### 4.4 验证
 
-- [ ] init → daily → play → settle 全流程（需 API key 手工 smoke）
-- [ ] play 中 `/revise` 可打断并返回（需 API key 手工 smoke）
-- [ ] warning / error 显示在 TUI 内，真实 stderr 无泄漏（SessionIO 契约 + 单测）
+- [x] PTY smoke：`dayloom-tui <tmp-world> --no-auto-start` + Tab + `/status` + Ctrl+C
+- [ ] init → daily → play → settle 全流程（需 API key 手工 smoke；属 Phase D）
+- [ ] play 中 `/revise` 可打断并返回（需 API key 手工 smoke；属 Phase D）
+- [x] warning / error 显示在 TUI 内（SessionIO 契约 + 单测）
 
-**预估**：3–5 天 | **风险**：中（bindtty `focus` API + 输入焦点为已知阻塞项，见 tui TODO §0）
+**预估**：3–5 天 | **风险**：中（输入区默认不自动聚焦，MVP 接受 Tab；见 tui TODO §0）
 
 ---
 
 ## Phase 5：TUI 体验补齐
 
-> 实现已回退；规格见 [`packages/tui/TODO.md`](packages/tui/TODO.md) §8、§11 Phase C。
+> 规格见 [`packages/tui/TODO.md`](packages/tui/TODO.md) §11。Phase C/D 体验与打磨项已落地；含 API 的全流程见 tui TODO §11.1。
 
-- [ ] 多行输入（Enter 换行，Ctrl+Enter 提交）
-- [ ] 顶栏：day、phase、event、suggested_actions
-- [ ] settle proposal 审阅 + `io.confirm`
-- [ ] 流式 throttle + 自动滚底
-- [ ] `io.error` 展示不 crash app
+- [x] 多行输入（`@bindtty/widgets` Textarea：Enter 换行，Ctrl+Enter 提交）
+- [x] 顶栏：day、phase、event、suggested_actions
+- [x] confirm 框 Y/N
+- [x] 流式 `appendStream` throttle（~50ms）+ 自动滚底
+- [x] i18n / Windows 提交键文案（无 Ctrl+Z 误导）
+- [x] 单 session 失败不崩 shell + 零 stderr 泄漏回归
+- [ ] settle proposal 审阅 UX 打磨（依赖真实 AI smoke）
+- [ ] Windows Terminal 含 API 全流程手工验收（清单见 tui TODO §11.1）
 
 **预估**：2–3 天
 

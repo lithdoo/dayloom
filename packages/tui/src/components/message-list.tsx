@@ -1,32 +1,42 @@
 import { computed } from 'bindtty';
-import { List } from '@bindtty/widgets';
+import { ScrollView } from '@bindtty/widgets';
 import type { TuiMessage, ViewModel } from '../view-model.js';
 import { roleColor, roleLabel } from '../theme.js';
 
 export function MessageList(props: { vm: ViewModel }) {
   const { vm } = props;
-  const items = computed(() => {
-    const all = vm.visibleMessages.get();
-    const height = vm.listHeight.get();
-    const limit = Math.max(1, height * 2);
-    return vm.stickToBottom.get() ? all.slice(-limit) : all;
-  });
+  const scrollOnArrow = computed(() => vm.inputMode.get() === 'hidden');
 
   return (
-    <box border={true} padding={0}>
-      <List
-        id="dayloom-message-list"
-        items={items}
+    <box flexGrow={1} flexShrink={1}>
+      <ScrollView
+        id="dayloom-message-scroll"
+        width={vm.viewportWidth}
         height={vm.listHeight}
-        scrollOnArrow={computed(() => props.vm.inputMode.get() === 'hidden')}
-        getKey={(item: TuiMessage) => item.id}
-        render={(item: TuiMessage) => (
-          <hstack>
-            <text value={`[${roleLabel(item.role)}] `} color={roleColor(item.role)} bold={true} />
-            <text value={item.text} color={roleColor(item.role)} wrap="wrap" />
-          </hstack>
-        )}
-      />
+        border={false}
+        padding={0}
+        stickToBottom={vm.stickToBottom}
+        scrollOnArrow={scrollOnArrow}
+        showScrollbar={{ vertical: true, horizontal: false }}
+      >
+        <vstack gap={0}>
+          <for each={vm.visibleMessages} key={(item, index) => (item as TuiMessage).id ?? index}>
+            {(item) => {
+              const message = item as TuiMessage;
+              return (
+                <hstack gap={0}>
+                  <text
+                    value={`[${roleLabel(message.role)}] `}
+                    color={roleColor(message.role)}
+                    bold={true}
+                  />
+                  <text value={message.text} color={roleColor(message.role)} wrap="wrap" />
+                </hstack>
+              );
+            }}
+          </for>
+        </vstack>
+      </ScrollView>
     </box>
   );
 }

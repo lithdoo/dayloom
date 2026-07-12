@@ -6,7 +6,7 @@ dayloom 是一个以“天”为推进单位的 AI 生活模拟与日记生成�
 
 - [`packages/core`](packages/core/)：引擎 API、prompts、测试（`@dayloom/core`）
 - [`packages/cli`](packages/cli/)：`dayloom` CLI、`createCliSessionIO()`（`@dayloom/cli`）
-- [`packages/tui`](packages/tui/)：全屏 TUI 脚手架（`@dayloom/tui`，`dayloom-tui`；**实现待重做**，见 [packages/tui/TODO.md](packages/tui/TODO.md)）
+- [`packages/tui`](packages/tui/)：全屏 TUI（`@dayloom/tui`，`dayloom-tui`；**Phase A 完成**，见 [packages/tui/TODO.md](packages/tui/TODO.md)）
 - [`examples/dayloom-init-revise`](examples/dayloom-init-revise/)：初始化与设定修订示例
 - [`examples/dayloom-daily-play`](examples/dayloom-daily-play/)：每日推进、事件游玩与结算示例
 - [`examples/dayloom-tui`](examples/dayloom-tui/)：全屏 TUI 游戏 shell 示例

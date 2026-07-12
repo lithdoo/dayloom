@@ -1,4 +1,5 @@
 import { createTranslator } from '../i18n';
+import { InitCancelledError } from '../init/errors';
 import { formatNextStatus, inspectNextState } from '../next/inspect';
 import type { RecommendedActionOptions } from '../next/recommended-action';
 import { parseShellLevelCommand } from '../session-io';
@@ -20,42 +21,52 @@ export async function runGameShell(options: GameShellOptions): Promise<void> {
   }
 
   while (true) {
-    const input = await options.io.readInput({
-      instruction: t('shell.promptInstruction'),
-      userPrompt: t('shell.prompt'),
-      commandHint: formatShellCommandHint(t),
-      emptyBehavior: 'ignore',
-    });
-    if (input === undefined) continue;
+    try {
+      const input = await options.io.readInput({
+        instruction: t('shell.promptInstruction'),
+        userPrompt: t('shell.prompt'),
+        commandHint: formatShellCommandHint(t),
+        emptyBehavior: 'ignore',
+      });
+      if (input === undefined) continue;
 
-    const token = input.trim().split(/\s+/, 1)[0].toLowerCase();
+      const token = input.trim().split(/\s+/, 1)[0].toLowerCase();
 
-    if (token === '/status') {
-      const state = inspectNextState(options.worldDir);
-      options.io.write(`${formatNextStatus(state, t)}\n`);
-      continue;
-    }
-    if (token === '/help') {
-      options.io.write(formatShellHelp(t));
-      continue;
-    }
+      if (token === '/status') {
+        const state = inspectNextState(options.worldDir);
+        options.io.write(`${formatNextStatus(state, t)}\n`);
+        continue;
+      }
+      if (token === '/help') {
+        options.io.write(formatShellHelp(t));
+        continue;
+      }
 
-    const shell = parseShellLevelCommand(input);
-    if (!shell) {
-      options.io.write(formatUnknownShellCommand(input, t));
-      continue;
-    }
+      const shell = parseShellLevelCommand(input);
+      if (!shell) {
+        options.io.write(formatUnknownShellCommand(input, t));
+        continue;
+      }
 
-    if (shell === 'quit') return;
+      if (shell === 'quit') return;
 
-    if (shell === 'next') {
-      await runShellNext(ctx);
-      continue;
-    }
+      if (shell === 'next') {
+        await runShellNext(ctx);
+        continue;
+      }
 
-    if (shell === 'revise') {
-      await handleShellCommand({ kind: 'shell-command', command: 'revise', raw: input }, ctx);
-      continue;
+      if (shell === 'revise') {
+        await handleShellCommand({ kind: 'shell-command', command: 'revise', raw: input }, ctx);
+        continue;
+      }
+    } catch (err) {
+      // Keep the shell alive after a single session/command failure.
+      if (err instanceof InitCancelledError) {
+        options.io.error(`${err.message}\n`);
+        continue;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      options.io.error(`${message}\n`);
     }
   }
 }

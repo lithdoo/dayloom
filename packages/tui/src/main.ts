@@ -17,13 +17,22 @@ async function main(): Promise<void> {
     locale: parsed.locale,
   });
   let mounted: ReturnType<typeof mountApp> | null = null;
+  const io = createTuiSessionIO(vm);
+
   mounted = mountApp(vm, {
     onExitRequest(): void {
       mounted?.dispose();
+      mounted = null;
       process.exit(0);
     },
   });
-  const io = createTuiSessionIO(vm);
+
+  const onSigInt = (): void => {
+    mounted?.dispose();
+    mounted = null;
+    process.exit(0);
+  };
+  process.on('SIGINT', onSigInt);
 
   try {
     await runGameShell({
@@ -34,6 +43,8 @@ async function main(): Promise<void> {
       ...parsed.shellOptions,
     });
   } catch (err) {
+    // Keep failures inside the TUI message list — never write to stderr while
+    // the alt-screen session may still be active.
     if (err instanceof InitCancelledError) {
       io.error(`${err.message}\n`);
     } else {
@@ -41,11 +52,14 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
-    mounted.dispose();
+    process.off('SIGINT', onSigInt);
+    mounted?.dispose();
+    mounted = null;
   }
 }
 
 main().catch((err: unknown) => {
+  // Bootstrap-only path (argv / mount failures before or without a live TUI).
   process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
   process.exitCode = 1;
 });

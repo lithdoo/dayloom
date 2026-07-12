@@ -11,6 +11,7 @@ import {
   type InputOptions,
   type Translator,
 } from '@dayloom/core';
+import { STREAM_THROTTLE_MS } from './components/constants.js';
 
 export type TuiInputMode = 'hidden' | 'text' | 'confirm';
 export type TuiMessageRole = 'output' | 'warn' | 'error' | 'system';
@@ -42,6 +43,7 @@ export interface ViewModel {
   headerSecondary: Signal<string>;
   headerActions: Signal<readonly string[]>;
 
+  viewportWidth: Signal<number>;
   listHeight: Signal<number>;
   stickToBottom: Signal<boolean>;
   inputViewportRows: Signal<number>;
@@ -81,6 +83,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   const headerPrimary = createSignal('');
   const headerSecondary = createSignal('');
   const headerActions = createSignal<readonly string[]>([]);
+  const viewportWidth = createSignal(80);
   const listHeight = createSignal(12);
   const stickToBottom = createSignal(true);
   const inputViewportRows = createSignal(1);
@@ -88,6 +91,22 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   let messageId = 0;
   let pendingInput: ((value: string) => void) | null = null;
   let pendingConfirm: ((value: boolean) => void) | null = null;
+  let pendingStream = '';
+  let streamTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function publishPendingStream(): void {
+    if (pendingStream === '') return;
+    const next = pendingStream;
+    pendingStream = '';
+    streamBuffer.set(streamBuffer.get() + next);
+    stickToBottom.set(true);
+  }
+
+  function clearStreamTimer(): void {
+    if (streamTimer === null) return;
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
 
   const vm: ViewModel = {
     worldDir: options.worldDir,
@@ -117,6 +136,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     headerPrimary,
     headerSecondary,
     headerActions,
+    viewportWidth,
     listHeight,
     stickToBottom,
     inputViewportRows,
@@ -136,9 +156,18 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     },
     appendStream(chunk): void {
       if (chunk === '') return;
-      streamBuffer.set(streamBuffer.get() + chunk);
+      pendingStream += chunk;
+      // Leading edge: show the first chunk immediately, then coalesce for ~50ms.
+      if (streamTimer !== null) return;
+      publishPendingStream();
+      streamTimer = setTimeout(() => {
+        streamTimer = null;
+        publishPendingStream();
+      }, STREAM_THROTTLE_MS);
     },
     flushStream(): void {
+      clearStreamTimer();
+      publishPendingStream();
       const text = streamBuffer.get();
       if (text === '') return;
       streamBuffer.set('');
@@ -189,8 +218,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
       if (!resolve) return;
       pendingInput = null;
       const value = inputValue.get();
-      inputValue.set('');
-      inputResetToken.set(inputResetToken.get() + 1);
+      vm.clearInput();
       resolve(value);
     },
     submitConfirm(answer): void {

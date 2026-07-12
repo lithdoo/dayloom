@@ -1,5 +1,5 @@
 export { formatHelp, parseArgv, type ParsedArgv } from './argv.js';
-export { mountApp, type MountedTuiApp } from './app.js';
+export { mountApp, isCtrlC, type MountedTuiApp } from './app.js';
 export { createTuiSessionIO } from './session-io.js';
 export {
   createViewModel,

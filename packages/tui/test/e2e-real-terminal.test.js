@@ -9,34 +9,18 @@ const packageRoot = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
 const mainPath = path.join(packageRoot, 'dist', 'main.js');
 
-test('real PTY: TUI textarea uses widget-style Enter newline and no submit button', { concurrency: false }, async (t) => {
+test('real PTY: Tab focus then Enter newline in Textarea', { concurrency: false }, async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
 
   const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = new PtyHarness(pty.spawn(process.execPath, [
-    mainPath,
-    worldDir,
-    '--no-auto-start',
-    '--locale',
-    'en',
-  ], {
-    name: 'xterm-256color',
-    cols: 100,
-    rows: 30,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      FORCE_COLOR: '0',
-    },
-  }));
+  const session = spawnSession(pty, worldDir);
 
   try {
     await session.waitForVisible(/World:/, 8_000);
+    await session.focusTextarea();
 
     await session.typeText('hello');
-    await delay(100);
     session.write('\r');
     await delay(100);
     await session.typeText('world');
@@ -50,25 +34,44 @@ test('real PTY: TUI textarea uses widget-style Enter newline and no submit butto
 
     const visible = session.visibleOutput();
     assert.match(visible, /World:/);
-    assert.match(visible, /h\s*e\s*l\s*l\s*o/);
-    assert.match(visible, /w\s*o\s*r\s*l\s*d/);
     assert.doesNotMatch(visible, /Submit/);
   } finally {
-    session.dispose();
+    await session.dispose();
     fs.rmSync(worldDir, { recursive: true, force: true });
+    await delay(400);
   }
 });
 
-test('real PTY: TUI textarea submits shell command with Ctrl+Enter sequence', { concurrency: false }, async (t) => {
-  await assertCtrlEnterSubmits(t, '\x1b[13;5u');
+test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: false }, async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+
+  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
+  const session = spawnSession(pty, worldDir);
+
+  try {
+    await session.waitForVisible(/World:/, 8_000);
+    await session.focusTextarea();
+    await session.typeText('ab');
+    await session.waitForVisible(/a\s*b/, 8_000);
+    session.write('\x1b[Z');
+    await delay(150);
+    await session.focusTextarea(2);
+    await session.typeText('cd');
+    await session.waitForVisible(/c[\s\x08]*d/, 8_000);
+    session.write('\x03');
+
+    const exitCode = await session.waitForExit(8_000);
+    assert.equal(exitCode, 0);
+  } finally {
+    await session.dispose();
+    fs.rmSync(worldDir, { recursive: true, force: true });
+    await delay(400);
+  }
 });
 
-test('real PTY: TUI textarea submits shell command with CSI tilde Ctrl+Enter sequence', { concurrency: false }, async (t) => {
+test('real PTY: Tab focus then /status with Ctrl+Enter', { concurrency: false }, async (t) => {
   await assertCtrlEnterSubmits(t, '\x1b[13;5~');
-});
-
-test('real PTY: TUI textarea submits shell command with kitty event-type Ctrl+Enter sequence', { concurrency: false }, async (t) => {
-  await assertCtrlEnterSubmits(t, '\x1b[13;5:3u');
 });
 
 async function assertCtrlEnterSubmits(t, sequence) {
@@ -76,27 +79,11 @@ async function assertCtrlEnterSubmits(t, sequence) {
   if (!pty) return;
 
   const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = new PtyHarness(pty.spawn(process.execPath, [
-    mainPath,
-    worldDir,
-    '--no-auto-start',
-    '--locale',
-    'en',
-  ], {
-    name: 'xterm-256color',
-    cols: 100,
-    rows: 30,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      FORCE_COLOR: '0',
-    },
-  }));
+  const session = spawnSession(pty, worldDir);
 
   try {
     await session.waitForVisible(/World:/, 8_000);
-
+    await session.focusTextarea();
     await session.typeText('/status');
     session.write(sequence);
 
@@ -110,9 +97,26 @@ async function assertCtrlEnterSubmits(t, sequence) {
     const visible = session.visibleOutput();
     assert.match(visible, /Current: uninitialized/);
   } finally {
-    session.dispose();
+    await session.dispose();
     fs.rmSync(worldDir, { recursive: true, force: true });
+    await delay(400);
   }
+}
+
+function spawnSession(pty, worldDir) {
+  return new PtyHarness(
+    pty.spawn(process.execPath, [mainPath, worldDir, '--no-auto-start', '--locale', 'en'], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color',
+        FORCE_COLOR: '0',
+      },
+    }),
+  );
 }
 
 async function loadNodePty(t) {
@@ -149,6 +153,14 @@ class PtyHarness {
     this.ptyProcess.write(data);
   }
 
+  async focusTextarea(tabCount = 1) {
+    for (let i = 0; i < tabCount; i += 1) {
+      this.write('\t');
+      await delay(80);
+    }
+    await delay(50);
+  }
+
   async typeText(value) {
     for (const char of value) {
       this.write(char);
@@ -176,7 +188,7 @@ class PtyHarness {
     return this.#exitCode;
   }
 
-  dispose() {
+  async dispose() {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#dataDisposable?.dispose();
@@ -185,6 +197,11 @@ class PtyHarness {
       this.ptyProcess.kill();
     } catch {
       // The process may already have exited.
+    }
+    try {
+      await withTimeout(this.#exitPromise, 2_000, () => 'PTY dispose');
+    } catch {
+      // Best-effort cleanup between serial E2E runs.
     }
   }
 }

@@ -1,23 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Textarea } from 'bindtty';
+import { Textarea } from '@bindtty/widgets';
 import { TextInputArea } from '../dist/components/text-input.js';
+import { TEXTAREA_ID } from '../dist/components/constants.js';
 import { createViewModel } from '../dist/view-model.js';
 
-test('text input area uses bindtty Textarea widget', () => {
+test('text input area uses @bindtty/widgets Textarea', () => {
   const vm = createViewModel({ worldDir: '.' });
-  vm.beginInput({
-    instruction: 'instruction',
-    userPrompt: '>',
-    emptyBehavior: 'ignore',
-  }, () => {});
+  vm.beginInput(
+    {
+      instruction: 'instruction',
+      userPrompt: '>',
+      emptyBehavior: 'ignore',
+    },
+    () => {},
+  );
 
   const template = TextInputArea({ vm });
   const textarea = findComponent(template, Textarea);
 
   assert.ok(textarea);
-  assert.equal(textarea.props.id, 'dayloom-textarea');
+  assert.equal(textarea.props.id, TEXTAREA_ID);
   assert.equal(textarea.props.value, vm.inputValue);
   assert.equal(textarea.props.resetCursorToken, vm.inputResetToken);
   assert.equal(textarea.props.minRows, 1);

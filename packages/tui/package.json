@@ -13,18 +13,18 @@
     "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
-    "@bindtty/interaction": "file:../bindtty/packages/interaction",
-    "@bindtty/jsx-runtime": "file:../bindtty/packages/jsx-runtime",
-    "@bindtty/layout": "file:../bindtty/packages/layout",
-    "@bindtty/renderer-terminal": "file:../bindtty/packages/renderer-terminal",
-    "@bindtty/runtime": "file:../bindtty/packages/runtime",
-    "@bindtty/signal": "file:../bindtty/packages/signal",
-    "@bindtty/terminal": "file:../bindtty/packages/terminal",
-    "@bindtty/text": "file:../bindtty/packages/text",
-    "@bindtty/vnode": "file:../bindtty/packages/vnode",
-    "@bindtty/widgets": "file:../bindtty/packages/widgets",
+    "@bindtty/interaction": "0.1.0-alpha.6",
+    "@bindtty/jsx-runtime": "0.1.0-alpha.6",
+    "@bindtty/layout": "0.1.0-alpha.6",
+    "@bindtty/renderer-terminal": "0.1.0-alpha.6",
+    "@bindtty/runtime": "0.1.0-alpha.6",
+    "@bindtty/signal": "0.1.0-alpha.6",
+    "@bindtty/terminal": "0.1.0-alpha.6",
+    "@bindtty/text": "0.1.0-alpha.6",
+    "@bindtty/vnode": "0.1.0-alpha.6",
+    "@bindtty/widgets": "0.1.0-alpha.6",
     "@dayloom/core": "*",
-    "bindtty": "file:../bindtty/packages/bindtty"
+    "bindtty": "0.1.0-alpha.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

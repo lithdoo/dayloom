@@ -5,16 +5,18 @@ export function Header(props: { vm: ViewModel }) {
   const { vm } = props;
   const actions = computed(() => {
     const items = vm.headerActions.get();
-    return items.length > 0 ? `Actions: ${items.join(' | ')}` : '';
+    return items.length > 0 ? `Next: ${items.join(' · ')}` : '';
   });
 
   return (
-    <box border={true} padding={0}>
-      <vstack>
-        <text value={vm.headerPrimary} bold={true} color="cyan" />
+    <vstack gap={0}>
+      <text value={vm.headerPrimary} bold={true} color="cyan" />
+      <show when={computed(() => vm.headerSecondary.get() !== '')}>
         <text value={vm.headerSecondary} color="gray" />
+      </show>
+      <show when={computed(() => actions.get() !== '')}>
         <text value={actions} color="gray" />
-      </vstack>
-    </box>
+      </show>
+    </vstack>
   );
 }
