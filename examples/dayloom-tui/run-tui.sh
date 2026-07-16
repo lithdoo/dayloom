@@ -49,7 +49,7 @@ if [[ ! -f "$OUT_DIR/manifest.yaml" ]]; then
   cp -R "$SOURCE_WORLD" "$OUT_DIR"
 fi
 
-TUI_ARGS=("$OUT_DIR" --keep-session --lang zh)
+TUI_ARGS=("$OUT_DIR" --keep-session --locale zh)
 if [[ -n "${PROMPTPILE_MCP_BASE_URL:-}" ]]; then
   TUI_ARGS+=(--mcp-base-url "$PROMPTPILE_MCP_BASE_URL")
   [[ -n "${PROMPTPILE_MCP_TOKEN:-}" ]] && TUI_ARGS+=(--mcp-token "$PROMPTPILE_MCP_TOKEN")
@@ -59,4 +59,4 @@ echo "Launching dayloom-tui on: $OUT_DIR"
 echo "Shortcuts: Enter = newline, Ctrl+Enter = send, Y/N = confirm"
 echo
 
-npx --prefix "$DAY_LOOM_DIR" dayloom-tui "${TUI_ARGS[@]}"
+node "$DAY_LOOM_DIR/packages/tui/dist/main.js" "${TUI_ARGS[@]}"

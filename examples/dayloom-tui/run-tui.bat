@@ -53,17 +53,17 @@ echo Shortcuts: Enter = newline, Ctrl+Enter = send, Y/N = confirm
 echo.
 
 if defined PROMPTPILE_MCP_BASE_URL goto tui_external_gateway
-call npx --prefix "%DAY_LOOM_DIR%" dayloom-tui ^
+call node "%DAY_LOOM_DIR%\packages\tui\dist\main.js" ^
   "%OUT_DIR%" ^
   --keep-session ^
-  --lang zh
+  --locale zh
 goto tui_done
 
 :tui_external_gateway
-call npx --prefix "%DAY_LOOM_DIR%" dayloom-tui ^
+call node "%DAY_LOOM_DIR%\packages\tui\dist\main.js" ^
   "%OUT_DIR%" ^
   --keep-session ^
-  --lang zh ^
+  --locale zh ^
   --mcp-base-url "%PROMPTPILE_MCP_BASE_URL%" ^
   --mcp-token "%PROMPTPILE_MCP_TOKEN%"
 

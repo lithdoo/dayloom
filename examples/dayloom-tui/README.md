@@ -38,7 +38,23 @@ run-quick.bat
 
 退出 TUI 后脚本会验证 `output/world-quick`。在 shell 中输入 `/next` 或自然语言触发 quick init 即可落盘。
 
-## 2. Full Game Shell（需要 API key）
+## 2. Open Local World（无需 API key）
+
+直接使用项目内构建的 `dayloom-tui` 打开本示例的 `world` 目录：
+
+macOS/Linux：
+
+```bash
+./open-world.sh
+```
+
+Windows：
+
+```bat
+open-world.bat
+```
+
+## 3. Full Game Shell（需要 API key）
 
 使用相邻示例已创建的 World，在 TUI 中连续体验 daily → play → settle：
 
@@ -68,7 +84,7 @@ Windows：
 run-tui.bat
 ```
 
-默认 `--lang zh`、`--keep-session`（结算服务保持会话）。启动后会根据 World 阶段自动推荐下一步（`--auto-start` 为默认行为）。
+默认 `--locale zh`、`--keep-session`（结算服务保持会话）。启动后会根据 World 阶段自动推荐下一步（`--auto-start` 为默认行为）。
 
 ### 输入快捷键
 

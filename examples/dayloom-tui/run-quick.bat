@@ -17,7 +17,7 @@ echo Launching dayloom-tui with --quick (no API key required)...
 echo Use --no-auto-start: explore the shell before any session starts.
 echo.
 
-call npx --prefix "%DAY_LOOM_DIR%" dayloom-tui ^
+call node "%DAY_LOOM_DIR%\packages\tui\dist\main.js" ^
   "%OUT_DIR%" ^
   --quick ^
   --id campus_demo ^
