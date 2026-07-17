@@ -244,9 +244,8 @@ test('write warn error append messages and flush stream first', async () => {
 
   const roles = vm.messages.get().map((message) => message.role);
   const texts = vm.messages.get().map((message) => message.text);
-  assert.deepEqual(roles, ['output', 'output', 'warn', 'error']);
-  assert.ok(texts.includes('partial'));
-  assert.ok(texts.includes('done'));
+  assert.deepEqual(roles, ['output', 'warn', 'error']);
+  assert.ok(texts.includes('partial\ndone'));
   assert.ok(texts.includes('careful'));
   assert.ok(texts.includes('bad'));
   assert.equal(vm.streamBuffer.get(), '');

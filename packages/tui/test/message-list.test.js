@@ -5,18 +5,13 @@ import { VScrollView } from '@bindtty/widgets';
 import { MessageList } from '../dist/components/message-list.js';
 import { createViewModel } from '../dist/view-model.js';
 
-test('MessageList disables scrollOnArrow while text input is active', () => {
+test('MessageList keeps scroll arrows active while text input is active', () => {
   const vm = createViewModel({ worldDir: '.', locale: 'en' });
+  vm.inputMode.set('text');
+
   const scrollView = findComponent(MessageList({ vm }), VScrollView);
   assert.ok(scrollView);
-
-  vm.inputMode.set('hidden');
-  assert.equal(readBinding(scrollView.props.scrollOnArrow), true);
-
-  vm.inputMode.set('text');
-  const active = findComponent(MessageList({ vm }), VScrollView);
-  assert.ok(active);
-  assert.equal(readBinding(active.props.scrollOnArrow), false);
+  assert.equal(scrollView.props.scrollOnArrow, undefined);
 });
 
 test('MessageList uses focusStyle none and title chrome for focus', () => {
@@ -50,6 +45,34 @@ test('MessageList uses focusStyle none and title chrome for focus', () => {
   assert.equal(readBinding(title.props.value), 'Messages');
   assert.equal(readBinding(title.props.color), 'gray');
   assert.equal(readBinding(title.props.bold), false);
+});
+
+test('MessageList wires controlled scroll offset into VScrollView', () => {
+  const vm = createViewModel({ worldDir: '.', locale: 'en' });
+  const root = MessageList({ vm });
+  const scrollView = findComponent(root, VScrollView);
+  assert.ok(scrollView);
+
+  assert.equal(scrollView.props.offset, vm.messageScrollOffset);
+  scrollView.props.onOffsetChange?.(4.8);
+  assert.equal(vm.messageScrollOffset.get(), 4);
+});
+
+test('MessageList keeps role label natural and lets message text fill remaining width', () => {
+  const vm = createViewModel({ worldDir: '.', locale: 'en' });
+  vm.appendMessage('output', 'hello world');
+  const root = MessageList({ vm });
+
+  const label = findTextValue(root, '[OUT ] ');
+  const body = findTextValue(root, 'hello world');
+  assert.ok(label);
+  assert.ok(body);
+
+  assert.equal(label.props.flexShrink, 0);
+  assert.equal(body.props.flexGrow, 1);
+  assert.equal(body.props.flexShrink, 1);
+  assert.equal(body.props.minWidth, 0);
+  assert.equal(body.props.wrap, 'wrap');
 });
 
 test('MessageList title uses zh copy when locale is zh', () => {
@@ -93,6 +116,14 @@ function findTitleText(template) {
   );
 }
 
+function findTextValue(template, expected) {
+  const texts = [];
+  collectByType(template, 'text', texts);
+  return (
+    texts.find((node) => readBinding(node.props?.value) === expected) ?? null
+  );
+}
+
 function findComponent(template, component) {
   if (!template || typeof template !== 'object') return null;
   if (template.kind === 'component' && template.component === component) {
@@ -118,7 +149,13 @@ function collectByType(template, type, out) {
 }
 
 function getTemplateChildren(template) {
+  if (template.kind === 'for') {
+    const items = readBinding(template.each) ?? [];
+    return items.map((item, index) => template.renderItem(item, index));
+  }
   if (Array.isArray(template.children)) return template.children;
   if (template.children) return [template.children];
+  if (Array.isArray(template.props?.children)) return template.props.children;
+  if (template.props?.children) return [template.props.children];
   return [];
 }

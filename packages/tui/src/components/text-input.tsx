@@ -1,8 +1,10 @@
-import { computed } from 'bindtty';
+import { computed, createSignal } from 'bindtty';
 import { Textarea } from '@bindtty/widgets';
 import type { TerminalKeyEvent } from '@bindtty/terminal';
+import type { InteractionNodeFocusChangeEvent } from '@bindtty/interaction';
+import { elementTemplate } from '@bindtty/vnode';
 import type { ViewModel } from '../view-model.js';
-import { TEXTAREA_ID } from './constants.js';
+import { CONFIRM_ID, TEXTAREA_ID } from './constants.js';
 import { multilineInputHint } from '../theme.js';
 
 export function TextInputArea(props: { vm: ViewModel }) {
@@ -43,18 +45,34 @@ export function TextInputArea(props: { vm: ViewModel }) {
 
 function ConfirmBox(props: { vm: ViewModel }) {
   const disabled = computed(() => props.vm.loadingLabel.get() !== null);
+  const focused = createSignal(false);
+  const title = computed(() =>
+    focused.get()
+      ? props.vm.t('tui.confirm.titleFocused')
+      : props.vm.t('tui.confirm.title'),
+  );
+  const titleColor = computed(() => (focused.get() ? 'cyan' : 'gray'));
 
   function onKey(event: TerminalKeyEvent): boolean {
     return handleConfirmKey(event, props.vm, disabled);
   }
 
-  return (
-    <box id="dayloom-confirm" onKey={onKey}>
+  return elementTemplate(
+    'box',
+    {
+      id: CONFIRM_ID,
+      focusable: true,
+      focusStyle: 'none',
+      onFocusChange: (event: InteractionNodeFocusChangeEvent) => focused.set(event.focused),
+      onKey,
+    },
+    (
       <vstack gap={0}>
+        <text value={title} color={titleColor} bold={focused} wrap="truncate-end" />
         <text value={props.vm.confirmQuestion} wrap="wrap" />
         <text value={props.vm.t('tui.input.confirmHint')} color="gray" />
       </vstack>
-    </box>
+    ),
   );
 }
 

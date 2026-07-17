@@ -8,7 +8,7 @@ export function roleLabel(role: TuiMessageRole): string {
     case 'error':
       return 'ERR ';
     case 'system':
-      return 'SYS ';
+      return 'NEXT';
     case 'user':
       return 'YOU ';
     case 'output':

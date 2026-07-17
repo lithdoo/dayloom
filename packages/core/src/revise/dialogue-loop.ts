@@ -16,7 +16,7 @@ import { validateRevisePayload } from './validate-payload';
 import type { ReviseOptions } from './types';
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
-import { parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
+import { createAiDisplayStream, parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
 
 type ReviseCommand = 'help' | 'status' | 'save' | 'cancel' | 'exit';
 
@@ -120,7 +120,7 @@ export async function runReviseInteractive(
       }
       appendUserMessage(session.messagesDir, input);
       io.write('\nAI> ');
-      const stream = io.createStreamWriter({ hiddenBlocks: ['revise-status'] });
+      const stream = createAiDisplayStream(io, { hiddenBlocks: ['revise-status'] });
       const reply = await runPromptpileUntilText(session, gateway.baseUrl, gateway.token, maxToolRounds, text => stream.push(text));
       stream.flush();
       try {

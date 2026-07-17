@@ -1,6 +1,6 @@
 # TODO：Confirm 框获焦视觉反馈
 
-> **状态**：待做  
+> **状态**：已完成（自动聚焦联动见 `TODO-autofocus-input.md`）  
 > **范围**：`@dayloom/tui` `text-input.tsx` ConfirmBox；可选 i18n  
 > **约束**：独立跟踪，不改正文其它 `TODO*.md`  
 > **日期**：2026-07  
@@ -101,19 +101,19 @@ const focused = createSignal(false);
 
 ## 6. 任务清单
 
-- [ ] Confirm 根 box：`focusStyle="none"` + `onFocusChange`
-- [ ] 标题行 + i18n `tui.confirm.title` / `titleFocused`
-- [ ] 单测：focus true/false 切换标题文案或颜色 binding
+- [x] Confirm 根 box：`focusStyle="none"` + `onFocusChange`
+- [x] 标题行 + i18n `tui.confirm.title` / `titleFocused`
+- [x] 单测：focus true/false 切换标题文案或颜色 binding
 - [ ] 手工：Tab 到 confirm → 标题高亮、正文不反色；Y/N 仍可用
-- [ ] 与 autofocus：弹出 confirm 后无需 Tab 即可 Y/N
+- [ ] 与 autofocus：弹出 confirm 后无需 Tab 即可 Y/N（跟踪：`TODO-autofocus-input.md`）
 
 ---
 
 ## 7. 验收
 
-1. Confirm 获焦：标题 cyan/bold，问题与 hint **不**整片 inverse  
-2. Confirm 失焦（焦点在 MessageList）：标题回 gray，仍显示问题  
-3. Y / N / Enter 行为与现网一致  
+1. [x] Confirm 获焦：标题 cyan/bold，问题与 hint **不**整片 inverse  
+2. [x] Confirm 失焦（焦点在 MessageList）：标题回 gray，仍显示问题  
+3. [x] Y / N / Enter 行为与现网一致  
 
 ---
 

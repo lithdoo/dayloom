@@ -12,16 +12,16 @@ import {
   type Translator,
 } from '@dayloom/core';
 import { STREAM_THROTTLE_MS } from './components/constants.js';
+import {
+  appendTuiMessage,
+  formatSuggestedActions,
+  suggestedActionsKey,
+  type TuiMessage,
+  type TuiMessageRole,
+} from './message-history.js';
 
 export type TuiInputMode = 'hidden' | 'text' | 'confirm';
-export type TuiMessageRole = 'output' | 'warn' | 'error' | 'system' | 'user';
-
-export interface TuiMessage {
-  id: string;
-  role: TuiMessageRole;
-  text: string;
-  ts: number;
-}
+export type { TuiMessage, TuiMessageRole } from './message-history.js';
 
 export interface ViewModel {
   worldDir: string;
@@ -45,6 +45,7 @@ export interface ViewModel {
 
   viewportWidth: Signal<number>;
   listHeight: Signal<number>;
+  messageScrollOffset: Signal<number>;
   stickToBottom: Signal<boolean>;
   inputViewportRows: Signal<number>;
   inputResetToken: Signal<number>;
@@ -61,6 +62,7 @@ export interface ViewModel {
   submitConfirm(answer: boolean): void;
 
   setStickToBottom(value: boolean): void;
+  setMessageScrollOffset(value: number): void;
   setInputViewportRows(rows: number): void;
 }
 
@@ -70,7 +72,8 @@ export interface CreateViewModelOptions {
 }
 
 export function createViewModel(options: CreateViewModelOptions): ViewModel {
-  const t = createTranslator(normalizeLocale(options.locale));
+  const locale = normalizeLocale(options.locale);
+  const t = createTranslator(locale);
   const messages = createSignal<readonly TuiMessage[]>([]);
   const streamBuffer = createSignal('');
   const loadingLabel = createSignal<string | null>(null);
@@ -85,6 +88,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   const headerActions = createSignal<readonly string[]>([]);
   const viewportWidth = createSignal(80);
   const listHeight = createSignal(12);
+  const messageScrollOffset = createSignal(0);
   const stickToBottom = createSignal(true);
   const inputViewportRows = createSignal(1);
   const inputResetToken = createSignal(0);
@@ -93,6 +97,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   let pendingConfirm: ((value: boolean) => void) | null = null;
   let pendingStream = '';
   let streamTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSuggestedActionsKey = '';
 
   function publishPendingStream(): void {
     if (pendingStream === '') return;
@@ -106,6 +111,14 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     if (streamTimer === null) return;
     clearTimeout(streamTimer);
     streamTimer = null;
+  }
+
+  function publishSuggestedActions(actions: readonly string[]): void {
+    const key = suggestedActionsKey(actions);
+    if (key === lastSuggestedActionsKey) return;
+    lastSuggestedActionsKey = key;
+    if (key === '') return;
+    vm.appendMessage('system', formatSuggestedActions(actions, locale));
   }
 
   const vm: ViewModel = {
@@ -138,21 +151,19 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     headerActions,
     viewportWidth,
     listHeight,
+    messageScrollOffset,
     stickToBottom,
     inputViewportRows,
     inputResetToken,
     appendMessage(role, text): void {
-      if (text === '') return;
-      const normalized = text.endsWith('\n') ? text.slice(0, -1) : text;
-      messages.set([
-        ...messages.get(),
-        {
-          id: String(++messageId),
-          role,
-          text: normalized,
-          ts: Date.now(),
-        },
-      ]);
+      const current = messages.get();
+      const next = appendTuiMessage(current, role, text, {
+        now: Date.now(),
+        nextId: () => String(++messageId),
+      });
+      if (next !== current) {
+        messages.set(next);
+      }
     },
     appendStream(chunk): void {
       if (chunk === '') return;
@@ -182,10 +193,12 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
           [snapshot.day, snapshot.eventTitle].filter(Boolean).join(' · '),
         );
         headerActions.set(snapshot.suggestedActions);
+        publishSuggestedActions(snapshot.suggestedActions);
       } catch (err) {
         headerPrimary.set(`World: ${options.worldDir}`);
         headerSecondary.set(err instanceof Error ? err.message : '');
         headerActions.set([]);
+        publishSuggestedActions([]);
       }
     },
     beginInput(inputOptions, resolve): void {
@@ -230,6 +243,9 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     },
     setStickToBottom(value): void {
       stickToBottom.set(value);
+    },
+    setMessageScrollOffset(value): void {
+      messageScrollOffset.set(Math.max(0, Math.floor(value)));
     },
     setInputViewportRows(rows): void {
       inputViewportRows.set(Math.max(1, Math.min(6, Math.floor(rows))));

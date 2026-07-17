@@ -9,6 +9,8 @@ test('roleLabel and roleColor support user messages', () => {
   assert.equal(roleColor('user'), 'green');
   assert.equal(roleLabel('output'), 'OUT ');
   assert.equal(roleColor('output'), 'white');
+  assert.equal(roleLabel('system'), 'NEXT');
+  assert.equal(roleColor('system'), 'cyan');
 });
 
 test('multilineInputHint uses Ctrl+Enter on Windows and Linux', () => {

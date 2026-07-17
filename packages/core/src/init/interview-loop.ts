@@ -8,7 +8,7 @@ import { parseInterviewStatus } from './parse-assistant';
 import { assertPromptpileOk, runPromptpile } from './promptpile-run';
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
-import { parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
+import { createAiDisplayStream, parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
 import {
   appendUserMessage,
   buildTranscript,
@@ -120,7 +120,9 @@ export async function runInterviewLoop(
 
     appendUserMessage(session.messagesDir, userText);
     io.write('\n--- Assistant ---\n\n');
-    const displayStream = createInitDisplayStream(io);
+    const displayStream = createAiDisplayStream(io, {
+      hiddenBlocks: ['init-status', 'init-payload'],
+    });
     const assistantText = await runInterviewRound(session, text => displayStream.push(text));
     displayStream.flush();
     io.write('\n');
@@ -151,47 +153,6 @@ export async function runInterviewLoop(
 
 function stripDisplay(text: string): string {
   return text.replace(/```(?:json\s+)?init-status\s*\n[\s\S]*?```/gi, '').trim();
-}
-
-function createInitDisplayStream(io: SessionIO): { push(text: string): void; flush(): void } {
-  let buffer = '';
-  let suppressBlock = false;
-
-  const handleLine = (line: string, hasNewline: boolean): void => {
-    const trimmed = line.trim();
-    if (suppressBlock) {
-      if (trimmed.startsWith('```')) {
-        suppressBlock = false;
-      }
-      return;
-    }
-    if (/^```.*(?:init-status|init-payload)/i.test(trimmed)) {
-      suppressBlock = true;
-      return;
-    }
-    io.write(line);
-    if (hasNewline) {
-      io.write('\n');
-    }
-  };
-
-  return {
-    push(text: string): void {
-      buffer += text;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        handleLine(line, true);
-      }
-    },
-    flush(): void {
-      if (buffer !== '') {
-        const line = buffer;
-        buffer = '';
-        handleLine(line, false);
-      }
-    }
-  };
 }
 
 function printMissingTopics(io: SessionIO, transcript: string): void {

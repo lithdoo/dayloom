@@ -10,7 +10,7 @@ export function LoadingBar(props: { vm: ViewModel }) {
 
   return (
     <show when={visible}>
-      <text value={label} color="yellow" bold={true} />
+      <text value={label} color="yellow" bold={true} wrap="truncate-end" />
     </show>
   );
 }

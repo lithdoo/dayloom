@@ -88,6 +88,8 @@ export const messages = {
     'tui.footer.loadingDisabled': 'Working… input is disabled until the current step finishes.',
     'tui.messages.title': 'Messages',
     'tui.messages.titleFocused': 'Messages  ↑↓',
+    'tui.confirm.title': 'Confirm',
+    'tui.confirm.titleFocused': 'Confirm  Y/N',
 
     'commands.available': 'Available commands',
     'commands.availableSeparator': ': ',
@@ -224,6 +226,8 @@ export const messages = {
     'tui.footer.loadingDisabled': '处理中…当前步骤完成前输入已禁用。',
     'tui.messages.title': '消息',
     'tui.messages.titleFocused': '消息  ↑↓',
+    'tui.confirm.title': '确认',
+    'tui.confirm.titleFocused': '确认  Y/N',
 
     'commands.available': '可用指令',
     'commands.availableSeparator': '：',

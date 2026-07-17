@@ -1,6 +1,6 @@
 import { createTranslator } from '../i18n';
 import { formatAvailableCommands, formatCommandHelp, formatUnknownCommand, parseSessionCommand, type SessionCommandSpec } from '../session-commands';
-import { parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
+import { createAiDisplayStream, parseShellLevelCommand, type SessionExit, type SessionIO } from '../session-io';
 import { DEFAULT_MAX_TOOL_ROUNDS, OPENING_ASSISTANT } from './constants';
 import { applyDailyPlan, describeChanges } from './apply-plan';
 import { finalizeDailyPlan } from './finalize';
@@ -106,7 +106,7 @@ export async function runDailyInteractive(
 
       appendUserMessage(session.messagesDir, input);
       io.write('\nAI> ');
-      const stream = io.createStreamWriter({ hiddenBlocks: ['daily-status'] });
+      const stream = createAiDisplayStream(io, { hiddenBlocks: ['daily-status'] });
       const reply = await runPromptpileUntilText(session, gateway.baseUrl, gateway.token, maxToolRounds, text => stream.push(text));
       stream.flush();
       try {
