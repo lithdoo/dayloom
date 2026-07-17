@@ -4,12 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
 const mainPath = path.join(packageRoot, 'dist', 'main.js');
 
-test('real PTY: Tab focus then Enter newline in Textarea', { concurrency: false }, async (t) => {
+test('real PTY: autofocus then Enter newline in Textarea', { concurrency: false }, async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
 
@@ -18,7 +19,6 @@ test('real PTY: Tab focus then Enter newline in Textarea', { concurrency: false 
 
   try {
     await session.waitForVisible(/World:/, 8_000);
-    await session.focusTextarea();
 
     await session.typeText('hello');
     session.write('\r');
@@ -51,9 +51,9 @@ test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: f
 
   try {
     await session.waitForVisible(/World:/, 8_000);
-    await session.focusTextarea();
     await session.typeText('ab');
     await session.waitForVisible(/a\s*b/, 8_000);
+
     session.write('\x1b[Z');
     await delay(150);
     await session.focusTextarea(2);
@@ -70,8 +70,57 @@ test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: f
   }
 });
 
-test('real PTY: Tab focus then /status with Ctrl+Enter', { concurrency: false }, async (t) => {
+test('real PTY: autofocus then /status with Ctrl+Enter', { concurrency: false }, async (t) => {
   await assertCtrlEnterSubmits(t, '\x1b[13;5~');
+});
+
+test('real PTY: autofocus submits shell commands without Tab', { concurrency: false }, async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+
+  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
+  const session = spawnSession(pty, worldDir);
+
+  try {
+    await session.waitForVisible(/Enter a shell command/, 8_000);
+    await session.typeText('/status');
+    session.write('\x1b[13;5~');
+
+    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    await session.waitForVisible(/Enter a shell command/, 8_000);
+
+    await session.typeText('/help');
+    session.write('\x1b[13;5~');
+
+    await session.waitForVisible(/\/status/, 8_000);
+    await session.waitForVisible(/\/next/, 8_000);
+    session.write('\x03');
+
+    const exitCode = await session.waitForExit(8_000);
+    assert.equal(exitCode, 0);
+  } finally {
+    await session.dispose();
+    fs.rmSync(worldDir, { recursive: true, force: true });
+    await delay(400);
+  }
+});
+
+test('real PTY: autofocus accepts confirm answer without Tab', { concurrency: false }, async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+
+  const session = spawnConfirmSession(pty);
+
+  try {
+    await session.waitForVisible(/Proceed\?/, 8_000);
+    session.write('y');
+
+    const exitCode = await session.waitForExit(8_000);
+    assert.equal(exitCode, 0);
+  } finally {
+    await session.dispose();
+    await delay(400);
+  }
 });
 
 async function assertCtrlEnterSubmits(t, sequence) {
@@ -83,7 +132,6 @@ async function assertCtrlEnterSubmits(t, sequence) {
 
   try {
     await session.waitForVisible(/World:/, 8_000);
-    await session.focusTextarea();
     await session.typeText('/status');
     session.write(sequence);
 
@@ -117,6 +165,51 @@ function spawnSession(pty, worldDir) {
       },
     }),
   );
+}
+
+function spawnConfirmSession(pty) {
+  return new PtyHarness(
+    pty.spawn(process.execPath, ['--input-type=module', '--eval', confirmHarnessScript()], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color',
+        FORCE_COLOR: '0',
+      },
+    }),
+  );
+}
+
+function confirmHarnessScript() {
+  const appUrl = pathToFileURL(path.join(packageRoot, 'dist', 'app.js')).href;
+  const viewModelUrl = pathToFileURL(path.join(packageRoot, 'dist', 'view-model.js')).href;
+
+  return `
+    import { mountApp } from ${JSON.stringify(appUrl)};
+    import { createViewModel } from ${JSON.stringify(viewModelUrl)};
+
+    const vm = createViewModel({ worldDir: process.cwd(), locale: 'en' });
+    let mounted = mountApp(vm, {
+      onExitRequest() {
+        mounted?.dispose();
+        process.exit(2);
+      }
+    });
+
+    const timer = setTimeout(() => {
+      mounted?.dispose();
+      process.exit(3);
+    }, 8000);
+
+    vm.beginConfirm('Proceed?', (answer) => {
+      clearTimeout(timer);
+      mounted?.dispose();
+      process.exit(answer ? 0 : 4);
+    });
+  `;
 }
 
 async function loadNodePty(t) {
