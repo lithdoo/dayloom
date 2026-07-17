@@ -104,8 +104,9 @@ const focused = createSignal(false);
 - [x] Confirm 根 box：`focusStyle="none"` + `onFocusChange`
 - [x] 标题行 + i18n `tui.confirm.title` / `titleFocused`
 - [x] 单测：focus true/false 切换标题文案或颜色 binding
-- [ ] 手工：Tab 到 confirm → 标题高亮、正文不反色；Y/N 仍可用
-- [ ] 与 autofocus：弹出 confirm 后无需 Tab 即可 Y/N（跟踪：`TODO-autofocus-input.md`）
+- [x] PTY：弹出 confirm 后无需 Tab 即可 Y/N（见 `TODO-autofocus-input.md`）
+
+可选手工视觉验收：Tab 到 confirm → 标题高亮、正文不反色；Y/N 仍可用。
 
 ---
 

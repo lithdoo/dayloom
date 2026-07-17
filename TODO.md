@@ -460,12 +460,12 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ## Phase 4：新建 @dayloom/tui
 
-> **2026-07**：Phase A / B 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.8`**。
+> **2026-07**：Phase A–D 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.10`**。自动聚焦、Confirm chrome、消息区标题获焦与用户历史回显已落地，剩余体验小改见独立 TODO。
 
 ### 4.1 脚手架
 
 - [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`
-- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.8`**
+- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.10`**
 
 ### 4.2 `createTuiSessionIO(vm)`
 
@@ -482,12 +482,12 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 4.4 验证
 
-- [x] PTY smoke：`dayloom-tui <tmp-world> --no-auto-start` + Tab + `/status` + Ctrl+C
+- [x] PTY smoke：`dayloom-tui <tmp-world> --no-auto-start` + 自动聚焦 + `/status` + Ctrl+C
 - [ ] init → daily → play → settle 全流程（需 API key 手工 smoke；属 Phase D）
 - [ ] play 中 `/revise` 可打断并返回（需 API key 手工 smoke；属 Phase D）
 - [x] warning / error 显示在 TUI 内（SessionIO 契约 + 单测）
 
-**预估**：3–5 天 | **风险**：中（输入区默认不自动聚焦，MVP 接受 Tab；见 tui TODO §0）
+**预估**：3–5 天 | **风险**：中（真实 AI 全流程仍需手工 smoke；体验缺口见独立 TODO）
 
 ---
 
@@ -498,6 +498,8 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 - [x] 多行输入（`@bindtty/widgets` Textarea：Enter 换行，Ctrl+Enter 提交）
 - [x] 顶栏：day、phase、event、suggested_actions
 - [x] confirm 框 Y/N
+- [x] 输入区 / Confirm 自动聚焦，Tab / Shift+Tab 手动遍历仍可用
+- [x] 用户提交后历史显示 `[YOU]`
 - [x] 流式 `appendStream` throttle（~50ms）+ 自动滚底
 - [x] i18n / Windows 提交键文案（无 Ctrl+Z 误导）
 - [x] 单 session 失败不崩 shell + 零 stderr 泄漏回归

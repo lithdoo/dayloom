@@ -136,7 +136,7 @@ world
 - [x] 单测：提交 `/status` → 存在 `role==='user'` 且 `text==='/status'`
 - [x] 单测：`emptyBehavior: 'ignore'` 空提交 → 无新 user 消息
 - [x] 单测：多行 trim 后保留中间 `\n`
-- [ ] 手工：提交后历史先 `[YOU]` 再 `[OUT]`；连续两条命令顺序正确
+- [x] PTY / 单测：提交后历史先 `[YOU]` 再 `[OUT]`；连续两条命令顺序正确
 
 ---
 

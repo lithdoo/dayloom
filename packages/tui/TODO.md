@@ -7,23 +7,23 @@
 
 ## 0. 为什么要重做
 
-第一版实现完成了 bindtty 布局、`createTuiSessionIO`、`runGameShell` 接入，并曾在应用内**自研**多行 Textarea（后已废弃）。第二版验证过 `@bindtty/widgets` `Textarea` + `ScrollView` 路径可行。焦点问题在 Windows Terminal 下仍存在：**输入区默认不会自动获得焦点**（需 Tab 把焦点移到输入框）。经调试日志确认：
+第一版实现完成了 bindtty 布局、`createTuiSessionIO`、`runGameShell` 接入，并曾在应用内**自研**多行 Textarea（后已废弃）。第二版验证过 `@bindtty/widgets` `Textarea` + `ScrollView` 路径可行；后续已补齐消息区焦点 chrome、Confirm chrome、用户输入回显与输入区自动聚焦。
 
-| 现象 | 根因（有运行时证据） |
-|------|----------------------|
-| 输入提示出现后直接打字无效 | bindtty 焦点仍停留在 **MessageList**；字母键在 List 的 `onKey` 返回 `false` 被丢弃 |
-| Tab 后 inverse 高亮出现，才能打字 | Tab 触发 `focusNext()`，`onFocusChange` 的 `reason` 为 `"next"`，Textarea 才获得焦点 |
-| 获得焦点后中英文、退格均正常 | `handleKey` → `applyChange` 链路正常；**不是** readline 或 `disabled` 问题 |
+已完成的历史焦点问题：
 
-**当前决策**：TUI 重做不再要求 `BindTTYApp.focus(id)`，也不追求 `beginInput` 后自动聚焦输入框。MVP 接受通过 Tab / Shift+Tab 进入输入区；重点保证焦点进入 Textarea 后输入链路稳定、`readInput` 行为与 CLI 一致。
+- `beginInput` / `beginConfirm` 后自动聚焦 Textarea / Confirm（见根目录 `TODO-autofocus-input.md`）
+- MessageList 获焦改为标题反馈，正文不再整区反色（见根目录 `TODO-message-list-focus.md`）
+- Confirm 获焦使用标题 chrome，并保留 Y/N/Enter 行为（见根目录 `TODO-confirm-focus-chrome.md`）
+- 用户提交后历史显示 `[YOU]`（见根目录 `TODO-user-message-history.md`）
+- Ctrl+C / Kitty ctrl+c 路径已由 `isCtrlC` + `main.ts` SIGINT 处理
+- 多行提交文案已统一为 Ctrl+Enter / macOS Meta+Enter，不再出现 Ctrl+Z 误导
 
-次要问题（未完全验收）：
+仍需跟踪的体验项：
 
 - 系统终端光标被 `hideCursor: true` 关闭；反色 caret 由 **`@bindtty/widgets` `Textarea`** 自绘，dayloom 不再维护 `components/textarea/`
-- 边框与文字重叠 → `padding`、布局 chrome 行数需校准
-- Footer 快捷键文案与 Windows（Ctrl+Z）不一致 → i18n 与平台提示需统一
 - `onKey: computed(() => disabled ? false : handler)` 在 disabled 时会把 handler 设为 `false`，导致 bindtty **不注册焦点项**——应用函数包装并内部判断 `disabled`
-- Ctrl+C 无法退出：`exitOnCtrlC: false` + 自定义 `onExitRequest` 只认 `event.name === 'c'`；`enhancedKeyboard` 下 Kitty 序列常为 `{ input: 'c', ctrl: true }` 无 `name`（见 §11 Phase D）
+- 手动上滚时是否应暂停 stick-to-bottom（见根目录 `TODO-stick-to-bottom-scroll.md`）
+- Hub / Session 双页架构是大改动，规格另跟踪（见根目录 `TODO-hub-session-pages.md`）
 
 ---
 
@@ -73,14 +73,14 @@ TUI **只做三件事**：
 ```json
 {
   "@dayloom/core": "*",
-  "bindtty": "0.1.0-alpha.8",
-  "@bindtty/terminal": "0.1.0-alpha.8",
-  "@bindtty/interaction": "0.1.0-alpha.8",
-  "@bindtty/widgets": "0.1.0-alpha.8"
+  "bindtty": "^0.1.0-alpha.10",
+  "@bindtty/terminal": "^0.1.0-alpha.10",
+  "@bindtty/interaction": "^0.1.0-alpha.10",
+  "@bindtty/widgets": "^0.1.0-alpha.10"
 }
 ```
 
-> **版本**：锁定 **bindtty `0.1.0-alpha.8`**（含 CJK 感知 soft wrap、Textarea flex 软折行 / 空行 caret、ScrollView `focusStyle`）；规格见 bindtty `packages/widgets/TEXTAREA.md`。
+> **版本**：使用 **bindtty `0.1.0-alpha.10`** 系列（含 CJK 感知 soft wrap、Textarea flex 软折行 / 空行 caret、ScrollView `focusStyle`、`app.focus` / element `focus()`）。规格见 bindtty `packages/widgets/TEXTAREA.md`。
 
 ### 2.2 bindtty 侧**必须先有**的能力
 
@@ -273,8 +273,8 @@ async readInput(options: InputOptions): Promise<string | undefined> {
   - `ask-save-draft` → confirm → `undefined`
   - `ignore` → `undefined`
 - 提交：`Ctrl+Enter` / `Meta+Enter`（**不是**单独 Enter；Enter = 换行）
-- `beginInput` 只负责显示输入区、重置 `inputValue` / `inputResetToken`、保存 resolver；不做程序化 focus
-- 用户可通过 Tab / Shift+Tab 进入输入框；Textarea 获得焦点后必须正常处理输入
+- `beginInput` 只负责显示输入区、重置 `inputValue` / `inputResetToken`、保存 resolver；程序化 focus 由 `mountApp` 订阅 `inputMode` 后调用 `app.focus(TEXTAREA_ID)` 完成
+- 用户可通过 Tab / Shift+Tab 手动遍历 MessageList / Textarea / Confirm；Textarea 获得焦点后必须正常处理输入
 - `confirm(...)` 建议复用 `io.confirm` / `vm.beginConfirm`，避免在 `readInput` 里直接写 UI 分支
 
 ### 6.2 `withLoading` 与输入禁用
@@ -608,7 +608,7 @@ npm run build -w @dayloom/tui
 npx dayloom-tui ./world
 ```
 
-1. Tab 进入 Textarea；确认 multiline hint **无 Ctrl+Z**（TUI 用 Ctrl+Enter 发送）
+1. 输入提示出现后无需 Tab，直接输入 `/status`；确认 multiline hint **无 Ctrl+Z**（TUI 用 Ctrl+Enter 发送）
 2. `/status` → 顶栏与消息区更新
 3. `/next` 走 init → daily → play → settle（按推荐操作确认）
 4. play 中输入 `/revise` → 进入修订会话；`/exit` 或完成后回到 shell（经 `SessionExit`，非 TuiSessionIO 拦截）
@@ -624,12 +624,12 @@ npx dayloom-tui ./world
 | **bindtty widgets 单测** | `Textarea` 编辑/软换行/grapheme（`@bindtty/widgets`，非 dayloom） |
 | **session-io / view-model 单测** | mock VM |
 | **key-dispatch 集成** | 证明 `onKey: false` 导致控件不进焦点环；必须为函数 |
-| **真实 PTY E2E** | `dayloom-tui <tmp-world> --no-auto-start`，Tab 进入 Textarea 后输入 `/status`，Ctrl+C 退出 |
+| **真实 PTY E2E** | `dayloom-tui <tmp-world> --no-auto-start`，自动聚焦 Textarea 后输入 `/status`，Confirm 直接 y/n，Ctrl+C 退出 |
 | **不测** | 像素级渲染、真实 AI |
 
 ### 12.1 关键回归用例（第一版曾失败）
 
-1. `beginInput` 后 Tab 进入 Textarea，再按 `a` → `inputValue === 'a'`
+1. `beginInput` 后无需 Tab，直接按 `a` → `inputValue === 'a'`
 2. Backspace 清空
 3. 中文 IME 连续输入
 4. `onKey` 始终为函数；`disabled` 时内部返回 `false`，不从焦点环消失
@@ -643,8 +643,8 @@ npx dayloom-tui ./world
 - [x] 运行期用户可见错误走 `io.error`，不写真实 stderr（bootstrap 除外）
 - [x] `runGameShell` 驱动全流程；tui 无 World 读写、phase 分支、AI import
 - [x] play `/revise` 经 `SessionExit` / `handleShellCommand`，非 TuiSessionIO 拦截（`shell-recovery.test.js`）
-- [x] Tab 可进入 `@bindtty/widgets` Textarea；caret / 软折行 / ScrollView `focusStyle` / CJK wrap 依赖 bindtty `0.1.0-alpha.8`
-- [ ] Shift+Tab 与连续 shell 命令后的焦点恢复仍需补强（已知限制，见 §0）
+- [x] 自动聚焦可进入 `@bindtty/widgets` Textarea / Confirm；Tab / Shift+Tab 手动遍历仍可用；caret / 软折行 / ScrollView `focusStyle` / CJK wrap 依赖 bindtty `0.1.0-alpha.10`
+- [x] Shift+Tab 与连续 shell 命令后的焦点恢复已由 PTY E2E 覆盖（见 `TODO-autofocus-input.md`）
 - [x] code review 通过硬约束（见 §1.2）
 
 ---
@@ -659,7 +659,7 @@ npx dayloom-tui ./world
 - examples：`examples/dayloom-tui/`（`run-tui.bat/sh`、`run-quick.*`）仍指向 `dayloom-tui`，可继续作 smoke 入口
 - 调试曾用 `debug-log.ts` → `dayloom/debug-3f5de9.log`（NDJSON）；结论见 §0
 
-**历史 bindtty 补丁（未发版）**：曾规划 `interaction.focus(id)` + `app.focus(target)` 来自动聚焦输入框；当前重做不再依赖此补丁。
+**历史 bindtty 补丁**：曾规划 `interaction.focus(id)` + `app.focus(target)` 来自动聚焦输入框；该能力已在 bindtty `0.1.0-alpha.10` 发布，dayloom 已接入。
 
 ---
 
@@ -681,7 +681,7 @@ npx dayloom-tui ./world
 ## 16. 开放问题
 
 1. **bin 长期策略**：是否合并为 `dayloom` 默认 TUI — 另议  
-2. **bindtty 版本锁定**：锁定 **`0.1.0-alpha.8`**（含 CJK soft wrap、Textarea flex 软折行、空行 caret、ScrollView `focusStyle`）；本地开发可用 `file:../../../bindtty/packages/*`（sibling 仓库须同为 alpha.8）
+2. **bindtty 版本**：使用 **`0.1.0-alpha.10`** 系列（含 CJK soft wrap、Textarea flex 软折行、空行 caret、ScrollView `focusStyle`、程序化 focus）；本地开发可用 `file:../../../bindtty/packages/*`（sibling 仓库须保持兼容版本）
 3. **Windows 非 Windows Terminal**：是否官方支持 classic conhost  
 4. **VScrollView vs widgets List**：消息区已选 `VScrollView`；勿再引入 List 与 Textarea 焦点冲突
 5. **locale**：复用 core `detectLocale`；argv `--locale` 覆盖

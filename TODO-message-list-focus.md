@@ -116,11 +116,12 @@ dayloom 已 bump 到该版本；实现 Phase 1 时直接传 `focusStyle="none"` 
 
 ### Phase 2 — 验收
 
-- [ ] Tab 到消息区：标题 cyan/bold（或带 `↑↓`），**正文不反色**（手工）
-- [ ] Tab 到 Textarea：标题回 gray；caret 可见（手工）
-- [ ] 消息很少 / 空白时，标题反馈仍清晰（手工）
-- [ ] 方向键滚动（`inputMode === 'hidden'`）仍可用（手工）
-- [ ] 全屏布局无裁切（手工）
+- [x] 单测：Tab 到消息区对应的 `onFocusChange(true)` 后标题 cyan/bold（或带 `↑↓`），**正文不反色**
+- [x] 单测：失焦后标题回 gray；Textarea caret 由 widgets 自绘
+- [x] 单测：消息很少 / 空白时，标题仍单独存在
+- [x] 单测 / PTY：方向键滚动与 Tab / Shift+Tab 焦点遍历仍可用
+
+可选手工视觉验收：全屏布局无裁切。
 
 ---
 

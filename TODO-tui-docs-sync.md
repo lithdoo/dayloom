@@ -1,6 +1,6 @@
 # TODO：同步 tui 文档与已落地实现
 
-> **状态**：待做  
+> **状态**：已完成
 > **范围**：文档 only（主要为 `packages/tui/TODO.md`；可选根 `TODO.md` / `README`）  
 > **约束**：本文件跟踪「文档纠偏」；实施时可改上述文档，但勿与功能 TODO 混在一个 PR 叙述里亦可  
 > **日期**：2026-07  
@@ -10,17 +10,17 @@
 
 ## 1. 问题
 
-`packages/tui/TODO.md` **顶部状态**已写 Phase A–D 完成，但 **§0「次要问题」** 仍残留过时条目，易误导后续贡献者：
+`packages/tui/TODO.md` **顶部状态**已写 Phase A–D 完成，但 **§0「次要问题」** 曾残留过时条目，易误导后续贡献者：
 
 | §0 仍写着 | 实际 |
 |-----------|------|
 | Footer 与 Windows Ctrl+Z 不一致 | Phase D 已改为 Ctrl+Enter 文案；`multilineInputHint` 分平台 |
-| Ctrl+C 无法退出 / 只认 `name==='c'` | 已有 `isCtrlC`（含 Kitty `input:'c'+ctrl`）+ SIGINT |
+| Ctrl+C / Kitty ctrl+c 兼容性旧问题 | 已有 `isCtrlC`（含 Kitty `input:'c'+ctrl`）+ SIGINT |
 | （隐含）输入获焦只能靠 inverse | Textarea 为 caret；消息区 inverse 问题另见 focus TODO |
 
-同时：
+同步前还存在：
 
-- §13 部分项已勾，但「Shift+Tab / 连续命令后焦点恢复」仍空——应标明 **已知限制 → 见 `TODO-autofocus-input.md`**，避免像「没验收」又像「没文档」
+- §13 部分项已勾，但「Shift+Tab / 连续命令后焦点恢复」仍空；目前已由 autofocus PTY 覆盖并勾选
 - 根目录新增多份独立 TODO，**根 `TODO.md` / tui README 未索引**，发现成本高
 
 ---
@@ -52,18 +52,18 @@
 
 **保留为仍有效：**
 
-- 输入区默认不自动聚焦（→ `TODO-autofocus-input.md`）
-- 消息区获焦反馈弱（→ `TODO-message-list-focus.md`）
+- stick-to-bottom 与手动上滚冲突（→ `TODO-stick-to-bottom-scroll.md`）
+- Hub / Session 双页架构（→ `TODO-hub-session-pages.md`）
 - `onKey: false` 踢出焦点环的坑（仍是编码约束）
 - `hideCursor` + Textarea 自绘 caret（说明性，非 bug）
 - 边框 / `CHROME_ROWS` 校准（仍可能需要）
 
 ### 4.2 §13 验收
 
-将「Shift+Tab 与连续 shell 命令后的焦点恢复」标为：
+将「Shift+Tab 与连续 shell 命令后的焦点恢复」标为已完成，并指向 autofocus 相关 PTY 覆盖。
 
 ```text
-- [ ] …（跟踪：TODO-autofocus-input.md）
+- [x] …（见 TODO-autofocus-input.md）
 ```
 
 ### 4.3 索引（推荐写在 `packages/tui/README.md` 或 dayloom 根短文件）
@@ -87,17 +87,17 @@
 
 ## 5. 任务清单
 
-- [ ] 修订 `packages/tui/TODO.md` §0（去过时、留真限制、加链接）
-- [ ] §13 焦点项指向 `TODO-autofocus-input.md`
-- [ ] tui README（或根）增加开放 TODO 索引
-- [ ] 快速扫根 `TODO.md` Phase 5/6 是否仍写「实现已回退」等过时句
-- [ ] 自检：全文搜索 `Ctrl+Z`、`无法退出` 是否还在 tui 文档里当「未修 bug」
+- [x] 修订 `packages/tui/TODO.md` §0（去过时、留真限制、加链接）
+- [x] §13 焦点项指向 `TODO-autofocus-input.md` 并标为已完成
+- [x] tui README 增加开放 TODO 索引
+- [x] 快速扫根 `TODO.md` Phase 5/6 是否仍写过时句
+- [x] 自检：全文搜索过期焦点 / 快捷键 / 版本描述，不再作为未修 bug 出现在 tui 文档里
 
 ---
 
 ## 6. 验收
 
-1. 新同学只读 §0，不会认为 Ctrl+C / Ctrl+Z 文案仍坏  
+1. 新同学只读 §0，不会认为 Ctrl+C / Ctrl+Enter 文案仍坏
 2. 开放工作从索引 5 分钟内能点到对应 `TODO-*.md`  
 3. 无「Phase D 完成」与「§0 仍列已修 bug」的矛盾  
 
