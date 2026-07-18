@@ -5,6 +5,8 @@ import {
   type SessionIO,
 } from '@dayloom/core';
 import type { ViewModel } from './view-model.js';
+import { getSessionCapability } from './session/capabilities.js';
+import { guardSessionInput } from './session/command-guard.js';
 
 export function createTuiSessionIO(vm: ViewModel): SessionIO {
   const io: SessionIO = {
@@ -22,6 +24,7 @@ export function createTuiSessionIO(vm: ViewModel): SessionIO {
       vm.appendMessage('error', text);
     },
     createStreamWriter(options?: { hiddenBlocks?: string[] }) {
+      vm.setSessionState({ kind: 'streaming' });
       return createFilteredStreamOutput({
         hiddenBlocks: options?.hiddenBlocks ?? [],
         write: (text) => vm.appendStream(text),
@@ -35,6 +38,15 @@ export function createTuiSessionIO(vm: ViewModel): SessionIO {
         const trimmed = text.trim();
 
         if (trimmed !== '') {
+          const page = vm.page.get();
+          if (page.kind === 'session') {
+            const blocked = guardSessionInput(trimmed, getSessionCapability(page.command), vm.t);
+            if (blocked) {
+              vm.appendMessage('warn', `${blocked}\n`);
+              vm.setStickToBottom(true);
+              continue;
+            }
+          }
           vm.appendMessage('user', trimmed);
           vm.setStickToBottom(true);
           return trimmed;
@@ -65,10 +77,18 @@ export function createTuiSessionIO(vm: ViewModel): SessionIO {
       label: string,
       task: (loading: { update(label: string): void }) => Promise<T> | T,
     ): Promise<T> {
+      const page = vm.page.get();
+      if (page.kind === 'session') {
+        vm.setSessionState({ kind: 'loading', label });
+      }
       vm.loadingLabel.set(label);
       try {
         return await task({
           update(nextLabel: string): void {
+            const currentPage = vm.page.get();
+            if (currentPage.kind === 'session') {
+              vm.setSessionState({ kind: 'loading', label: nextLabel });
+            }
             vm.loadingLabel.set(nextLabel);
           },
         });

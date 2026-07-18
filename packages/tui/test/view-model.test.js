@@ -107,38 +107,25 @@ test('appendMessage merges consecutive display output without merging boundaries
   );
 });
 
-test('refreshHeader publishes suggested actions as a deduped system message', () => {
+test('refreshHeader exposes suggested actions without appending messages', () => {
   const worldDir = createPlayingWorld();
   try {
     const vm = createViewModel({ worldDir, locale: 'zh' });
 
     assert.deepEqual(vm.headerActions.get(), ['Order espresso', 'Leave']);
-    assert.deepEqual(
-      vm.messages.get().map((message) => [message.role, message.text]),
-      [
-        [
-          'system',
-          '推荐下一步：\n1. Order espresso\n2. Leave',
-        ],
-      ],
-    );
+    assert.deepEqual(vm.messages.get(), []);
 
     vm.refreshHeader();
-    assert.equal(vm.messages.get().length, 1);
+    assert.equal(vm.messages.get().length, 0);
 
     writeEvent(worldDir, ['Leave']);
     vm.refreshHeader();
-    assert.deepEqual(
-      vm.messages.get().map((message) => message.text),
-      [
-        '推荐下一步：\n1. Order espresso\n2. Leave',
-        '推荐下一步：\n1. Leave',
-      ],
-    );
+    assert.deepEqual(vm.headerActions.get(), ['Leave']);
+    assert.equal(vm.messages.get().length, 0);
 
     writeEvent(worldDir, []);
     vm.refreshHeader();
-    assert.equal(vm.messages.get().length, 2);
+    assert.equal(vm.messages.get().length, 0);
     assert.deepEqual(vm.headerActions.get(), []);
   } finally {
     fs.rmSync(worldDir, { recursive: true, force: true });

@@ -1,12 +1,13 @@
-import { createApp, type BindTTYApp } from 'bindtty';
+import { computed, createApp, type BindTTYApp } from 'bindtty';
 import { createNodeTerminal, RawStdinInput, type TerminalKeyEvent } from '@bindtty/terminal';
 import type { TuiInputMode, ViewModel } from './view-model.js';
-import { CHROME_ROWS, CONFIRM_ID, TEXTAREA_ID } from './components/constants.js';
+import { CHROME_ROWS, CONFIRM_ID, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
 import { Header } from './components/header.js';
 import { MessageList } from './components/message-list.js';
 import { LoadingBar } from './components/loading-bar.js';
 import { TextInputArea } from './components/text-input.js';
 import { Footer } from './components/footer.js';
+import { HubSelect } from './components/hub-select.js';
 
 export interface MountedTuiApp {
   dispose(): void;
@@ -66,6 +67,39 @@ export function mountInputAutofocus(
   };
 }
 
+export function mountPageAutofocus(
+  vm: ViewModel,
+  app: Pick<BindTTYApp, 'focus'>,
+  schedule: (callback: () => void) => void = queueMicrotask,
+): () => void {
+  let disposed = false;
+  let pendingTicket = 0;
+
+  function scheduleFocus(): void {
+    const ticket = ++pendingTicket;
+    schedule(() => {
+      if (disposed || ticket !== pendingTicket) return;
+      const page = vm.page.get();
+      if (page.kind === 'hub' && !page.busy) {
+        app.focus(HUB_SELECT_ID);
+      }
+    });
+  }
+
+  const unsubscribe = vm.page.subscribe((page, previousPage) => {
+    if (page === previousPage) return;
+    scheduleFocus();
+  });
+
+  scheduleFocus();
+
+  return () => {
+    disposed = true;
+    pendingTicket += 1;
+    unsubscribe();
+  };
+}
+
 export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedTuiApp {
   const terminal = createNodeTerminal({
     stdout: process.stdout,
@@ -100,12 +134,23 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     }
   });
 
+  const showHubSelect = computed(() => {
+    const page = vm.page.get();
+    return page.kind === 'hub' && !page.busy;
+  });
+  const showSessionInput = computed(() => vm.page.get().kind === 'session');
+
   const app = createApp(
     <screen gap={0} alignItems="stretch">
       <Header vm={vm} />
       <MessageList vm={vm} />
       <LoadingBar vm={vm} />
-      <TextInputArea vm={vm} />
+      <show when={showHubSelect}>
+        <HubSelect vm={vm} />
+      </show>
+      <show when={showSessionInput}>
+        <TextInputArea vm={vm} />
+      </show>
       <Footer vm={vm} />
     </screen>,
     { terminal },
@@ -113,9 +158,11 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
 
   app.start();
   const unsubscribeInputAutofocus = mountInputAutofocus(vm, app);
+  const unsubscribePageAutofocus = mountPageAutofocus(vm, app);
 
   return {
     dispose(): void {
+      unsubscribePageAutofocus();
       unsubscribeInputAutofocus();
       unsubscribeResize();
       unsubscribeExitKey();

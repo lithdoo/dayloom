@@ -16,6 +16,7 @@ test('MessageList keeps scroll arrows active while text input is active', () => 
 
 test('MessageList uses focusStyle none and title chrome for focus', () => {
   const vm = createViewModel({ worldDir: '.', locale: 'en' });
+  vm.setSessionPage('init');
   const root = MessageList({ vm });
   const scrollView = findComponent(root, VScrollView);
   assert.ok(scrollView);
@@ -60,6 +61,7 @@ test('MessageList wires controlled scroll offset into VScrollView', () => {
 
 test('MessageList keeps role label natural and lets message text fill remaining width', () => {
   const vm = createViewModel({ worldDir: '.', locale: 'en' });
+  vm.setSessionPage('init');
   vm.appendMessage('output', 'hello world');
   const root = MessageList({ vm });
 
@@ -77,6 +79,7 @@ test('MessageList keeps role label natural and lets message text fill remaining 
 
 test('MessageList title uses zh copy when locale is zh', () => {
   const vm = createViewModel({ worldDir: '.', locale: 'zh' });
+  vm.setSessionPage('init');
   const root = MessageList({ vm });
   const title = findTitleText(root);
   assert.ok(title);
@@ -109,6 +112,10 @@ function findTitleText(template) {
         typeof value === 'string' &&
         (value === 'Messages' ||
           value === 'Messages  ↑↓' ||
+          value === '状态' ||
+          value === '状态  ↑↓' ||
+          value === '帮助' ||
+          value === '帮助  ↑↓' ||
           value === '消息' ||
           value === '消息  ↑↓')
       );

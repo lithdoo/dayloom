@@ -10,7 +10,7 @@ const packageRoot = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
 const mainPath = path.join(packageRoot, 'dist', 'main.js');
 
-test('real PTY: autofocus then Enter newline in Textarea', { concurrency: false }, async (t) => {
+test('real PTY: Hub Enter opens session, then Enter inserts newline in Textarea', { concurrency: false }, async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
 
@@ -18,7 +18,9 @@ test('real PTY: autofocus then Enter newline in Textarea', { concurrency: false 
   const session = spawnSession(pty, worldDir);
 
   try {
-    await session.waitForVisible(/World:/, 8_000);
+    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/Enter your reply/, 8_000);
 
     await session.typeText('hello');
     session.write('\r');
@@ -42,7 +44,7 @@ test('real PTY: autofocus then Enter newline in Textarea', { concurrency: false 
   }
 });
 
-test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: false }, async (t) => {
+test('real PTY: Shift+Tab focus traversal returns to Textarea after entering session', { concurrency: false }, async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
 
@@ -50,7 +52,9 @@ test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: f
   const session = spawnSession(pty, worldDir);
 
   try {
-    await session.waitForVisible(/World:/, 8_000);
+    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/Enter your reply/, 8_000);
     await session.typeText('ab');
     await session.waitForVisible(/a\s*b/, 8_000);
 
@@ -70,11 +74,11 @@ test('real PTY: Shift+Tab focus traversal returns to Textarea', { concurrency: f
   }
 });
 
-test('real PTY: autofocus then /status with Ctrl+Enter', { concurrency: false }, async (t) => {
+test('real PTY: session blocks /status with Ctrl+Enter', { concurrency: false }, async (t) => {
   await assertCtrlEnterSubmits(t, '\x1b[13;5~');
 });
 
-test('real PTY: autofocus submits shell commands without Tab', { concurrency: false }, async (t) => {
+test('real PTY: Hub shortcuts switch status and help without Tab', { concurrency: false }, async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
 
@@ -82,18 +86,15 @@ test('real PTY: autofocus submits shell commands without Tab', { concurrency: fa
   const session = spawnSession(pty, worldDir);
 
   try {
-    await session.waitForVisible(/Enter a shell command/, 8_000);
-    await session.typeText('/status');
-    session.write('\x1b[13;5~');
+    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    session.write('?');
+
+    await session.waitForVisible(/对话页/, 8_000);
+    await session.waitForVisible(/\/exit/, 8_000);
+
+    session.write('s');
 
     await session.waitForVisible(/Current: uninitialized/, 8_000);
-    await session.waitForVisible(/Enter a shell command/, 8_000);
-
-    await session.typeText('/help');
-    session.write('\x1b[13;5~');
-
-    await session.waitForVisible(/\/status/, 8_000);
-    await session.waitForVisible(/\/next/, 8_000);
     session.write('\x03');
 
     const exitCode = await session.waitForExit(8_000);
@@ -131,19 +132,20 @@ async function assertCtrlEnterSubmits(t, sequence) {
   const session = spawnSession(pty, worldDir);
 
   try {
-    await session.waitForVisible(/World:/, 8_000);
+    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/Enter your reply/, 8_000);
     await session.typeText('/status');
     session.write(sequence);
 
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
-    await session.waitForVisible(/dayloom init -d/, 8_000);
+    await session.waitForVisible(/当前正在会话中/, 8_000);
     session.write('\x03');
 
     const exitCode = await session.waitForExit(8_000);
     assert.equal(exitCode, 0);
 
     const visible = session.visibleOutput();
-    assert.match(visible, /Current: uninitialized/);
+    assert.match(visible, /当前正在会话中/);
   } finally {
     await session.dispose();
     fs.rmSync(worldDir, { recursive: true, force: true });
@@ -192,6 +194,7 @@ function confirmHarnessScript() {
     import { createViewModel } from ${JSON.stringify(viewModelUrl)};
 
     const vm = createViewModel({ worldDir: process.cwd(), locale: 'en' });
+    vm.setSessionPage('init');
     let mounted = mountApp(vm, {
       onExitRequest() {
         mounted?.dispose();

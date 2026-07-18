@@ -14,11 +14,26 @@ import {
 import { STREAM_THROTTLE_MS } from './components/constants.js';
 import {
   appendTuiMessage,
-  formatSuggestedActions,
-  suggestedActionsKey,
   type TuiMessage,
   type TuiMessageRole,
 } from './message-history.js';
+import {
+  formatHubHelp,
+  formatHubStatus,
+  resolveHubHelp,
+  resolveHubStatus,
+} from './hub/content.js';
+import { resolveHubActions } from './hub/actions.js';
+import type {
+  HubAction,
+  HubActionId,
+  HubHelpContent,
+  HubMode,
+  HubRecentSummary,
+  HubStatusContent,
+  TuiPage,
+} from './hub/types.js';
+import type { SessionCommand, SessionState } from './session/types.js';
 
 export type TuiInputMode = 'hidden' | 'text' | 'confirm';
 export type { TuiMessage, TuiMessageRole } from './message-history.js';
@@ -26,6 +41,13 @@ export type { TuiMessage, TuiMessageRole } from './message-history.js';
 export interface ViewModel {
   worldDir: string;
   t: Translator;
+
+  page: Signal<TuiPage>;
+  hubActions: Signal<readonly HubAction[]>;
+  hubSelectedActionId: Signal<HubActionId>;
+  hubStatus: Signal<HubStatusContent>;
+  hubHelp: Signal<HubHelpContent>;
+  recentSession: Signal<HubRecentSummary | undefined>;
 
   messages: Signal<readonly TuiMessage[]>;
   visibleMessages: ReadableSignal<readonly TuiMessage[]>;
@@ -54,12 +76,22 @@ export interface ViewModel {
   appendStream(chunk: string): void;
   flushStream(): void;
   refreshHeader(): void;
+  refreshHub(): void;
+  setHubMode(mode: HubMode): void;
+  setHubBusy(label: string | null): void;
+  setSessionPage(command: SessionCommand, state?: SessionState): void;
+  setSessionState(state: SessionState): void;
+  setRecentSession(summary: HubRecentSummary | undefined): void;
 
   beginInput(options: InputOptions, resolve: (value: string) => void): void;
   beginConfirm(question: string, resolve: (value: boolean) => void): void;
+  beginHubSelection(resolve: (action: HubAction) => void): void;
   clearInput(): void;
   submitTextInput(): void;
   submitConfirm(answer: boolean): void;
+  submitHubSelection(): void;
+  moveHubSelection(delta: number): void;
+  selectHubAction(id: HubActionId): void;
 
   setStickToBottom(value: boolean): void;
   setMessageScrollOffset(value: number): void;
@@ -74,6 +106,19 @@ export interface CreateViewModelOptions {
 export function createViewModel(options: CreateViewModelOptions): ViewModel {
   const locale = normalizeLocale(options.locale);
   const t = createTranslator(locale);
+  const initialHubHelp = resolveHubHelp(t);
+  const page = createSignal<TuiPage>({ kind: 'hub', mode: 'status' });
+  const hubActions = createSignal<readonly HubAction[]>([]);
+  const hubSelectedActionId = createSignal<HubActionId>('next');
+  const hubStatus = createSignal<HubStatusContent>({
+    worldRoot: options.worldDir,
+    initialized: false,
+    nextLabel: '',
+    nextSummary: '',
+    actions: [],
+  });
+  const hubHelp = createSignal<HubHelpContent>(initialHubHelp);
+  const recentSession = createSignal<HubRecentSummary | undefined>(undefined);
   const messages = createSignal<readonly TuiMessage[]>([]);
   const streamBuffer = createSignal('');
   const loadingLabel = createSignal<string | null>(null);
@@ -95,9 +140,9 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   let messageId = 0;
   let pendingInput: ((value: string) => void) | null = null;
   let pendingConfirm: ((value: boolean) => void) | null = null;
+  let pendingHubSelection: ((action: HubAction) => void) | null = null;
   let pendingStream = '';
   let streamTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastSuggestedActionsKey = '';
 
   function publishPendingStream(): void {
     if (pendingStream === '') return;
@@ -113,19 +158,51 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     streamTimer = null;
   }
 
-  function publishSuggestedActions(actions: readonly string[]): void {
-    const key = suggestedActionsKey(actions);
-    if (key === lastSuggestedActionsKey) return;
-    lastSuggestedActionsKey = key;
-    if (key === '') return;
-    vm.appendMessage('system', formatSuggestedActions(actions, locale));
+  function createHubMessages(): readonly TuiMessage[] {
+    const currentPage = page.get();
+    const text = currentPage.kind === 'hub' && currentPage.mode === 'help'
+      ? formatHubHelp(hubHelp.get())
+      : formatHubStatus(hubStatus.get(), t);
+    const loading = currentPage.kind === 'hub' && currentPage.busy
+      ? `\n\n${currentPage.busy.label}`
+      : '';
+    return [
+      {
+        id: currentPage.kind === 'hub' ? `hub-${currentPage.mode}` : 'hub-status',
+        role: 'system',
+        text: `${text}${loading}`,
+        ts: Date.now(),
+      },
+    ];
+  }
+
+  function selectedHubAction(): HubAction | undefined {
+    const actions = hubActions.get();
+    return actions.find((action) => action.id === hubSelectedActionId.get()) ?? actions[0];
+  }
+
+  function normalizeHubSelection(actions: readonly HubAction[]): void {
+    if (actions.length === 0) return;
+    const current = hubSelectedActionId.get();
+    if (actions.some((action) => action.id === current)) return;
+    const recommended = actions.find((action) => action.recommended);
+    hubSelectedActionId.set((recommended ?? actions[0]!).id);
   }
 
   const vm: ViewModel = {
     worldDir: options.worldDir,
     t,
+    page,
+    hubActions,
+    hubSelectedActionId,
+    hubStatus,
+    hubHelp,
+    recentSession,
     messages,
     visibleMessages: computed(() => {
+      if (page.get().kind === 'hub') {
+        return createHubMessages();
+      }
       const stream = streamBuffer.get();
       if (stream === '') return messages.get();
       return [
@@ -193,17 +270,57 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
           [snapshot.day, snapshot.eventTitle].filter(Boolean).join(' · '),
         );
         headerActions.set(snapshot.suggestedActions);
-        publishSuggestedActions(snapshot.suggestedActions);
       } catch (err) {
         headerPrimary.set(`World: ${options.worldDir}`);
         headerSecondary.set(err instanceof Error ? err.message : '');
         headerActions.set([]);
-        publishSuggestedActions([]);
       }
+    },
+    refreshHub(): void {
+      const resolved = resolveHubActions({ worldDir: options.worldDir, t });
+      hubActions.set(resolved.actions);
+      normalizeHubSelection(resolved.actions);
+      hubStatus.set(resolveHubStatus({
+        worldDir: options.worldDir,
+        t,
+        recent: recentSession.get(),
+        resolved,
+      }));
+      hubHelp.set(resolveHubHelp(t));
+      vm.refreshHeader();
+      stickToBottom.set(true);
+    },
+    setHubMode(mode): void {
+      const current = page.get();
+      page.set({ kind: 'hub', mode, busy: current.kind === 'hub' ? current.busy : undefined });
+      stickToBottom.set(true);
+    },
+    setHubBusy(label): void {
+      const current = page.get();
+      const mode = current.kind === 'hub' ? current.mode : 'status';
+      page.set(label ? { kind: 'hub', mode: 'status', busy: { kind: 'settling', label } } : { kind: 'hub', mode });
+      inputMode.set('hidden');
+      stickToBottom.set(true);
+    },
+    setSessionPage(command, state = { kind: 'starting' }): void {
+      page.set({ kind: 'session', command, state });
+      stickToBottom.set(true);
+    },
+    setSessionState(state): void {
+      const current = page.get();
+      if (current.kind !== 'session') return;
+      page.set({ ...current, state });
+    },
+    setRecentSession(summary): void {
+      recentSession.set(summary);
     },
     beginInput(inputOptions, resolve): void {
       assertNoPending(pendingInput, pendingConfirm);
       pendingInput = resolve;
+      const current = page.get();
+      if (current.kind === 'session') {
+        page.set({ ...current, state: { kind: 'waiting-input' } });
+      }
       inputInstruction.set(inputOptions.instruction);
       inputPrompt.set(inputOptions.userPrompt);
       inputHint.set(inputOptions.commandHint ?? '');
@@ -214,9 +331,20 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     beginConfirm(question, resolve): void {
       assertNoPending(pendingInput, pendingConfirm);
       pendingConfirm = resolve;
+      const current = page.get();
+      if (current.kind === 'session') {
+        page.set({ ...current, state: { kind: 'waiting-confirm' } });
+      }
       confirmQuestion.set(question);
       inputValue.set('');
       inputMode.set('confirm');
+    },
+    beginHubSelection(resolve): void {
+      pendingHubSelection = resolve;
+      vm.refreshHub();
+      const current = page.get();
+      page.set({ kind: 'hub', mode: current.kind === 'hub' ? current.mode : 'status' });
+      inputMode.set('hidden');
     },
     clearInput(): void {
       inputMode.set('hidden');
@@ -241,6 +369,25 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
       vm.clearInput();
       resolve(answer);
     },
+    submitHubSelection(): void {
+      const resolve = pendingHubSelection;
+      const action = selectedHubAction();
+      if (!resolve || !action) return;
+      pendingHubSelection = null;
+      resolve(action);
+    },
+    moveHubSelection(delta): void {
+      const actions = hubActions.get();
+      if (actions.length === 0) return;
+      const currentIndex = Math.max(0, actions.findIndex((action) => action.id === hubSelectedActionId.get()));
+      const nextIndex = Math.max(0, Math.min(actions.length - 1, currentIndex + delta));
+      hubSelectedActionId.set(actions[nextIndex]!.id);
+    },
+    selectHubAction(id): void {
+      if (hubActions.get().some((action) => action.id === id)) {
+        hubSelectedActionId.set(id);
+      }
+    },
     setStickToBottom(value): void {
       stickToBottom.set(value);
     },
@@ -253,6 +400,7 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
   };
 
   vm.refreshHeader();
+  vm.refreshHub();
   return vm;
 }
 

@@ -7,11 +7,16 @@ export function MessageList(props: { vm: ViewModel }) {
   const { vm } = props;
   const messageContentWidth = computed(() => Math.max(1, vm.viewportWidth.get() - 1));
   const focused = createSignal(false);
-  const title = computed(() =>
-    focused.get()
+  const title = computed(() => {
+    const page = vm.page.get();
+    if (page.kind === 'hub') {
+      const base = page.mode === 'help' ? '帮助' : '状态';
+      return focused.get() ? `${base}  ↑↓` : base;
+    }
+    return focused.get()
       ? vm.t('tui.messages.titleFocused')
-      : vm.t('tui.messages.title'),
-  );
+      : vm.t('tui.messages.title');
+  });
   const titleColor = computed(() => (focused.get() ? 'cyan' : 'gray'));
 
   return (

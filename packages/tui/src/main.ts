@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { InitCancelledError, runGameShell } from '@dayloom/core';
+import { InitCancelledError, type RecommendedActionOptions } from '@dayloom/core';
 import { parseArgv, formatHelp } from './argv.js';
 import { mountApp } from './app.js';
 import { createTuiSessionIO } from './session-io.js';
 import { createViewModel } from './view-model.js';
+import { runTuiShell } from './tui-shell.js';
 
 async function main(): Promise<void> {
   const parsed = parseArgv(process.argv);
@@ -35,12 +36,15 @@ async function main(): Promise<void> {
   process.on('SIGINT', onSigInt);
 
   try {
-    await runGameShell({
+    await runTuiShell({
       worldDir: parsed.worldDir,
-      io,
+      vm,
       t: vm.t,
-      autoStart: parsed.autoStart,
-      ...parsed.shellOptions,
+      actionOpts: {
+        io,
+        t: vm.t,
+        ...parsed.shellOptions,
+      } satisfies RecommendedActionOptions,
     });
   } catch (err) {
     // Keep failures inside the TUI message list — never write to stderr while
