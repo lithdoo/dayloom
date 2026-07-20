@@ -1,0 +1,27 @@
+{
+  "name": "@dayloom/core2",
+  "version": "0.0.0",
+  "description": "Next-generation Dayloom core runtime.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.js"
+  },
+  "keywords": [
+    "dayloom",
+    "runtime"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  }
+}
