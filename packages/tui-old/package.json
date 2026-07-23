@@ -13,18 +13,18 @@
     "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
-    "@bindtty/interaction": "^0.1.0-alpha.10",
-    "@bindtty/jsx-runtime": "^0.1.0-alpha.10",
-    "@bindtty/layout": "^0.1.0-alpha.10",
-    "@bindtty/renderer-terminal": "^0.1.0-alpha.10",
-    "@bindtty/runtime": "^0.1.0-alpha.10",
-    "@bindtty/signal": "^0.1.0-alpha.10",
-    "@bindtty/terminal": "^0.1.0-alpha.10",
-    "@bindtty/text": "^0.1.0-alpha.10",
-    "@bindtty/vnode": "^0.1.0-alpha.10",
-    "@bindtty/widgets": "^0.1.0-alpha.10",
+    "@bindtty/interaction": "^0.1.0-beta.0",
+    "@bindtty/jsx-runtime": "^0.1.0-beta.0",
+    "@bindtty/layout": "^0.1.0-beta.0",
+    "@bindtty/renderer-terminal": "^0.1.0-beta.0",
+    "@bindtty/runtime": "^0.1.0-beta.0",
+    "@bindtty/signal": "^0.1.0-beta.0",
+    "@bindtty/terminal": "^0.1.0-beta.0",
+    "@bindtty/text": "^0.1.0-beta.0",
+    "@bindtty/vnode": "^0.1.0-beta.0",
+    "@bindtty/widgets": "^0.1.0-beta.0",
     "@dayloom/core-old": "*",
-    "bindtty": "^0.1.0-alpha.10"
+    "bindtty": "^0.1.0-beta.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

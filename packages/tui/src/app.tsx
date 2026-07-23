@@ -1,5 +1,5 @@
 import { computed, createApp, type BindTTYApp } from 'bindtty';
-import { createNodeTerminal, RawStdinInput, type TerminalKeyEvent } from '@bindtty/terminal';
+import { createNodeTerminal, type TerminalKeyEvent } from '@bindtty/terminal';
 import type { ViewModel } from './view-model.js';
 import { CHROME_ROWS, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
 import { Footer, Header, HubSelect, LoadingBar, MessageList, TextInputArea } from './components/index.js';
@@ -24,8 +24,7 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     hideCursor: true,
     rawMode: true,
     exitOnCtrlC: false,
-    enhancedKeyboard: true,
-    stdinInputAdapter: new RawStdinInput(),
+    keyboardProtocol: 'auto',
   });
 
   function syncLayout(): void {
@@ -112,4 +111,3 @@ export function mountAutofocus(
     unsubscribeInput();
   };
 }
-

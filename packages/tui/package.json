@@ -26,12 +26,12 @@
     "package.json"
   ],
   "dependencies": {
-    "@bindtty/interaction": "^0.1.0-alpha.10",
-    "@bindtty/terminal": "^0.1.0-alpha.10",
-    "@bindtty/vnode": "^0.1.0-alpha.10",
-    "@bindtty/widgets": "^0.1.0-alpha.10",
+    "@bindtty/interaction": "^0.1.0-beta.0",
+    "@bindtty/terminal": "^0.1.0-beta.0",
+    "@bindtty/vnode": "^0.1.0-beta.0",
+    "@bindtty/widgets": "^0.1.0-beta.0",
     "@dayloom/core": "*",
-    "bindtty": "^0.1.0-alpha.10"
+    "bindtty": "^0.1.0-beta.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
