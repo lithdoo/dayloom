@@ -1,131 +1,74 @@
-import {
-  describeNextAction,
-  formatNextStatus,
-  type Translator,
-} from '@dayloom/core';
-import type {
-  HubAction,
-  HubHelpContent,
-  HubRecentSummary,
-  HubStatusContent,
-} from './types.js';
-import type { ResolvedHubActions } from './actions.js';
+import type { CommandAvailability, RuntimeSnapshot } from '@dayloom/core';
+import { isWorldCommand } from './actions.js';
+import { phaseLabel, runtimeCommandLabel } from '../theme.js';
+import type { TuiHubAction, TuiRecentResult } from '../types.js';
 
-export interface ResolveHubContentOptions {
-  worldDir: string;
-  t: Translator;
-  recent?: HubRecentSummary;
-  resolved: ResolvedHubActions;
-}
-
-export function resolveHubStatus(options: ResolveHubContentOptions): HubStatusContent {
-  const { worldDir, t, recent, resolved } = options;
-  if (!resolved.state) {
-    return {
-      worldRoot: worldDir,
-      initialized: false,
-      nextLabel: '',
-      nextSummary: '',
-      actions: actionSummaries(resolved.actions),
-      recent,
-      error: resolved.error,
-    };
+export function formatHubStatus(input: {
+  snapshot: RuntimeSnapshot;
+  actions: readonly TuiHubAction[];
+  commands: readonly CommandAvailability[];
+  recent: TuiRecentResult | null;
+}): string {
+  const { snapshot, actions, recent } = input;
+  const lines = [
+    `World: ${snapshot.world.worldRoot}`,
+    `Phase: ${phaseLabel(snapshot.world.phase)} (${snapshot.world.phase})`,
+    `Day: ${snapshot.world.day ?? '-'}`,
+    `Initialized: ${snapshot.world.initialized ? 'yes' : 'no'}`,
+  ];
+  if (snapshot.world.invalidReason) {
+    lines.push(`Error: ${snapshot.world.invalidReason}`);
   }
-
-  const state = resolved.state;
-  return {
-    worldRoot: state.worldRoot,
-    initialized: state.kind === 'initialized',
-    day: state.kind === 'initialized' ? state.day : undefined,
-    phase: state.kind === 'initialized' ? state.phase : undefined,
-    nextLabel: state.action,
-    nextSummary: describeNextAction(state, t),
-    actions: actionSummaries(resolved.actions),
-    recent,
-    error: undefined,
-  };
-}
-
-export function resolveHubHelp(t: Translator): HubHelpContent {
-  return {
-    hubCommands: [
-      { label: t('shell.next.hint'), summary: t('shell.next.summary'), shortcut: 'n' },
-      { label: t('shell.status.hint'), summary: t('shell.status.summary'), shortcut: 's' },
-      { label: t('shell.help.hint'), summary: t('shell.help.summary'), shortcut: '?' },
-      { label: t('shell.revise.hint'), summary: t('shell.revise.summary'), shortcut: 'r' },
-      { label: t('shell.quit.hint'), summary: t('shell.quit.summary'), shortcut: 'q' },
-    ],
-    sessionCommands: [
-      { command: '/exit', summary: t('commands.exit.summary') },
-      { command: '/save', summary: t('commands.save.summary'), availability: 'init / daily / revise' },
-      { command: '/cancel', summary: t('commands.cancel.summary'), availability: 'init / daily / revise' },
-      { command: '/quit', summary: t('shell.quit.summary') },
-    ],
-  };
-}
-
-export function formatHubStatus(content: HubStatusContent, t: Translator): string {
-  const lines = ['状态', ''];
-  if (content.error) {
-    lines.push(`World: ${content.worldRoot}`);
-    lines.push(`Error: ${content.error}`);
-  } else if (!content.initialized) {
-    lines.push(`World: ${content.worldRoot}`);
-    lines.push(t('next.currentUninitialized'));
-  } else {
-    lines.push(`World: ${content.worldRoot}`);
-    if (content.day && content.phase) {
-      lines.push(t('next.currentPhase', { day: content.day, phase: content.phase }));
+  if (recent) {
+    lines.push('', `最近结果: ${recent.label}${recent.detail ? ` - ${recent.detail}` : ''}`);
+  }
+  lines.push('', '当前可选动作:');
+  for (const action of actions.filter((action) => action.kind === 'core-command')) {
+    lines.push(`- ${action.label}: ${action.summary}`);
+  }
+  if (!actions.some((action) => action.kind === 'core-command')) {
+    lines.push('- 无业务动作');
+  }
+  const unavailable = input.commands.filter(
+    (command) => isWorldCommand(command.name) && !command.enabled,
+  );
+  if (unavailable.length > 0) {
+    lines.push('', '当前不可用动作:');
+    for (const command of unavailable) {
+      lines.push(`- ${runtimeCommandLabel(command.name)}: ${command.reason ?? '不可用'}`);
     }
   }
-
-  if (content.nextLabel) {
-    lines.push('');
-    lines.push(t('next.nextAction', { action: content.nextLabel }));
-    if (content.nextSummary) lines.push(content.nextSummary);
-  }
-
-  if (content.actions.length > 0) {
-    lines.push('');
-    lines.push(t('commands.available'));
-    for (const action of content.actions) {
-      lines.push(`- ${action.label}`);
-    }
-  }
-
-  if (content.recent) {
-    lines.push('');
-    lines.push(`${content.recent.label}${content.recent.detail ? `: ${content.recent.detail}` : ''}`);
-  }
-
   return lines.join('\n');
 }
 
-export function formatHubHelp(content: HubHelpContent): string {
-  const lines = ['帮助', '', '指令页'];
-  for (const command of content.hubCommands) {
-    const shortcut = command.shortcut ? ` (${command.shortcut})` : '';
-    lines.push(`- ${command.label}${shortcut}: ${command.summary}`);
+export function formatHubHelp(input: {
+  commands: readonly CommandAvailability[];
+  actions: readonly TuiHubAction[];
+}): string {
+  const disabled = input.commands.filter(
+    (command) => isWorldCommand(command.name) && !command.enabled,
+  );
+  const lines = [
+    'Hub 操作',
+    '',
+    '- Enter: 执行当前选择',
+    '- ↑/↓: 切换选择',
+    ...input.actions
+      .filter((action) => action.shortcut)
+      .map((action) => `- ${action.shortcut}: ${action.label}`),
+    '',
+    'Session 输入',
+    '',
+    '- 普通文本: 发送给当前会话',
+    '- /submit: 提交当前会话产物',
+    '- /cancel 或 /exit: 取消当前会话并回到 Hub',
+    '- /status、/help、/next、/revise: Session 中会提示回 Hub',
+  ];
+  if (disabled.length > 0) {
+    lines.push('', '当前不可用指令:');
+    for (const command of disabled) {
+      lines.push(`- ${runtimeCommandLabel(command.name)}: ${command.reason ?? '不可用'}`);
+    }
   }
-
-  lines.push('', '对话页');
-  for (const command of content.sessionCommands) {
-    const availability = command.availability ? ` [${command.availability}]` : '';
-    lines.push(`- ${command.command}${availability}: ${command.summary}`);
-  }
-
   return lines.join('\n');
-}
-
-export function formatNextStatusForHub(options: ResolveHubContentOptions): string {
-  return options.resolved.state
-    ? formatNextStatus(options.resolved.state, options.t)
-    : formatHubStatus(resolveHubStatus(options), options.t);
-}
-
-function actionSummaries(actions: readonly HubAction[]): HubStatusContent['actions'] {
-  return actions.map((action) => ({
-    id: action.id,
-    label: action.label,
-  }));
 }

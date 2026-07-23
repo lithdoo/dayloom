@@ -7,18 +7,18 @@ cd "$SCRIPT_DIR"
 OUT_DIR="$SCRIPT_DIR/output/world-quick"
 export DAY_LOOM_DIR="$SCRIPT_DIR/../.."
 
-"$SCRIPT_DIR/scripts/ensure-dayloom.sh" quick
+"$SCRIPT_DIR/scripts/ensure-dayloom-old.sh" quick
 
 if [[ -d "$OUT_DIR" ]]; then
   echo "Removing previous output: $OUT_DIR"
   rm -rf "$OUT_DIR"
 fi
 
-echo "Launching dayloom-tui with --quick (no API key required)..."
+echo "Launching dayloom-tui-old with --quick (no API key required)..."
 echo "Use --no-auto-start: explore the shell before any session starts."
 echo
 
-node "$DAY_LOOM_DIR/packages/tui/dist/main.js" \
+node "$DAY_LOOM_DIR/packages/tui-old/dist/main.js" \
   "$OUT_DIR" \
   --quick \
   --id campus_demo \

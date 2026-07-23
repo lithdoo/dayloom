@@ -2,14 +2,16 @@
 
 dayloom 是一个以“天”为推进单位的 AI 生活模拟与日记生成工具。
 
-这个仓库采用 monorepo 布局（Phase 3：`runGameShell` + `runRecommendedAction`；`@dayloom/tui` 见 [TODO.md](TODO.md)）：
+这个仓库采用 monorepo 布局：
 
-- [`packages/core`](packages/core/)：引擎 API、prompts、测试（`@dayloom/core`）
-- [`packages/cli`](packages/cli/)：`dayloom` CLI、`createCliSessionIO()`（`@dayloom/cli`）
-- [`packages/tui`](packages/tui/)：全屏 TUI（`@dayloom/tui`，`dayloom-tui`；**Phase A 完成**，见 [packages/tui/TODO.md](packages/tui/TODO.md)）
-- [`examples/dayloom-init-revise`](examples/dayloom-init-revise/)：初始化与设定修订示例
-- [`examples/dayloom-daily-play`](examples/dayloom-daily-play/)：每日推进、事件游玩与结算示例
-- [`examples/dayloom-tui`](examples/dayloom-tui/)：全屏 TUI 游戏 shell 示例
+- [`packages/core`](packages/core/)：正式状态机、Runtime 与 Session 引擎（`@dayloom/core`）
+- [`packages/tui`](packages/tui/)：正式全屏 TUI（`@dayloom/tui`，`dayloom-tui`）
+- [`packages/cli`](packages/cli/)：现有 `dayloom` CLI；迁移期间仍依赖 `@dayloom/core-old`
+- [`packages/core-old`](packages/core-old/)：旧引擎，仅为 CLI 和迁移验证保留，准备弃用
+- [`packages/tui-old`](packages/tui-old/)：旧全屏 TUI（`dayloom-tui-old`），准备弃用
+- [`examples/dayloom-tui`](examples/dayloom-tui/)：新旧 TUI 启动示例
+
+`core-old` 与 `tui-old` 不再承接新功能；后续应先迁移 CLI，再删除这两个旧包。
 
 常用命令（在 monorepo 根目录）：
 

@@ -2,166 +2,187 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { stripVTControlCharacters } from 'node:util';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
 const mainPath = path.join(packageRoot, 'dist', 'main.js');
 
-test('real PTY: Hub Enter opens session, then Enter inserts newline in Textarea', { concurrency: false }, async (t) => {
+test('real PTY: Hub shortcuts, resize, and quit work without an AI provider', async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
-
-  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = spawnSession(pty, worldDir);
+  const worldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-hub-'));
+  const session = spawnSession(pty, worldRoot);
 
   try {
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
-    session.write('\r');
-    await session.waitForVisible(/Enter your reply/, 8_000);
+    await session.waitForVisible(/未初始化/, 8_000);
+    session.write('?');
+    await session.waitForVisible(/Session 输入/, 8_000);
+    session.resize(58, 18);
+    session.write('s');
+    await session.waitForVisible(/Initialized: no/, 8_000);
+    session.write('q');
 
-    await session.typeText('hello');
-    session.write('\r');
-    await delay(100);
-    await session.typeText('world');
-
-    await session.waitForVisible(/h\s*e\s*l\s*l\s*o/, 8_000);
-    await session.waitForVisible(/w\s*o\s*r\s*l\s*d/, 8_000);
-    session.write('\x03');
-
-    const exitCode = await session.waitForExit(8_000);
-    assert.equal(exitCode, 0);
-
-    const visible = session.visibleOutput();
-    assert.match(visible, /World:/);
-    assert.doesNotMatch(visible, /Submit/);
+    assert.equal(await session.waitForExit(8_000), 0);
+    assert.match(session.visibleOutput(), /World:/);
   } finally {
     await session.dispose();
-    fs.rmSync(worldDir, { recursive: true, force: true });
-    await delay(400);
+    fs.rmSync(worldRoot, { recursive: true, force: true });
   }
 });
 
-test('real PTY: Shift+Tab focus traversal returns to Textarea after entering session', { concurrency: false }, async (t) => {
+test('real PTY: natural-language init streams one assistant message and submits explicitly', async (t) => {
   const pty = await loadNodePty(t);
   if (!pty) return;
-
-  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = spawnSession(pty, worldDir);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-session-'));
+  const worldRoot = path.join(root, 'world');
+  fs.mkdirSync(worldRoot);
+  const promptpileBin = createFakePromptpile(root);
+  const session = spawnSession(pty, worldRoot, { PROMPTPILE_BIN: promptpileBin });
 
   try {
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
+    await session.waitForVisible(/未初始化/, 8_000);
     session.write('\r');
-    await session.waitForVisible(/Enter your reply/, 8_000);
-    await session.typeText('ab');
-    await session.waitForVisible(/a\s*b/, 8_000);
+    await session.waitForVisible(/你想从什么样的世界开始/, 8_000);
+    session.resize(54, 20);
+
+    await session.typeText('写实近未来');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/这是连续输出的中文回复/, 8_000);
+    await session.waitForVisible(/等待输入/, 8_000);
 
     session.write('\x1b[Z');
     await delay(150);
-    await session.focusTextarea(2);
-    await session.typeText('cd');
-    await session.waitForVisible(/c[\s\x08]*d/, 8_000);
-    session.write('\x03');
+    session.write('\x1b[A');
+    session.write('\x1b[B');
+    await delay(100);
+    session.write('\x1b[Z');
+    await delay(150);
+    await session.typeText('/submit');
+    session.write('\x1b[13;5~');
+    await waitUntil(() => fs.existsSync(path.join(worldRoot, 'manifest.json')), {
+      timeoutMs: 8_000,
+      describe: () => `manifest.json to be created\n\n${session.visibleOutput()}`,
+    });
+    await session.waitForVisible(/空闲/, 8_000);
+    const current = JSON.parse(fs.readFileSync(path.join(worldRoot, 'current.json'), 'utf8'));
+    const commit = JSON.parse(fs.readFileSync(
+      path.join(worldRoot, 'commits', `${current.commitId}.json`),
+      'utf8',
+    ));
+    assert.equal(commit.world.phase, 'idle');
 
-    const exitCode = await session.waitForExit(8_000);
-    assert.equal(exitCode, 0);
-  } finally {
-    await session.dispose();
-    fs.rmSync(worldDir, { recursive: true, force: true });
-    await delay(400);
-  }
-});
-
-test('real PTY: session blocks /status with Ctrl+Enter', { concurrency: false }, async (t) => {
-  await assertCtrlEnterSubmits(t, '\x1b[13;5~');
-});
-
-test('real PTY: Hub shortcuts switch status and help without Tab', { concurrency: false }, async (t) => {
-  const pty = await loadNodePty(t);
-  if (!pty) return;
-
-  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = spawnSession(pty, worldDir);
-
-  try {
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
-    session.write('?');
-
-    await session.waitForVisible(/对话页/, 8_000);
-    await session.waitForVisible(/\/exit/, 8_000);
-
-    session.write('s');
-
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
-    session.write('\x03');
-
-    const exitCode = await session.waitForExit(8_000);
-    assert.equal(exitCode, 0);
-  } finally {
-    await session.dispose();
-    fs.rmSync(worldDir, { recursive: true, force: true });
-    await delay(400);
-  }
-});
-
-test('real PTY: autofocus accepts confirm answer without Tab', { concurrency: false }, async (t) => {
-  const pty = await loadNodePty(t);
-  if (!pty) return;
-
-  const session = spawnConfirmSession(pty);
-
-  try {
-    await session.waitForVisible(/Proceed\?/, 8_000);
-    session.write('y');
-
-    const exitCode = await session.waitForExit(8_000);
-    assert.equal(exitCode, 0);
-  } finally {
-    await session.dispose();
-    await delay(400);
-  }
-});
-
-async function assertCtrlEnterSubmits(t, sequence) {
-  const pty = await loadNodePty(t);
-  if (!pty) return;
-
-  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-e2e-world-'));
-  const session = spawnSession(pty, worldDir);
-
-  try {
-    await session.waitForVisible(/Current: uninitialized/, 8_000);
-    session.write('\r');
-    await session.waitForVisible(/Enter your reply/, 8_000);
-    await session.typeText('/status');
-    session.write(sequence);
-
-    await session.waitForVisible(/当前正在会话中/, 8_000);
-    session.write('\x03');
-
-    const exitCode = await session.waitForExit(8_000);
-    assert.equal(exitCode, 0);
-
+    session.write('q');
+    assert.equal(await session.waitForExit(8_000), 0);
     const visible = session.visibleOutput();
-    assert.match(visible, /当前正在会话中/);
+    assert.match(visible, /这是连续输出的中文回复/);
+    assert.match(
+      visible.replace(/\s/g, ''),
+      /这是连续输出的中文回复，用于验证窄终端中的中文自动换行不会丢失行尾字符，也不会把每个流式片段拆成独立消息。/,
+    );
+    assert.doesNotMatch(visible, /每个词都成了一行/);
   } finally {
     await session.dispose();
-    fs.rmSync(worldDir, { recursive: true, force: true });
-    await delay(400);
+    fs.rmSync(root, { recursive: true, force: true });
   }
-}
+});
 
-function spawnSession(pty, worldDir) {
+test('real PTY: Session cancel returns to Hub and restores Hub focus', async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+  const worldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-cancel-'));
+  const session = spawnSession(pty, worldRoot);
+
+  try {
+    await session.waitForVisible(/未初始化/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/\/submit 提交/, 8_000);
+    await session.typeText('/exit');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/会话已取消/, 8_000);
+    session.resize(72, 22);
+    session.write('?');
+    await session.waitForVisible(/Session 输入/, 8_000);
+    session.write('q');
+
+    assert.equal(await session.waitForExit(8_000), 0);
+  } finally {
+    await session.dispose();
+    fs.rmSync(worldRoot, { recursive: true, force: true });
+  }
+});
+
+test('real PTY: partial AI failure remains visible and can be cancelled', async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-ai-failure-'));
+  const worldRoot = path.join(root, 'world');
+  fs.mkdirSync(worldRoot);
+  const session = spawnSession(pty, worldRoot, {
+    PROMPTPILE_BIN: createFakePromptpile(root, 'ai-failure'),
+  });
+
+  try {
+    await session.waitForVisible(/未初始化/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/等待输入/, 8_000);
+    await session.typeText('触发失败');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/部分回复/, 8_000);
+    await session.waitForVisible(/会话失败/, 8_000);
+
+    await session.typeText('/exit');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/会话已取消/, 8_000);
+    session.write('q');
+    assert.equal(await session.waitForExit(8_000), 0);
+  } finally {
+    await session.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('real PTY: invalid submit payload stays in Session and supports recovery', async (t) => {
+  const pty = await loadNodePty(t);
+  if (!pty) return;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-submit-failure-'));
+  const worldRoot = path.join(root, 'world');
+  fs.mkdirSync(worldRoot);
+  const session = spawnSession(pty, worldRoot, {
+    PROMPTPILE_BIN: createFakePromptpile(root, 'invalid-submit'),
+  });
+
+  try {
+    await session.waitForVisible(/未初始化/, 8_000);
+    session.write('\r');
+    await session.waitForVisible(/等待输入/, 8_000);
+    await session.typeText('/submit');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/invalid submit payload/, 8_000);
+    await session.waitForVisible(/会话失败/, 8_000);
+
+    await session.typeText('/cancel');
+    session.write('\x1b[13;5~');
+    await session.waitForVisible(/会话已取消/, 8_000);
+    session.write('q');
+    assert.equal(await session.waitForExit(8_000), 0);
+  } finally {
+    await session.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function spawnSession(pty, worldRoot, extraEnv = {}) {
   return new PtyHarness(
-    pty.spawn(process.execPath, [mainPath, worldDir, '--no-auto-start', '--locale', 'en'], {
+    pty.spawn(process.execPath, [mainPath, worldRoot], {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,
       cwd: repoRoot,
       env: {
         ...process.env,
+        ...extraEnv,
         TERM: 'xterm-256color',
         FORCE_COLOR: '0',
       },
@@ -169,57 +190,41 @@ function spawnSession(pty, worldDir) {
   );
 }
 
-function spawnConfirmSession(pty) {
-  return new PtyHarness(
-    pty.spawn(process.execPath, ['--input-type=module', '--eval', confirmHarnessScript()], {
-      name: 'xterm-256color',
-      cols: 100,
-      rows: 30,
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        FORCE_COLOR: '0',
-      },
-    }),
+function createFakePromptpile(root, mode = 'success') {
+  const bin = path.join(root, 'fake-promptpile');
+  fs.writeFileSync(
+    bin,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const system = fs.readFileSync(path.join(process.cwd(), 'messages', '[0]system.md'), 'utf8');",
+      `const mode = ${JSON.stringify(mode)};`,
+      "if (mode === 'ai-failure' && !system.includes('提交产物生成器')) {",
+      "  fs.writeSync(3, JSON.stringify({ type: 'assistant_delta', content: '部分回复' }) + '\\n');",
+      "  fs.writeSync(3, JSON.stringify({ type: 'error', message: 'provider failed' }) + '\\n');",
+      "  process.exit(1);",
+      "}",
+      "const content = mode === 'invalid-submit' && system.includes('提交产物生成器')",
+      "  ? 'not-json'",
+      "  : system.includes('提交产物生成器')",
+      "  ? JSON.stringify({ id: 'pty-world', title: 'PTY World', premise: '近未来', rules: '写实', style: '克制', userRole: '调查员' })",
+      "  : '这是连续输出的中文回复，用于验证窄终端中的中文自动换行不会丢失行尾字符，也不会把每个流式片段拆成独立消息。';",
+      "const middle = Math.ceil(content.length / 2);",
+      "fs.writeSync(3, JSON.stringify({ type: 'assistant_delta', content: content.slice(0, middle) }) + '\\n');",
+      "fs.writeSync(3, JSON.stringify({ type: 'assistant_delta', content: content.slice(middle) }) + '\\n');",
+      "fs.writeSync(3, JSON.stringify({ type: 'assistant_done' }) + '\\n');",
+    ].join('\n'),
+    { mode: 0o755 },
   );
-}
-
-function confirmHarnessScript() {
-  const appUrl = pathToFileURL(path.join(packageRoot, 'dist', 'app.js')).href;
-  const viewModelUrl = pathToFileURL(path.join(packageRoot, 'dist', 'view-model.js')).href;
-
-  return `
-    import { mountApp } from ${JSON.stringify(appUrl)};
-    import { createViewModel } from ${JSON.stringify(viewModelUrl)};
-
-    const vm = createViewModel({ worldDir: process.cwd(), locale: 'en' });
-    vm.setSessionPage('init');
-    let mounted = mountApp(vm, {
-      onExitRequest() {
-        mounted?.dispose();
-        process.exit(2);
-      }
-    });
-
-    const timer = setTimeout(() => {
-      mounted?.dispose();
-      process.exit(3);
-    }, 8000);
-
-    vm.beginConfirm('Proceed?', (answer) => {
-      clearTimeout(timer);
-      mounted?.dispose();
-      process.exit(answer ? 0 : 4);
-    });
-  `;
+  return bin;
 }
 
 async function loadNodePty(t) {
   try {
     return await import('node-pty');
-  } catch (err) {
-    t.skip(`node-pty unavailable: ${err instanceof Error ? err.message : String(err)}`);
+  } catch (error) {
+    t.skip(`node-pty unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -249,18 +254,14 @@ class PtyHarness {
     this.ptyProcess.write(data);
   }
 
-  async focusTextarea(tabCount = 1) {
-    for (let i = 0; i < tabCount; i += 1) {
-      this.write('\t');
-      await delay(80);
-    }
-    await delay(50);
+  resize(cols, rows) {
+    this.ptyProcess.resize(cols, rows);
   }
 
   async typeText(value) {
-    for (const char of value) {
-      this.write(char);
-      await delay(30);
+    for (const character of value) {
+      this.write(character);
+      await delay(25);
     }
   }
 

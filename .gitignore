@@ -7,3 +7,6 @@ packages/*/dist/
 !.env.example
 examples/*/.runtime/node_modules/
 examples/*/output/
+doc/.vitepress/.temp/
+doc/.vitepress/cache/
+doc/.vitepress/dist/

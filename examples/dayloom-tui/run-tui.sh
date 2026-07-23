@@ -40,7 +40,7 @@ if [[ ! -f "$SOURCE_WORLD/manifest.yaml" ]]; then
   exit 1
 fi
 
-"$SCRIPT_DIR/scripts/ensure-dayloom.sh"
+"$SCRIPT_DIR/scripts/ensure-dayloom-old.sh"
 
 if [[ ! -f "$OUT_DIR/manifest.yaml" ]]; then
   echo "Copying source World into TUI example output..."
@@ -55,8 +55,8 @@ if [[ -n "${PROMPTPILE_MCP_BASE_URL:-}" ]]; then
   [[ -n "${PROMPTPILE_MCP_TOKEN:-}" ]] && TUI_ARGS+=(--mcp-token "$PROMPTPILE_MCP_TOKEN")
 fi
 
-echo "Launching dayloom-tui on: $OUT_DIR"
+echo "Launching dayloom-tui-old on: $OUT_DIR"
 echo "Shortcuts: Enter = newline, Ctrl+Enter = send, Y/N = confirm"
 echo
 
-node "$DAY_LOOM_DIR/packages/tui/dist/main.js" "${TUI_ARGS[@]}"
+node "$DAY_LOOM_DIR/packages/tui-old/dist/main.js" "${TUI_ARGS[@]}"

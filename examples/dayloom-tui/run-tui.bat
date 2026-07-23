@@ -38,7 +38,7 @@ if not exist "%SOURCE_WORLD%\manifest.yaml" (
   exit /b 1
 )
 
-call "%~dp0scripts\ensure-dayloom.bat"
+call "%~dp0scripts\ensure-dayloom-old.bat"
 if errorlevel 1 exit /b 1
 
 if not exist "%OUT_DIR%\manifest.yaml" (
@@ -48,7 +48,7 @@ if not exist "%OUT_DIR%\manifest.yaml" (
   xcopy "%SOURCE_WORLD%" "%OUT_DIR%" /E /I /Y >nul
 )
 
-echo Launching dayloom-tui on: %OUT_DIR%
+echo Launching dayloom-tui-old on: %OUT_DIR%
 echo Shortcuts: Enter = newline, Ctrl+Enter = send, Y/N = confirm
 echo.
 

@@ -1,9 +1,16 @@
 {
   "name": "@dayloom/tui",
-  "version": "0.1.0-beta.5",
-  "description": "Fullscreen TUI for Dayloom (bindtty + runGameShell).",
+  "version": "0.0.0",
+  "description": "Fullscreen TUI for the Dayloom runtime.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "dayloom-tui": "./dist/main.js"
   },
@@ -12,15 +19,15 @@
     "build": "tsc",
     "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "DESIGN.md",
+    "package.json"
+  ],
   "dependencies": {
     "@bindtty/interaction": "^0.1.0-alpha.10",
-    "@bindtty/jsx-runtime": "^0.1.0-alpha.10",
-    "@bindtty/layout": "^0.1.0-alpha.10",
-    "@bindtty/renderer-terminal": "^0.1.0-alpha.10",
-    "@bindtty/runtime": "^0.1.0-alpha.10",
-    "@bindtty/signal": "^0.1.0-alpha.10",
     "@bindtty/terminal": "^0.1.0-alpha.10",
-    "@bindtty/text": "^0.1.0-alpha.10",
     "@bindtty/vnode": "^0.1.0-alpha.10",
     "@bindtty/widgets": "^0.1.0-alpha.10",
     "@dayloom/core": "*",
@@ -30,12 +37,6 @@
     "@types/node": "^25.5.2",
     "typescript": "~5.9.3"
   },
-  "files": [
-    "dist",
-    "README.md",
-    "TODO.md",
-    "package.json"
-  ],
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   }

@@ -1,27 +1,34 @@
-import { computed, createSignal } from 'bindtty';
-import { Textarea } from '@bindtty/widgets';
+import { computed } from 'bindtty';
 import type { TerminalKeyEvent } from '@bindtty/terminal';
-import type { InteractionNodeFocusChangeEvent } from '@bindtty/interaction';
-import { elementTemplate } from '@bindtty/vnode';
+import { Textarea } from '@bindtty/widgets';
 import type { ViewModel } from '../view-model.js';
-import { CONFIRM_ID, TEXTAREA_ID } from './constants.js';
-import { multilineInputHint } from '../theme.js';
+import { TEXTAREA_ID } from './constants.js';
 
 export function TextInputArea(props: { vm: ViewModel }) {
   const { vm } = props;
-  const showText = computed(() => vm.inputMode.get() === 'text');
-  const showConfirm = computed(() => vm.inputMode.get() === 'confirm');
-  const disabled = computed(() => vm.loadingLabel.get() !== null);
-  const multilineHint = computed(() => multilineInputHint(vm.t));
+  const visible = computed(() => vm.inputMode.get() === 'text');
+  const disabled = computed(() => !vm.inputControlEnabled.get());
+
+  function onHistoryKey(event: TerminalKeyEvent): boolean {
+    if (!event.ctrl) return false;
+    if (event.name === 'p' || event.input === 'p') {
+      vm.navigateInputHistory(-1);
+      return true;
+    }
+    if (event.name === 'n' || event.input === 'n') {
+      vm.navigateInputHistory(1);
+      return true;
+    }
+    return false;
+  }
 
   return (
-    <vstack gap={0}>
-      <show when={showText}>
+    <show when={visible}>
+      <vstack gap={0}>
         <text value={vm.inputInstruction} wrap="truncate-end" color="gray" />
-        <text value={multilineHint} wrap="truncate-end" color="gray" />
         <hstack gap={0}>
           <text value={vm.inputPrompt} />
-          <box flexGrow={1}>
+          <box flexGrow={1} onKey={onHistoryKey}>
             <Textarea
               id={TEXTAREA_ID}
               value={vm.inputValue}
@@ -35,65 +42,7 @@ export function TextInputArea(props: { vm: ViewModel }) {
             />
           </box>
         </hstack>
-      </show>
-      <show when={showConfirm}>
-        <ConfirmBox vm={vm} />
-      </show>
-    </vstack>
-  );
-}
-
-function ConfirmBox(props: { vm: ViewModel }) {
-  const disabled = computed(() => props.vm.loadingLabel.get() !== null);
-  const focused = createSignal(false);
-  const title = computed(() =>
-    focused.get()
-      ? props.vm.t('tui.confirm.titleFocused')
-      : props.vm.t('tui.confirm.title'),
-  );
-  const titleColor = computed(() => (focused.get() ? 'cyan' : 'gray'));
-
-  function onKey(event: TerminalKeyEvent): boolean {
-    return handleConfirmKey(event, props.vm, disabled);
-  }
-
-  return elementTemplate(
-    'box',
-    {
-      id: CONFIRM_ID,
-      focusable: true,
-      focusStyle: 'none',
-      onFocusChange: (event: InteractionNodeFocusChangeEvent) => focused.set(event.focused),
-      onKey,
-    },
-    (
-      <vstack gap={0}>
-        <text value={title} color={titleColor} bold={focused} wrap="truncate-end" />
-        <text value={props.vm.confirmQuestion} wrap="wrap" />
-        <text value={props.vm.t('tui.input.confirmHint')} color="gray" />
       </vstack>
-    ),
+    </show>
   );
-}
-
-function handleConfirmKey(
-  event: TerminalKeyEvent,
-  vm: ViewModel,
-  disabled: ReturnType<typeof computed<boolean>>,
-): boolean {
-  if (disabled.get()) return false;
-  const input = event.input.toLowerCase();
-  if (input === 'y' || event.name === 'y') {
-    vm.submitConfirm(true);
-    return true;
-  }
-  if (input === 'n' || event.name === 'n') {
-    vm.submitConfirm(false);
-    return true;
-  }
-  if (event.name === 'return' || event.name === 'enter') {
-    vm.submitConfirm(true);
-    return true;
-  }
-  return false;
 }

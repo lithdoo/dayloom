@@ -4,7 +4,7 @@ import {
   runSettleInteractive,
   settleFromProposal,
   type Translator,
-} from '@dayloom/core';
+} from '@dayloom/core-old';
 import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerSettleCommand(program: Command, t: Translator): void {

@@ -1,13 +1,8 @@
 import { computed, createApp, type BindTTYApp } from 'bindtty';
 import { createNodeTerminal, RawStdinInput, type TerminalKeyEvent } from '@bindtty/terminal';
-import type { TuiInputMode, ViewModel } from './view-model.js';
-import { CHROME_ROWS, CONFIRM_ID, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
-import { Header } from './components/header.js';
-import { MessageList } from './components/message-list.js';
-import { LoadingBar } from './components/loading-bar.js';
-import { TextInputArea } from './components/text-input.js';
-import { Footer } from './components/footer.js';
-import { HubSelect } from './components/hub-select.js';
+import type { ViewModel } from './view-model.js';
+import { CHROME_ROWS, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
+import { Footer, Header, HubSelect, LoadingBar, MessageList, TextInputArea } from './components/index.js';
 
 export interface MountedTuiApp {
   dispose(): void;
@@ -18,86 +13,7 @@ export interface MountAppOptions {
 }
 
 export function isCtrlC(event: TerminalKeyEvent): boolean {
-  return Boolean(
-    event.ctrl &&
-      (event.name === 'c' || event.input === '\x03' || event.input === 'c'),
-  );
-}
-
-type FocusableInputMode = 'text' | 'confirm';
-
-function focusTargetForInputMode(mode: TuiInputMode): string | null {
-  if (mode === 'text') return TEXTAREA_ID;
-  if (mode === 'confirm') return CONFIRM_ID;
-  return null;
-}
-
-export function mountInputAutofocus(
-  vm: ViewModel,
-  app: Pick<BindTTYApp, 'focus'>,
-  schedule: (callback: () => void) => void = queueMicrotask,
-): () => void {
-  let disposed = false;
-  let pendingTicket = 0;
-
-  function scheduleFocus(mode: FocusableInputMode): void {
-    const ticket = ++pendingTicket;
-    schedule(() => {
-      if (disposed || ticket !== pendingTicket || vm.inputMode.get() !== mode) return;
-      app.focus(focusTargetForInputMode(mode) ?? '');
-    });
-  }
-
-  const unsubscribe = vm.inputMode.subscribe((mode, previousMode) => {
-    if (mode === previousMode) return;
-    if (mode === 'text' || mode === 'confirm') {
-      scheduleFocus(mode);
-    }
-  });
-
-  const initialMode = vm.inputMode.get();
-  if (initialMode === 'text' || initialMode === 'confirm') {
-    scheduleFocus(initialMode);
-  }
-
-  return () => {
-    disposed = true;
-    pendingTicket += 1;
-    unsubscribe();
-  };
-}
-
-export function mountPageAutofocus(
-  vm: ViewModel,
-  app: Pick<BindTTYApp, 'focus'>,
-  schedule: (callback: () => void) => void = queueMicrotask,
-): () => void {
-  let disposed = false;
-  let pendingTicket = 0;
-
-  function scheduleFocus(): void {
-    const ticket = ++pendingTicket;
-    schedule(() => {
-      if (disposed || ticket !== pendingTicket) return;
-      const page = vm.page.get();
-      if (page.kind === 'hub' && !page.busy) {
-        app.focus(HUB_SELECT_ID);
-      }
-    });
-  }
-
-  const unsubscribe = vm.page.subscribe((page, previousPage) => {
-    if (page === previousPage) return;
-    scheduleFocus();
-  });
-
-  scheduleFocus();
-
-  return () => {
-    disposed = true;
-    pendingTicket += 1;
-    unsubscribe();
-  };
+  return Boolean(event.ctrl && (event.name === 'c' || event.input === '\x03' || event.input === 'c'));
 }
 
 export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedTuiApp {
@@ -114,13 +30,10 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
 
   function syncLayout(): void {
     vm.viewportWidth.set(terminal.viewport.width);
-    vm.listHeight.set(
-      Math.max(3, terminal.viewport.height - CHROME_ROWS - vm.inputViewportRows.get()),
-    );
+    vm.listHeight.set(Math.max(3, terminal.viewport.height - CHROME_ROWS - vm.inputViewportRows.get()));
   }
 
   syncLayout();
-
   const originalSetInputViewportRows = vm.setInputViewportRows.bind(vm);
   vm.setInputViewportRows = (rows: number) => {
     originalSetInputViewportRows(rows);
@@ -129,9 +42,7 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
 
   const unsubscribeResize = terminal.onResize(syncLayout);
   const unsubscribeExitKey = terminal.onKey((event) => {
-    if (isCtrlC(event)) {
-      options.onExitRequest?.();
-    }
+    if (isCtrlC(event)) options.onExitRequest?.();
   });
 
   const showHubSelect = computed(() => {
@@ -157,16 +68,48 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
   );
 
   app.start();
-  const unsubscribeInputAutofocus = mountInputAutofocus(vm, app);
-  const unsubscribePageAutofocus = mountPageAutofocus(vm, app);
+  const unsubscribeInputFocus = mountAutofocus(vm, app);
 
   return {
     dispose(): void {
-      unsubscribePageAutofocus();
-      unsubscribeInputAutofocus();
+      unsubscribeInputFocus();
       unsubscribeResize();
       unsubscribeExitKey();
       app.dispose();
     },
   };
 }
+
+export function mountAutofocus(
+  vm: ViewModel,
+  app: Pick<BindTTYApp, 'focus'>,
+  schedule: (callback: () => void) => void = queueMicrotask,
+): () => void {
+  let disposed = false;
+  let ticket = 0;
+
+  function scheduleFocus(): void {
+    const currentTicket = ++ticket;
+    schedule(() => {
+      if (disposed || currentTicket !== ticket) return;
+      const page = vm.page.get();
+      if (page.kind === 'session') {
+        app.focus(TEXTAREA_ID);
+      } else if (!page.busy) {
+        app.focus(HUB_SELECT_ID);
+      }
+    });
+  }
+
+  const unsubscribePage = vm.page.subscribe(scheduleFocus);
+  const unsubscribeInput = vm.inputMode.subscribe(scheduleFocus);
+  scheduleFocus();
+
+  return () => {
+    disposed = true;
+    ticket += 1;
+    unsubscribePage();
+    unsubscribeInput();
+  };
+}
+

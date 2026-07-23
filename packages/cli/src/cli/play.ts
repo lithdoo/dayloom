@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { addLangOption, runPlayInteractive, type Translator } from '@dayloom/core';
+import { addLangOption, runPlayInteractive, type Translator } from '@dayloom/core-old';
 import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerPlayCommand(program: Command, t: Translator): void {

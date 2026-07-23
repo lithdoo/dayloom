@@ -1,8 +1,8 @@
 # TODO：历史消息显示用户输入
 
 > **状态**：已完成  
-> **范围**：`@dayloom/tui`（`session-io` / `view-model` / `theme` / MessageList 展示）  
-> **约束**：不修改既有 `TODO.md` / `packages/tui/TODO.md` / `TODO-message-list-focus.md` 正文；本文件独立跟踪  
+> **范围**：`@dayloom/tui-old`（`session-io` / `view-model` / `theme` / MessageList 展示）  
+> **约束**：不修改既有 `TODO.md` / `packages/tui-old/TODO.md` / `TODO-message-list-focus.md` 正文；本文件独立跟踪  
 > **日期**：2026-07  
 > **相关**：[`TODO-message-list-focus.md`](./TODO-message-list-focus.md)（消息区标题获焦，正交）
 
@@ -118,13 +118,13 @@ world
 
 | 文件 | 改动 |
 |------|------|
-| `packages/tui/src/view-model.ts` | `TuiMessageRole` 增加 `'user'` |
-| `packages/tui/src/theme.ts` | `roleLabel` / `roleColor` 补 `user` |
-| `packages/tui/src/session-io.ts` | `readInput` 非空 return 前 `appendMessage('user', …)` |
-| `packages/tui/test/session-io.test.js` | 断言历史含 user；空 ignore 无 user |
-| （可选）`packages/tui/TODO.md` | **不强制**；本文件已独立跟踪 |
+| `packages/tui-old/src/view-model.ts` | `TuiMessageRole` 增加 `'user'` |
+| `packages/tui-old/src/theme.ts` | `roleLabel` / `roleColor` 补 `user` |
+| `packages/tui-old/src/session-io.ts` | `readInput` 非空 return 前 `appendMessage('user', …)` |
+| `packages/tui-old/test/session-io.test.js` | 断言历史含 user；空 ignore 无 user |
+| （可选）`packages/tui-old/TODO.md` | **不强制**；本文件已独立跟踪 |
 
-**禁止**：在 `@dayloom/core` 的 `runGameShell` / 各 session loop 里 `io.write(userInput)` 冒充用户消息。
+**禁止**：在 `@dayloom/core-old` 的 `runGameShell` / 各 session loop 里 `io.write(userInput)` 冒充用户消息。
 
 ---
 
@@ -164,10 +164,10 @@ world
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/session-io.ts` | `readInput` 改造点 |
-| `packages/tui/src/view-model.ts` | `appendMessage` / `TuiMessageRole` |
-| `packages/tui/src/theme.ts` | 标签与颜色 |
-| `packages/tui/src/components/message-list.tsx` | 展示（通常无需改布局） |
+| `packages/tui-old/src/session-io.ts` | `readInput` 改造点 |
+| `packages/tui-old/src/view-model.ts` | `appendMessage` / `TuiMessageRole` |
+| `packages/tui-old/src/theme.ts` | 标签与颜色 |
+| `packages/tui-old/src/components/message-list.tsx` | 展示（通常无需改布局） |
 | `packages/cli/src/session-io/terminal-input.ts` | CLI TTY 回显对照 |
 
 ---
@@ -181,4 +181,4 @@ world
 
 ---
 
-*本文件独立于仓库根 `TODO.md` 与 `packages/tui/TODO.md`，专跟踪「历史显示用户输入」一项。*
+*本文件独立于仓库根 `TODO.md` 与 `packages/tui-old/TODO.md`，专跟踪「历史显示用户输入」一项。*

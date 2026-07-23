@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { addLangOption, type Translator } from '@dayloom/core';
-import { InitCancelledError, runNext } from '@dayloom/core';
+import { addLangOption, type Translator } from '@dayloom/core-old';
+import { InitCancelledError, runNext } from '@dayloom/core-old';
 import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerNextCommand(program: Command, t: Translator): void {

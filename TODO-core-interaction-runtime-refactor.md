@@ -297,7 +297,7 @@ core CLI 文本
 - `abandon-day` 只在已进入当日流程、且当前没有 active Session 的静态状态可用。当前具体是 `planned`、`awaiting-settle`，用于放弃已经进入的当日内容，并把当前业务指针切回前一天的 `idle`。清理被放弃 day 的文件是 best-effort。
 - `next` 不出现在状态图中，因为它不是 core 指令。
 
-状态图只表达逻辑目标状态，不等于“只改 phase 字段”。core2 不追求强文件回滚，而应定义“引用有效性模型”：业务正确性由 current 指针、phase 和 publish marker 决定；未被当前有效引用指向的文件视为 orphan，不参与业务读取。
+状态图只表达逻辑目标状态，不等于“只改 phase 字段”。core 不追求强文件回滚，而应定义“引用有效性模型”：业务正确性由 current 指针、phase 和 publish marker 决定；未被当前有效引用指向的文件视为 orphan，不参与业务读取。
 
 ### 4.2.1 World State 表
 
@@ -328,7 +328,7 @@ core CLI 文本
 
 ### 4.2.3 引用有效性与清理边界
 
-状态机 transition 不能只理解为 phase transition，但 core2 首版也不应该尝试对所有文件副作用做强事务回滚。
+状态机 transition 不能只理解为 phase transition，但 core 首版也不应该尝试对所有文件副作用做强事务回滚。
 
 第一版采用引用有效性模型：
 
@@ -355,7 +355,7 @@ core CLI 文本
 - play Session 可能已经追加 world/day 日志。
 - 现有实现还可能更新 `current.yaml` 和 day `meta.yaml` 的 phase。
 
-因此 core2 首版推荐使用“会话工作区 + publish marker”：
+因此 core 首版推荐使用“会话工作区 + publish marker”：
 
 - play Session 的中间文件写入 session workspace。
 - `submit` 前，workspace 文件不被正式业务读取。
@@ -618,7 +618,7 @@ runtime 第一版采用短 mutation 串行规则：
 第一版规则：
 
 - world 指令按 world phase 判断，例如 `planned` 才能 `play`。
-- `submit` 只有在存在 active Session，且 Session status 为 `ready-to-submit` 时启用。
+- `submit` 只有在存在 active Session，且 Session 处于可提交稳定态时启用。第一版可提交稳定态为 `waiting-input` 或 `ready-to-submit`。
 - `cancel` 只有在存在 active Session，且 Session status 不是 `submitting/completed/cancelled` 时启用。
 - `sendInput` 只有在存在 active Session，且 Session status 为 `waiting-input` 时允许。
 - `streaming/loading` 期间，`cancel` 和 `dispose` 允许执行并中断后台 task；其它 mutation 应禁用或返回 `COMMAND_NOT_AVAILABLE`。
@@ -1192,7 +1192,7 @@ packages/core/test/runtime/
 | background-task-cancel | `sendInput` 返回后 AI 后台 task streaming 时，`cancel/dispose` 可以 abort 后台 task。 |
 | operation-id | 连续同名 command 的 started/succeeded/failed/rejected 可用 operation id 匹配。 |
 | listener | listener 抛错不破坏 runtime 状态，也不阻止其它 listener。 |
-| submit-availability | `submit` 只在 Session `ready-to-submit` 时启用。 |
+| submit-availability | `submit` 只在 Session 处于可提交稳定态时启用。 |
 | invalid | `invalid` 可读取但禁用所有 mutation。 |
 | ai-failure | AI 流式前/流式中失败会进入 Session `failed`，保留已有消息，且只允许 cancel。 |
 
@@ -1234,7 +1234,7 @@ loop
 - 现有 `play/event-loop` 在计划事件耗尽或用户结束当天时会调用 `finishPlay()`。
 - 现有 `finishPlay()` 会直接把 play state、`current.yaml`、day `meta.yaml` 写成 `settling`。
 - 这与新设计的 `playing -- submit --> awaiting-settle` 冲突。
-- core2 的 play Session 不应复用带 phase 副作用的 `finishPlay()` 作为会话内部逻辑。
+- core 的 play Session 不应复用带 phase 副作用的 `finishPlay()` 作为会话内部逻辑。
 - play Session 可以产出“当日行动已完成”的 submit result，但只有 runtime 状态机执行 `submit` 时才能切换到 `awaiting-settle`。
 
 新 RuntimeSession 再用这些部件实现：
@@ -1246,11 +1246,38 @@ submit
 cancel
 ```
 
-过渡期如果使用旧 loop adapter，只能作为拆分过程中的短期验证手段，不应作为 core2 runtime 的最终设计。
+过渡期如果使用旧 loop adapter，只能作为拆分过程中的短期验证手段，不应作为 core runtime 的最终设计。
 
 ---
 
 ## 7. 落地阶段建议
+
+### 7.0 阶段零：submit 语义适配
+
+目标：
+
+- 在继续 tui2 落地前，先把 core 从“assistant 回复结束后进入 `ready-to-submit`”调整为“用户显式 `submit` 才提交”。
+- `sendInput()` 只代表一轮用户输入与 assistant 回复，不代表会话产物提交。
+- 普通回复完成后回到 `waiting-input`，允许继续多轮输入。
+- `submit` command 由 CLI/TUI 解析到用户 `/submit` 后显式调用。
+- `ready-to-submit` 如保留，只作为内部提交准备态，不触发 UI 自动提交。
+- fake Session、handler Session、SessionManager、command availability 使用一致规则。
+
+需要检查/调整的实现点：
+
+- `FakeSession.sendInput()` 不应在每轮回复结束后直接 `setStatus('ready-to-submit')`。
+- `HandlerSession.sendInput()` 不应在 handler 完成普通回复后直接 `setStatus('ready-to-submit')`。
+- `RuntimeSession.submit()` 应能从可提交稳定态进入 `submitting`。
+- `SessionManager.submit()` 与 `commands.ts` 的可用性判断应一致。
+- 测试中等待 `ready-to-submit` 的用例，需要改成等待 `waiting-input` 或显式触发 `/submit` 后断言结果。
+
+验收：
+
+- `sendInput` 后不改变 world phase。
+- 多轮 `sendInput` 可连续执行。
+- 只有 `executeCommand({ command: 'submit' })` 会触发 Session submit result 和 world transition。
+- `streaming/loading/submitting/failed/completed/cancelled` 下 `submit` 禁用。
+- `npm run test -w @dayloom/core` 通过。
 
 ### 7.1 阶段一：状态机骨架
 
@@ -1296,7 +1323,7 @@ cancel
 - `init/interview-loop`、`daily/dialogue-loop`、`play/event-loop`、`revise/dialogue-loop` 都是主动阻塞式循环。
 - 这些 loop 会主动调用 `io.readInput` / `io.confirm` / `io.write`，并解析 shell-level command。
 - 新 Session 不能让旧 loop 继续主导输入与指令，否则会重新引入 CLI 文本协议和双状态机问题。
-- 现有 play 在事件耗尽或用户结束当天时会调用 `finishPlay()` 并直接写入 `settling`；core2 不能保留这个自动切阶段副作用。
+- 现有 play 在事件耗尽或用户结束当天时会调用 `finishPlay()` 并直接写入 `settling`；core 不能保留这个自动切阶段副作用。
 - 过渡期可以临时抽 adapter 辅助迁移，但 adapter 只能用于拆分验证，不能成为最终 runtime 设计。
 
 验收：

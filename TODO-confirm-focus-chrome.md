@@ -1,7 +1,7 @@
 # TODO：Confirm 框获焦视觉反馈
 
 > **状态**：已完成（自动聚焦联动见 `TODO-autofocus-input.md`）  
-> **范围**：`@dayloom/tui` `text-input.tsx` ConfirmBox；可选 i18n  
+> **范围**：`@dayloom/tui-old` `text-input.tsx` ConfirmBox；可选 i18n  
 > **约束**：独立跟踪，不改正文其它 `TODO*.md`  
 > **日期**：2026-07  
 > **相关**：[`TODO-autofocus-input.md`](./TODO-autofocus-input.md)、[`TODO-message-list-focus.md`](./TODO-message-list-focus.md)
@@ -122,8 +122,8 @@ const focused = createSignal(false);
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/components/text-input.tsx` | `ConfirmBox` |
-| `packages/core/src/i18n/messages.ts` | 新增文案键 |
+| `packages/tui-old/src/components/text-input.tsx` | `ConfirmBox` |
+| `packages/core-old/src/i18n/messages.ts` | 新增文案键 |
 | `TODO-message-list-focus.md` | 标题获焦模式对照 |
 
 ---

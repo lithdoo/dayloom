@@ -1,34 +1,38 @@
 {
   "name": "@dayloom/core",
-  "version": "0.1.0-beta.5",
-  "description": "File-based AI life simulation and diary engine.",
+  "version": "0.0.0",
+  "description": "Dayloom state machine, runtime, and session engine.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "tsc",
-    "prepare": "npm run build",
-    "test": "npm run build && node --test test/init/*.test.js test/revise/*.test.js test/daily/*.test.js test/play/*.test.js test/settle/*.test.js test/next/*.test.js test/shell/*.test.js test/i18n/*.test.js test/session-commands/*.test.js test/session-io/*.test.js"
+    "build": "node scripts/clean-dist.mjs && tsc",
+    "test": "npm run build && npm run test:types && node --test test/*.test.js test/**/*.test.js",
+    "test:types": "tsc -p test/tsconfig.types.json"
   },
   "keywords": [
     "dayloom",
-    "command-line"
+    "runtime"
   ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "files": [
     "dist",
-    "prompts",
     "README.md",
     "package.json"
   ],
   "dependencies": {
-    "promptpile": "^0.1.0-beta.0",
-    "promptpile-mcp": "^0.1.0-beta.0"
+    "promptpile": "^0.1.0-beta.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   }
 }

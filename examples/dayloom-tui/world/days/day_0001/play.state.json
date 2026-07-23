@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "day": "day_0001",
+  "phase": "playing",
+  "next_event_number": 1,
+  "active_event": "event_001",
+  "active_beat": "beat_01",
+  "step": "waiting_user",
+  "completed_events": []
+}

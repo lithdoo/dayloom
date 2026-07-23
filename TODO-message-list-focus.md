@@ -1,8 +1,8 @@
 # TODO：消息区获焦改为标题反馈
 
 > **状态**：已完成  
-> **范围**：`@dayloom/tui` MessageList  
-> **约束**：不修改既有 `TODO.md` / `packages/tui/TODO.md` 正文；本文件为独立跟踪项  
+> **范围**：`@dayloom/tui-old` MessageList  
+> **约束**：不修改既有 `TODO.md` / `packages/tui-old/TODO.md` 正文；本文件为独立跟踪项  
 > **日期**：2026-07
 
 ---
@@ -65,7 +65,7 @@ MessageList
 
 可选（非必须）：获焦前缀 `▸ `，未获焦用等宽空格占位，防文字左右跳。
 
-### 4.3 i18n 键（`@dayloom/core` messages）
+### 4.3 i18n 键（`@dayloom/core-old` messages）
 
 ```text
 tui.messages.title
@@ -138,12 +138,12 @@ dayloom 已 bump 到该版本；实现 Phase 1 时直接传 `focusStyle="none"` 
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/components/message-list.tsx` | 改造点（`VScrollView`） |
-| `packages/tui/src/components/constants.ts` | `CHROME_ROWS` |
-| `packages/core/src/i18n/messages.ts` | 文案键 |
+| `packages/tui-old/src/components/message-list.tsx` | 改造点（`VScrollView`） |
+| `packages/tui-old/src/components/constants.ts` | `CHROME_ROWS` |
+| `packages/core-old/src/i18n/messages.ts` | 文案键 |
 | `bindtty/packages/widgets/src/scroll/v-scroll-view.ts` | 纵向滚动 + `focusStyle` |
 | `bindtty/packages/renderer-terminal/src/paint.ts` | `paintFocusedState` / `focusStyle === "none"` |
-| `packages/tui/src/components/text-input.tsx` | Textarea `focusStyle="none"` 对照 |
+| `packages/tui-old/src/components/text-input.tsx` | Textarea `focusStyle="none"` 对照 |
 
 ---
 
@@ -156,4 +156,4 @@ dayloom 已 bump 到该版本；实现 Phase 1 时直接传 `focusStyle="none"` 
 
 ---
 
-*本文件独立于仓库根 `TODO.md` 与 `packages/tui/TODO.md`，专跟踪「消息区标题获焦」一项。*
+*本文件独立于仓库根 `TODO.md` 与 `packages/tui-old/TODO.md`，专跟踪「消息区标题获焦」一项。*

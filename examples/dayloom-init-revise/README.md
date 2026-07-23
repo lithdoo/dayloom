@@ -6,7 +6,7 @@
 - `revise --proposal`：对固定提案执行 dry-run 与受控写盘，用于自动化 smoke。
 - `init` + `revise` interactive：首次运行通过 AI 创建 World，后续运行通过 AI + MCP 查询和维护现有设定。
 
-存档布局见 [`packages/core/prompts/spec.md`](../../packages/core/prompts/spec.md) §4。
+存档布局见 [`packages/core-old/prompts/spec.md`](../../packages/core-old/prompts/spec.md) §4。
 
 ## Prerequisites
 

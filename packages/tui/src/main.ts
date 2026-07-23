@@ -1,69 +1,47 @@
 #!/usr/bin/env node
-import { InitCancelledError, type RecommendedActionOptions } from '@dayloom/core';
-import { parseArgv, formatHelp } from './argv.js';
+import path from 'node:path';
+import { parseArgv, usage } from './argv.js';
 import { mountApp } from './app.js';
-import { createTuiSessionIO } from './session-io.js';
+import { createRuntimeDriver } from './runtime-driver/index.js';
 import { createViewModel } from './view-model.js';
-import { runTuiShell } from './tui-shell.js';
 
 async function main(): Promise<void> {
-  const parsed = parseArgv(process.argv);
-  if (parsed.help) {
-    process.stdout.write(`${formatHelp()}\n`);
-    return;
-  }
-
-  const vm = createViewModel({
-    worldDir: parsed.worldDir,
-    locale: parsed.locale,
-  });
-  let mounted: ReturnType<typeof mountApp> | null = null;
-  const io = createTuiSessionIO(vm);
-
-  mounted = mountApp(vm, {
-    onExitRequest(): void {
+  try {
+    const parsed = parseArgv(process.argv);
+    if (parsed.help) {
+      process.stdout.write(`${usage()}\n`);
+      return;
+    }
+    const worldRoot = path.resolve(parsed.worldRoot);
+    const driver = await createRuntimeDriver({ worldRoot });
+    let mounted: ReturnType<typeof mountApp> | null = null;
+    let shutdownPromise: Promise<void> | null = null;
+    const shutdown = (): Promise<void> => {
+      if (shutdownPromise) return shutdownPromise;
       mounted?.dispose();
       mounted = null;
-      process.exit(0);
-    },
-  });
-
-  const onSigInt = (): void => {
-    mounted?.dispose();
-    mounted = null;
-    process.exit(0);
-  };
-  process.on('SIGINT', onSigInt);
-
-  try {
-    await runTuiShell({
-      worldDir: parsed.worldDir,
-      vm,
-      t: vm.t,
-      actionOpts: {
-        io,
-        t: vm.t,
-        ...parsed.shellOptions,
-      } satisfies RecommendedActionOptions,
+      shutdownPromise = vm.dispose();
+      return shutdownPromise;
+    };
+    const exitAfterShutdown = (): void => {
+      void shutdown().then(
+        () => process.exit(0),
+        (error) => {
+          process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+          process.exit(1);
+        },
+      );
+    };
+    const vm = createViewModel(driver, {
+      onExitRequest: exitAfterShutdown,
     });
-  } catch (err) {
-    // Keep failures inside the TUI message list — never write to stderr while
-    // the alt-screen session may still be active.
-    if (err instanceof InitCancelledError) {
-      io.error(`${err.message}\n`);
-    } else {
-      io.error(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
-      process.exitCode = 1;
-    }
-  } finally {
-    process.off('SIGINT', onSigInt);
-    mounted?.dispose();
-    mounted = null;
+    mounted = mountApp(vm, {
+      onExitRequest: exitAfterShutdown,
+    });
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
 }
 
-main().catch((err: unknown) => {
-  // Bootstrap-only path (argv / mount failures before or without a live TUI).
-  process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
-  process.exitCode = 1;
-});
+void main();

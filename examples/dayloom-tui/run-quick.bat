@@ -5,7 +5,7 @@ cd /d "%~dp0"
 set "OUT_DIR=%~dp0output\world-quick"
 set "DAY_LOOM_DIR=%~dp0..\.."
 
-call "%~dp0scripts\ensure-dayloom.bat" quick
+call "%~dp0scripts\ensure-dayloom-old.bat" quick
 if errorlevel 1 exit /b 1
 
 if exist "%OUT_DIR%" (
@@ -13,7 +13,7 @@ if exist "%OUT_DIR%" (
   rmdir /s /q "%OUT_DIR%"
 )
 
-echo Launching dayloom-tui with --quick (no API key required)...
+echo Launching dayloom-tui-old with --quick (no API key required)...
 echo Use --no-auto-start: explore the shell before any session starts.
 echo.
 

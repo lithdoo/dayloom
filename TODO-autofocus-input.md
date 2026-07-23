@@ -1,7 +1,7 @@
 # TODO：beginInput / beginConfirm 后自动聚焦输入区
 
 > **状态**：已完成  
-> **范围**：`@dayloom/tui`（`app.tsx` / `components/text-input` / PTY 测试）  
+> **范围**：`@dayloom/tui-old`（`app.tsx` / `components/text-input` / PTY 测试）  
 > **约束**：独立跟踪，不改正文其它 `TODO*.md`（可交叉引用）  
 > **日期**：2026-07；最后更新：2026-07-17  
 > **相关**：[`TODO-message-list-focus.md`](./TODO-message-list-focus.md)、[`TODO-confirm-focus-chrome.md`](./TODO-confirm-focus-chrome.md)
@@ -12,7 +12,7 @@
 
 `beginInput` / `beginConfirm` 出现后，bindtty 焦点常仍在 **MessageList**。用户直接打字无效，必须先 **Tab** 进入 Textarea / confirm。
 
-`packages/tui/TODO.md` §0 已记录该限制；MVP 曾接受「手动 Tab」。体验上这是高频摩擦。
+`packages/tui-old/TODO.md` §0 已记录该限制；MVP 曾接受「手动 Tab」。体验上这是高频摩擦。
 
 ---
 
@@ -48,7 +48,7 @@ bindtty 侧前置已经完成，并已在 dayloom 依赖中更新到 `0.1.0-alph
 
 ### 5.1 落地点
 
-推荐在 `packages/tui/src/app.tsx` 的 `mountApp` 中接入，而不是在 `view-model` 或 `session-io` 里直接访问 app：
+推荐在 `packages/tui-old/src/app.tsx` 的 `mountApp` 中接入，而不是在 `view-model` 或 `session-io` 里直接访问 app：
 
 - `view-model` 只表达 `inputMode` / `inputValue` / `confirmQuestion` 等状态
 - `mountApp` 拥有 bindtty app 实例，适合把状态变化桥接到焦点行为
@@ -129,12 +129,12 @@ const unsubscribe = vm.inputMode.subscribe((mode) => {
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/components/constants.ts` | `TEXTAREA_ID` |
-| `packages/tui/src/view-model.ts` | `beginInput` / `beginConfirm` |
-| `packages/tui/src/app.tsx` | `mountApp` |
+| `packages/tui-old/src/components/constants.ts` | `TEXTAREA_ID` |
+| `packages/tui-old/src/view-model.ts` | `beginInput` / `beginConfirm` |
+| `packages/tui-old/src/app.tsx` | `mountApp` |
 | `bindtty/packages/bindtty/src/app.ts` | `BindTTYApp.focus(target)` |
 | `bindtty/packages/vnode/src/mounted/types.ts` | `MountedElementApi.focus()` |
-| `packages/tui/TODO.md` §0 | 问题背景 |
+| `packages/tui-old/TODO.md` §0 | 问题背景 |
 
 ---
 

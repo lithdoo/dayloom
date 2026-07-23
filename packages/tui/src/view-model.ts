@@ -1,414 +1,247 @@
-import {
-  createSignal,
-  computed,
-  type ReadableSignal,
-  type Signal,
-} from 'bindtty';
-import {
-  createTranslator,
-  inspectTuiHeader,
-  normalizeLocale,
-  type InputOptions,
-  type Translator,
-} from '@dayloom/core';
-import { STREAM_THROTTLE_MS } from './components/constants.js';
-import {
-  appendTuiMessage,
-  type TuiMessage,
-  type TuiMessageRole,
-} from './message-history.js';
-import {
-  formatHubHelp,
-  formatHubStatus,
-  resolveHubHelp,
-  resolveHubStatus,
-} from './hub/content.js';
-import { resolveHubActions } from './hub/actions.js';
-import type {
-  HubAction,
-  HubActionId,
-  HubHelpContent,
-  HubMode,
-  HubRecentSummary,
-  HubStatusContent,
-  TuiPage,
-} from './hub/types.js';
-import type { SessionCommand, SessionState } from './session/types.js';
-
-export type TuiInputMode = 'hidden' | 'text' | 'confirm';
-export type { TuiMessage, TuiMessageRole } from './message-history.js';
+import { computed, createSignal, type ReadableSignal, type Signal } from 'bindtty';
+import { formatHubHelp, formatHubStatus } from './hub/content.js';
+import { runtimeMessageToTui, type TuiMessage } from './message-history.js';
+import { phaseLabel, sessionKindLabel, sessionStatusLabel } from './theme.js';
+import type { TuiRuntimeDriver } from './runtime-driver/index.js';
+import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage } from './types.js';
 
 export interface ViewModel {
-  worldDir: string;
-  t: Translator;
-
-  page: Signal<TuiPage>;
-  hubActions: Signal<readonly HubAction[]>;
-  hubSelectedActionId: Signal<HubActionId>;
-  hubStatus: Signal<HubStatusContent>;
-  hubHelp: Signal<HubHelpContent>;
-  recentSession: Signal<HubRecentSummary | undefined>;
-
-  messages: Signal<readonly TuiMessage[]>;
+  worldRoot: string;
+  driver: TuiRuntimeDriver;
+  state: Signal<TuiDriverState>;
+  page: ReadableSignal<TuiPage>;
+  hubActions: ReadableSignal<readonly TuiHubAction[]>;
+  selectedHubActionId: ReadableSignal<string | null>;
   visibleMessages: ReadableSignal<readonly TuiMessage[]>;
-  streamBuffer: Signal<string>;
-  loadingLabel: Signal<string | null>;
-
+  headerPrimary: ReadableSignal<string>;
+  headerSecondary: ReadableSignal<string>;
+  loadingLabel: ReadableSignal<string | null>;
+  /** 当前 Session 是否接受普通自然语言输入。 */
+  inputEnabled: ReadableSignal<boolean>;
+  /** Textarea 是否可用于输入，包括高优先级 cancel 指令。 */
+  inputControlEnabled: ReadableSignal<boolean>;
   inputMode: Signal<TuiInputMode>;
+  inputValue: Signal<string>;
   inputInstruction: Signal<string>;
   inputPrompt: Signal<string>;
-  inputHint: Signal<string>;
-  inputValue: Signal<string>;
-  confirmQuestion: Signal<string>;
-
-  headerPrimary: Signal<string>;
-  headerSecondary: Signal<string>;
-  headerActions: Signal<readonly string[]>;
-
+  inputHint: ReadableSignal<string>;
+  inputResetToken: Signal<number>;
   viewportWidth: Signal<number>;
   listHeight: Signal<number>;
   messageScrollOffset: Signal<number>;
   stickToBottom: Signal<boolean>;
   inputViewportRows: Signal<number>;
-  inputResetToken: Signal<number>;
-
-  appendMessage(role: TuiMessageRole, text: string): void;
-  appendStream(chunk: string): void;
-  flushStream(): void;
-  refreshHeader(): void;
-  refreshHub(): void;
-  setHubMode(mode: HubMode): void;
-  setHubBusy(label: string | null): void;
-  setSessionPage(command: SessionCommand, state?: SessionState): void;
-  setSessionState(state: SessionState): void;
-  setRecentSession(summary: HubRecentSummary | undefined): void;
-
-  beginInput(options: InputOptions, resolve: (value: string) => void): void;
-  beginConfirm(question: string, resolve: (value: boolean) => void): void;
-  beginHubSelection(resolve: (action: HubAction) => void): void;
-  clearInput(): void;
-  submitTextInput(): void;
-  submitConfirm(answer: boolean): void;
-  submitHubSelection(): void;
+  submitHubSelection(actionId?: string): Promise<void>;
   moveHubSelection(delta: number): void;
-  selectHubAction(id: HubActionId): void;
-
-  setStickToBottom(value: boolean): void;
+  selectHubAction(id: string): void;
+  submitTextInput(): void;
+  navigateInputHistory(delta: -1 | 1): void;
   setMessageScrollOffset(value: number): void;
+  setStickToBottom(value: boolean): void;
   setInputViewportRows(rows: number): void;
+  dispose(): Promise<void>;
 }
 
 export interface CreateViewModelOptions {
-  worldDir: string;
-  locale?: string;
+  onExitRequest?(): void | Promise<void>;
 }
 
-export function createViewModel(options: CreateViewModelOptions): ViewModel {
-  const locale = normalizeLocale(options.locale);
-  const t = createTranslator(locale);
-  const initialHubHelp = resolveHubHelp(t);
-  const page = createSignal<TuiPage>({ kind: 'hub', mode: 'status' });
-  const hubActions = createSignal<readonly HubAction[]>([]);
-  const hubSelectedActionId = createSignal<HubActionId>('next');
-  const hubStatus = createSignal<HubStatusContent>({
-    worldRoot: options.worldDir,
-    initialized: false,
-    nextLabel: '',
-    nextSummary: '',
-    actions: [],
-  });
-  const hubHelp = createSignal<HubHelpContent>(initialHubHelp);
-  const recentSession = createSignal<HubRecentSummary | undefined>(undefined);
-  const messages = createSignal<readonly TuiMessage[]>([]);
-  const streamBuffer = createSignal('');
-  const loadingLabel = createSignal<string | null>(null);
+export function createViewModel(
+  driver: TuiRuntimeDriver,
+  options: CreateViewModelOptions = {},
+): ViewModel {
+  const state = createSignal(driver.getState());
   const inputMode = createSignal<TuiInputMode>('hidden');
-  const inputInstruction = createSignal('');
-  const inputPrompt = createSignal('>');
-  const inputHint = createSignal('');
   const inputValue = createSignal('');
-  const confirmQuestion = createSignal('');
-  const headerPrimary = createSignal('');
-  const headerSecondary = createSignal('');
-  const headerActions = createSignal<readonly string[]>([]);
+  const inputInstruction = createSignal('输入消息，或输入 /submit 提交、/exit 取消。');
+  const inputPrompt = createSignal('> ');
+  const inputResetToken = createSignal(0);
   const viewportWidth = createSignal(80);
   const listHeight = createSignal(12);
   const messageScrollOffset = createSignal(0);
   const stickToBottom = createSignal(true);
   const inputViewportRows = createSignal(1);
-  const inputResetToken = createSignal(0);
-  let messageId = 0;
-  let pendingInput: ((value: string) => void) | null = null;
-  let pendingConfirm: ((value: boolean) => void) | null = null;
-  let pendingHubSelection: ((action: HubAction) => void) | null = null;
-  let pendingStream = '';
-  let streamTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  let previousPageKey = pageKey(state.get().page);
+  const inputHistory: string[] = [];
+  let inputHistoryIndex = 0;
+  let inputHistoryDraft = '';
 
-  function publishPendingStream(): void {
-    if (pendingStream === '') return;
-    const next = pendingStream;
-    pendingStream = '';
-    streamBuffer.set(streamBuffer.get() + next);
-    stickToBottom.set(true);
-  }
+  const unsubscribe = driver.subscribe((nextState) => {
+    const nextPageKey = pageKey(nextState.page);
+    state.set(nextState);
+    inputMode.set(nextState.page.kind === 'session' ? 'text' : 'hidden');
+    if (nextPageKey !== previousPageKey) {
+      previousPageKey = nextPageKey;
+      messageScrollOffset.set(0);
+      stickToBottom.set(true);
+    }
+  });
 
-  function clearStreamTimer(): void {
-    if (streamTimer === null) return;
-    clearTimeout(streamTimer);
-    streamTimer = null;
-  }
-
-  function createHubMessages(): readonly TuiMessage[] {
-    const currentPage = page.get();
-    const text = currentPage.kind === 'hub' && currentPage.mode === 'help'
-      ? formatHubHelp(hubHelp.get())
-      : formatHubStatus(hubStatus.get(), t);
-    const loading = currentPage.kind === 'hub' && currentPage.busy
-      ? `\n\n${currentPage.busy.label}`
-      : '';
-    return [
-      {
-        id: currentPage.kind === 'hub' ? `hub-${currentPage.mode}` : 'hub-status',
-        role: 'system',
-        text: `${text}${loading}`,
-        ts: Date.now(),
-      },
-    ];
-  }
-
-  function selectedHubAction(): HubAction | undefined {
-    const actions = hubActions.get();
-    return actions.find((action) => action.id === hubSelectedActionId.get()) ?? actions[0];
-  }
-
-  function normalizeHubSelection(actions: readonly HubAction[]): void {
-    if (actions.length === 0) return;
-    const current = hubSelectedActionId.get();
-    if (actions.some((action) => action.id === current)) return;
-    const recommended = actions.find((action) => action.recommended);
-    hubSelectedActionId.set((recommended ?? actions[0]!).id);
-  }
+  const loadingLabel = computed(() => {
+    const current = state.get();
+    if (current.loading) return current.loading.label;
+    if (current.page.kind !== 'session') return null;
+    switch (current.snapshot.session.status) {
+      case 'created':
+        return '正在启动会话...';
+      case 'streaming':
+        return 'AI 正在回复...';
+      case 'loading':
+        return current.snapshot.session.loading?.detail ?? '正在处理...';
+      case 'submitting':
+        return '正在提交会话...';
+      default:
+        return null;
+    }
+  });
+  const inputEnabled = computed(() => {
+    const current = state.get();
+    return current.page.kind === 'session'
+      && current.snapshot.session.status === 'waiting-input'
+      && loadingLabel.get() === null;
+  });
+  const inputControlEnabled = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session') return false;
+    return current.snapshot.session.status !== 'submitting'
+      && current.snapshot.session.status !== 'completed'
+      && current.snapshot.session.status !== 'cancelled';
+  });
+  const inputHint = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session') return '';
+    const status = current.snapshot.session.status;
+    if (status === 'failed') return '/exit 或 /cancel 返回 Hub';
+    if (!inputEnabled.get()) return `${sessionStatusLabel(status)} · /exit 取消`;
+    return '/submit 提交 · /exit 取消';
+  });
 
   const vm: ViewModel = {
-    worldDir: options.worldDir,
-    t,
-    page,
-    hubActions,
-    hubSelectedActionId,
-    hubStatus,
-    hubHelp,
-    recentSession,
-    messages,
+    worldRoot: driver.getState().snapshot.world.worldRoot,
+    driver,
+    state,
+    page: computed(() => state.get().page),
+    hubActions: computed(() => state.get().hubActions),
+    selectedHubActionId: computed(() => state.get().selectedHubActionId),
     visibleMessages: computed(() => {
-      if (page.get().kind === 'hub') {
-        return createHubMessages();
+      const current = state.get();
+      if (current.page.kind === 'hub') {
+        const text = current.page.mode === 'help'
+          ? formatHubHelp({ commands: current.commands, actions: current.hubActions })
+          : formatHubStatus({
+            snapshot: current.snapshot,
+            actions: current.hubActions,
+            commands: current.commands,
+            recent: current.recent,
+          });
+        return [{
+          id: `hub:${current.page.mode}:${current.snapshot.world.phase}:${current.snapshot.world.day ?? '-'}`,
+          role: 'system',
+          text,
+        }];
       }
-      const stream = streamBuffer.get();
-      if (stream === '') return messages.get();
-      return [
-        ...messages.get(),
-        {
-          id: 'stream',
-          role: 'output' as const,
-          text: stream,
-          ts: Date.now(),
-        },
-      ];
+      return current.messages.map(runtimeMessageToTui);
     }),
-    streamBuffer,
+    headerPrimary: computed(() => {
+      const snapshot = state.get().snapshot;
+      return `World: ${snapshot.world.worldRoot}`;
+    }),
+    headerSecondary: computed(() => {
+      const current = state.get();
+      const world = current.snapshot.world;
+      const parts = [world.day ?? null, `${phaseLabel(world.phase)} (${world.phase})`];
+      if (current.page.kind === 'session') {
+        parts.push(
+          sessionKindLabel(current.page.sessionKind),
+          sessionStatusLabel(current.snapshot.session.status),
+        );
+      }
+      if (current.loading) parts.push(current.loading.label);
+      return parts.filter(Boolean).join(' · ');
+    }),
     loadingLabel,
+    inputEnabled,
+    inputControlEnabled,
     inputMode,
+    inputValue,
     inputInstruction,
     inputPrompt,
     inputHint,
-    inputValue,
-    confirmQuestion,
-    headerPrimary,
-    headerSecondary,
-    headerActions,
+    inputResetToken,
     viewportWidth,
     listHeight,
     messageScrollOffset,
     stickToBottom,
     inputViewportRows,
-    inputResetToken,
-    appendMessage(role, text): void {
-      const current = messages.get();
-      const next = appendTuiMessage(current, role, text, {
-        now: Date.now(),
-        nextId: () => String(++messageId),
-      });
-      if (next !== current) {
-        messages.set(next);
+    async submitHubSelection(requestedActionId): Promise<void> {
+      const actionId = requestedActionId ?? state.get().selectedHubActionId;
+      if (!actionId) return;
+      const result = await driver.runHubAction(actionId);
+      if (result === 'exit') {
+        await options.onExitRequest?.();
       }
-    },
-    appendStream(chunk): void {
-      if (chunk === '') return;
-      pendingStream += chunk;
-      // Leading edge: show the first chunk immediately, then coalesce for ~50ms.
-      if (streamTimer !== null) return;
-      publishPendingStream();
-      streamTimer = setTimeout(() => {
-        streamTimer = null;
-        publishPendingStream();
-      }, STREAM_THROTTLE_MS);
-    },
-    flushStream(): void {
-      clearStreamTimer();
-      publishPendingStream();
-      const text = streamBuffer.get();
-      if (text === '') return;
-      streamBuffer.set('');
-      vm.appendMessage('output', text);
-    },
-    refreshHeader(): void {
-      try {
-        const snapshot = inspectTuiHeader(options.worldDir);
-        const phase = snapshot.phase ? ` · ${snapshot.phase}` : '';
-        headerPrimary.set(`World: ${snapshot.worldRoot}${phase}`);
-        headerSecondary.set(
-          [snapshot.day, snapshot.eventTitle].filter(Boolean).join(' · '),
-        );
-        headerActions.set(snapshot.suggestedActions);
-      } catch (err) {
-        headerPrimary.set(`World: ${options.worldDir}`);
-        headerSecondary.set(err instanceof Error ? err.message : '');
-        headerActions.set([]);
-      }
-    },
-    refreshHub(): void {
-      const resolved = resolveHubActions({ worldDir: options.worldDir, t });
-      hubActions.set(resolved.actions);
-      normalizeHubSelection(resolved.actions);
-      hubStatus.set(resolveHubStatus({
-        worldDir: options.worldDir,
-        t,
-        recent: recentSession.get(),
-        resolved,
-      }));
-      hubHelp.set(resolveHubHelp(t));
-      vm.refreshHeader();
-      stickToBottom.set(true);
-    },
-    setHubMode(mode): void {
-      const current = page.get();
-      page.set({ kind: 'hub', mode, busy: current.kind === 'hub' ? current.busy : undefined });
-      stickToBottom.set(true);
-    },
-    setHubBusy(label): void {
-      const current = page.get();
-      const mode = current.kind === 'hub' ? current.mode : 'status';
-      page.set(label ? { kind: 'hub', mode: 'status', busy: { kind: 'settling', label } } : { kind: 'hub', mode });
-      inputMode.set('hidden');
-      stickToBottom.set(true);
-    },
-    setSessionPage(command, state = { kind: 'starting' }): void {
-      page.set({ kind: 'session', command, state });
-      stickToBottom.set(true);
-    },
-    setSessionState(state): void {
-      const current = page.get();
-      if (current.kind !== 'session') return;
-      page.set({ ...current, state });
-    },
-    setRecentSession(summary): void {
-      recentSession.set(summary);
-    },
-    beginInput(inputOptions, resolve): void {
-      assertNoPending(pendingInput, pendingConfirm);
-      pendingInput = resolve;
-      const current = page.get();
-      if (current.kind === 'session') {
-        page.set({ ...current, state: { kind: 'waiting-input' } });
-      }
-      inputInstruction.set(inputOptions.instruction);
-      inputPrompt.set(inputOptions.userPrompt);
-      inputHint.set(inputOptions.commandHint ?? '');
-      inputValue.set('');
-      inputResetToken.set(inputResetToken.get() + 1);
-      inputMode.set('text');
-    },
-    beginConfirm(question, resolve): void {
-      assertNoPending(pendingInput, pendingConfirm);
-      pendingConfirm = resolve;
-      const current = page.get();
-      if (current.kind === 'session') {
-        page.set({ ...current, state: { kind: 'waiting-confirm' } });
-      }
-      confirmQuestion.set(question);
-      inputValue.set('');
-      inputMode.set('confirm');
-    },
-    beginHubSelection(resolve): void {
-      pendingHubSelection = resolve;
-      vm.refreshHub();
-      const current = page.get();
-      page.set({ kind: 'hub', mode: current.kind === 'hub' ? current.mode : 'status' });
-      inputMode.set('hidden');
-    },
-    clearInput(): void {
-      inputMode.set('hidden');
-      inputInstruction.set('');
-      inputPrompt.set('>');
-      inputHint.set('');
-      inputValue.set('');
-      confirmQuestion.set('');
-    },
-    submitTextInput(): void {
-      const resolve = pendingInput;
-      if (!resolve) return;
-      pendingInput = null;
-      const value = inputValue.get();
-      vm.clearInput();
-      resolve(value);
-    },
-    submitConfirm(answer): void {
-      const resolve = pendingConfirm;
-      if (!resolve) return;
-      pendingConfirm = null;
-      vm.clearInput();
-      resolve(answer);
-    },
-    submitHubSelection(): void {
-      const resolve = pendingHubSelection;
-      const action = selectedHubAction();
-      if (!resolve || !action) return;
-      pendingHubSelection = null;
-      resolve(action);
     },
     moveHubSelection(delta): void {
-      const actions = hubActions.get();
+      const actions = state.get().hubActions;
       if (actions.length === 0) return;
-      const currentIndex = Math.max(0, actions.findIndex((action) => action.id === hubSelectedActionId.get()));
+      const currentId = state.get().selectedHubActionId;
+      const currentIndex = Math.max(0, actions.findIndex((action) => action.id === currentId));
       const nextIndex = Math.max(0, Math.min(actions.length - 1, currentIndex + delta));
-      hubSelectedActionId.set(actions[nextIndex]!.id);
+      driver.selectHubAction(actions[nextIndex]!.id);
     },
     selectHubAction(id): void {
-      if (hubActions.get().some((action) => action.id === id)) {
-        hubSelectedActionId.set(id);
+      driver.selectHubAction(id);
+    },
+    submitTextInput(): void {
+      const text = inputValue.get();
+      if (text.trim() !== '' && inputHistory.at(-1) !== text) {
+        inputHistory.push(text);
+        if (inputHistory.length > 100) inputHistory.shift();
       }
+      inputHistoryIndex = inputHistory.length;
+      inputHistoryDraft = '';
+      inputValue.set('');
+      inputResetToken.set(inputResetToken.get() + 1);
+      void driver.submitSessionText(text);
+    },
+    navigateInputHistory(delta): void {
+      if (inputHistory.length === 0) return;
+      if (inputHistoryIndex === inputHistory.length && delta === -1) {
+        inputHistoryDraft = inputValue.get();
+      }
+      inputHistoryIndex = Math.max(
+        0,
+        Math.min(inputHistory.length, inputHistoryIndex + delta),
+      );
+      inputValue.set(
+        inputHistoryIndex === inputHistory.length
+          ? inputHistoryDraft
+          : inputHistory[inputHistoryIndex] ?? '',
+      );
+      inputResetToken.set(inputResetToken.get() + 1);
+    },
+    setMessageScrollOffset(value): void {
+      messageScrollOffset.set(Math.max(0, Math.floor(value)));
+      stickToBottom.set(false);
     },
     setStickToBottom(value): void {
       stickToBottom.set(value);
     },
-    setMessageScrollOffset(value): void {
-      messageScrollOffset.set(Math.max(0, Math.floor(value)));
-    },
     setInputViewportRows(rows): void {
       inputViewportRows.set(Math.max(1, Math.min(6, Math.floor(rows))));
     },
+    async dispose(): Promise<void> {
+      if (disposed) return;
+      disposed = true;
+      unsubscribe();
+      await driver.dispose();
+    },
   };
 
-  vm.refreshHeader();
-  vm.refreshHub();
   return vm;
 }
 
-function assertNoPending(
-  pendingInput: unknown,
-  pendingConfirm: unknown,
-): void {
-  if (pendingInput || pendingConfirm) {
-    throw new Error('TUI input request already pending.');
-  }
+function pageKey(page: TuiPage): string {
+  return page.kind === 'hub' ? `hub:${page.mode}` : `session:${page.sessionId}`;
 }

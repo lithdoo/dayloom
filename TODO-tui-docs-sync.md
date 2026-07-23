@@ -1,7 +1,7 @@
 # TODO：同步 tui 文档与已落地实现
 
 > **状态**：已完成
-> **范围**：文档 only（主要为 `packages/tui/TODO.md`；可选根 `TODO.md` / `README`）  
+> **范围**：文档 only（主要为 `packages/tui-old/TODO.md`；可选根 `TODO.md` / `README`）  
 > **约束**：本文件跟踪「文档纠偏」；实施时可改上述文档，但勿与功能 TODO 混在一个 PR 叙述里亦可  
 > **日期**：2026-07  
 > **相关**：Phase A–D 已完成；功能缺口见其它 `TODO-*.md`
@@ -10,7 +10,7 @@
 
 ## 1. 问题
 
-`packages/tui/TODO.md` **顶部状态**已写 Phase A–D 完成，但 **§0「次要问题」** 曾残留过时条目，易误导后续贡献者：
+`packages/tui-old/TODO.md` **顶部状态**已写 Phase A–D 完成，但 **§0「次要问题」** 曾残留过时条目，易误导后续贡献者：
 
 | §0 仍写着 | 实际 |
 |-----------|------|
@@ -37,13 +37,13 @@
 ## 3. 非目标
 
 - 不在本任务实现 autofocus / 用户历史等功能  
-- 不重写整份 `packages/tui/TODO.md` 实施史  
+- 不重写整份 `packages/tui-old/TODO.md` 实施史  
 
 ---
 
 ## 4. 建议修订内容
 
-### 4.1 `packages/tui/TODO.md` §0
+### 4.1 `packages/tui-old/TODO.md` §0
 
 **删除或改写为已修复：**
 
@@ -66,7 +66,7 @@
 - [x] …（见 TODO-autofocus-input.md）
 ```
 
-### 4.3 索引（推荐写在 `packages/tui/README.md` 或 dayloom 根短文件）
+### 4.3 索引（推荐写在 `packages/tui-old/README.md` 或 dayloom 根短文件）
 
 ```markdown
 ## 开放体验 TODO
@@ -87,7 +87,7 @@
 
 ## 5. 任务清单
 
-- [x] 修订 `packages/tui/TODO.md` §0（去过时、留真限制、加链接）
+- [x] 修订 `packages/tui-old/TODO.md` §0（去过时、留真限制、加链接）
 - [x] §13 焦点项指向 `TODO-autofocus-input.md` 并标为已完成
 - [x] tui README 增加开放 TODO 索引
 - [x] 快速扫根 `TODO.md` Phase 5/6 是否仍写过时句
@@ -107,10 +107,10 @@
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/TODO.md` | 主修订对象 |
-| `packages/tui/src/app.tsx` | `isCtrlC` |
-| `packages/tui/src/theme.ts` | multiline / footer i18n |
-| `packages/tui/README.md` | 索引入口 |
+| `packages/tui-old/TODO.md` | 主修订对象 |
+| `packages/tui-old/src/app.tsx` | `isCtrlC` |
+| `packages/tui-old/src/theme.ts` | multiline / footer i18n |
+| `packages/tui-old/README.md` | 索引入口 |
 
 ---
 

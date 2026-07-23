@@ -1,7 +1,7 @@
 # TODO：手动上滚时勿被 stickToBottom 拽回
 
 > **状态**：待做  
-> **范围**：`@dayloom/tui` MessageList / ViewModel；依赖 ScrollView `onOffsetYChange` / `stickToBottom`  
+> **范围**：`@dayloom/tui-old` MessageList / ViewModel；依赖 ScrollView `onOffsetYChange` / `stickToBottom`  
 > **约束**：独立跟踪，不改正文其它 `TODO*.md`  
 > **日期**：2026-07  
 > **相关**：流式 `appendStream` throttle（已落地）；[`TODO-user-message-history.md`](./TODO-user-message-history.md)
@@ -117,8 +117,8 @@ const offsetY = createSignal(0);
 
 | 路径 | 说明 |
 |------|------|
-| `packages/tui/src/view-model.ts` | `publishPendingStream` / `setStickToBottom` |
-| `packages/tui/src/components/message-list.tsx` | ScrollView 绑定 |
+| `packages/tui-old/src/view-model.ts` | `publishPendingStream` / `setStickToBottom` |
+| `packages/tui-old/src/components/message-list.tsx` | ScrollView 绑定 |
 | `bindtty/packages/widgets/src/scroll/scroll-view.ts` | `stickToBottom` / `onOffsetYChange` |
 
 ---

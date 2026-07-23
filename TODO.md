@@ -1,6 +1,6 @@
-# dayloom 改造计划：@dayloom/core + @dayloom/cli + @dayloom/tui
+# dayloom 改造计划：@dayloom/core-old + @dayloom/cli + @dayloom/tui-old
 
-> 目标：将现有 `packages/dayloom` 拆为三个包——`@dayloom/core`（纯引擎 API）、`@dayloom/cli`（现有命令行逻辑）、`@dayloom/tui`（bindtty 全屏统一入口）。原 dayloom 可通过 **CLI** 或 **TUI** 两种方式启动，二者均调用 core 完成业务。
+> 目标：将现有 `packages/dayloom` 拆为三个包——`@dayloom/core-old`（纯引擎 API）、`@dayloom/cli`（现有命令行逻辑）、`@dayloom/tui-old`（bindtty 全屏统一入口）。原 dayloom 可通过 **CLI** 或 **TUI** 两种方式启动，二者均调用 core 完成业务。
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 三包职责
 
-**@dayloom/core**
+**@dayloom/core-old**
 
 - 只做：状态机、AI 调用、文件变更、`run*` API、`SessionIO` / `SessionExit` 类型定义。
 - 终态（Phase 2 后）没有：`bin`、readline、commander、bindtty、spinner 实现。
@@ -19,7 +19,7 @@
 - 负责：现有 `dayloom` 子命令、commander 注册、`createCliSessionIO()`、终端 spinner / readline 实现。
 - 业务全部调用 core（见下方「硬约束」允许的入口级分支）。
 
-**@dayloom/tui**
+**@dayloom/tui-old**
 
 - 负责：bindtty UI、`createTuiSessionIO()`、调用 `core.runGameShell`。
 - 业务全部调用 core（见下方「硬约束」允许的入口级分支）。
@@ -51,7 +51,7 @@
 
 | 阶段 | CLI | TUI |
 |------|-----|-----|
-| **短期（本改造）** | `@dayloom/cli` → `dayloom` | `@dayloom/tui` → `dayloom-tui` |
+| **短期（本改造）** | `@dayloom/cli` → `dayloom` | `@dayloom/tui-old` → `dayloom-tui-old` |
 | **长期** | 维持 `dayloom` 给脚本 / CI | 是否合并为 `dayloom` 默认 TUI、子命令退居 `--cli`，**另议** |
 
 ---
@@ -70,15 +70,15 @@
 ```text
 dayloom/
   packages/
-    core/          @dayloom/core   — 引擎：状态机、run* API、SessionIO 类型
+    core/          @dayloom/core-old   — 引擎：状态机、run* API、SessionIO 类型
     cli/           @dayloom/cli    — dayloom 子命令 + CliSessionIO
-    tui/           @dayloom/tui    — dayloom-tui + TuiSessionIO + runGameShell
+    tui/           @dayloom/tui-old    — dayloom-tui-old + TuiSessionIO + runGameShell
   examples/        依赖 @dayloom/cli
 ```
 
 ```text
-@dayloom/cli  →  @dayloom/core
-@dayloom/tui  →  @dayloom/core, bindtty
+@dayloom/cli  →  @dayloom/core-old
+@dayloom/tui-old  →  @dayloom/core-old, bindtty
 examples      →  @dayloom/cli
 ```
 
@@ -91,7 +91,7 @@ dayloom play -d ./world
 dayloom next -d ./world
 
 # TUI（游戏统一入口）
-dayloom-tui ./world
+dayloom-tui-old ./world
 ```
 
 ---
@@ -103,7 +103,7 @@ dayloom-tui ./world
 现有方案缺少 `warn` / `error` 与空输入策略。源码中大量用户可见信息写到 **stderr**（warning、preserved session path 等），不纳入 SessionIO 会在 TUI 下漏到真实 stderr，破坏全屏 UI。
 
 ```ts
-// packages/core/src/session-io/types.ts
+// packages/core-old/src/session-io/types.ts
 
 export interface InputOptions {
   commandHint?: string;
@@ -153,7 +153,7 @@ export interface SessionIO {
 为实现「/revise 任意时刻可用」，session loop 遇到 **shell 级命令** 时必须结构化返回，而非在 UI 层拦截。
 
 ```ts
-// packages/core/src/session-io/types.ts
+// packages/core-old/src/session-io/types.ts
 
 export type ShellCommand = 'revise' | 'next' | 'quit';
 // 注意：/status、/help 不在 ShellCommand 中，见下方「斜杠命令优先级」
@@ -257,7 +257,7 @@ runNext(worldDir, { io, ... }): Promise<NextResult>
 ### Phase 1 末 — core 暂存 legacy terminal I/O
 
 ```
-packages/core/
+packages/core-old/
   init/  daily/  play/  settle/  revise/  next/
   i18n/  session-commands/  prompts/
   shared/  utils/             ← 含 legacy terminal-input、loading spinner 等
@@ -285,7 +285,7 @@ packages/cli/
 ### Phase 2 末 — core 终态（必须清零 terminal I/O）
 
 ```
-packages/core/
+packages/core-old/
   init/  daily/  play/  settle/  revise/  next/
   i18n/  session-commands/
   shared/
@@ -339,9 +339,9 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 1.1 拆分 core
 
-- [x] 新建 `packages/core/`，迁入引擎代码 + **暂留** legacy terminal I/O（`terminal-input`、`read-user-input`、`utils/loading` 等）
+- [x] 新建 `packages/core-old/`，迁入引擎代码 + **暂留** legacy terminal I/O（`terminal-input`、`read-user-input`、`utils/loading` 等）
 - [x] **仅迁出** `cli/` 目录（commander 注册）
-- [x] `name: "@dayloom/core"`，无 `bin`
+- [x] `name: "@dayloom/core-old"`，无 `bin`
 - [x] `src/index.ts` 仅 export，无 `parseCli()`
 
 ### 1.2 新建 cli 包
@@ -350,7 +350,7 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 - [x] 新建 `src/index.ts`（`export { parseCli }`，无副作用）与 `src/main.ts`（`#!/usr/bin/env node` + `parseCli(process.argv)`）
 - [x] `package.json`：`main: "./dist/index.js"`，`bin: { "dayloom": "./dist/main.js" }`
 - [x] `import { parseCli } from '@dayloom/cli'` 不会自动执行 CLI，与 core 纯入口原则一致
-- [x] 依赖 `@dayloom/core`；各 action 仍调用 core 现有函数（core 内 legacy I/O 照常工作）
+- [x] 依赖 `@dayloom/core-old`；各 action 仍调用 core 现有函数（core 内 legacy I/O 照常工作）
 
 ### 1.3 根 monorepo + examples
 
@@ -458,14 +458,14 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ---
 
-## Phase 4：新建 @dayloom/tui
+## Phase 4：新建 @dayloom/tui-old
 
-> **2026-07**：Phase A–D 已完成（见 [`packages/tui/TODO.md`](packages/tui/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.10`**。自动聚焦、Confirm chrome、消息区标题获焦与用户历史回显已落地，剩余体验小改见独立 TODO。
+> **2026-07**：Phase A–D 已完成（见 [`packages/tui-old/TODO.md`](packages/tui-old/TODO.md)）。输入区使用 **`@bindtty/widgets` `Textarea`**（非自研、非单行 `TextInput`）；bindtty **`0.1.0-alpha.10`**。自动聚焦、Confirm chrome、消息区标题获焦与用户历史回显已落地，剩余体验小改见独立 TODO。
 
 ### 4.1 脚手架
 
-- [x] `packages/tui/`，`bin: { "dayloom-tui": "dist/main.js" }`
-- [x] 依赖 `@dayloom/core`、bindtty **`0.1.0-alpha.10`**
+- [x] `packages/tui-old/`，`bin: { "dayloom-tui-old": "dist/main.js" }`
+- [x] 依赖 `@dayloom/core-old`、bindtty **`0.1.0-alpha.10`**
 
 ### 4.2 `createTuiSessionIO(vm)`
 
@@ -482,7 +482,7 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ### 4.4 验证
 
-- [x] PTY smoke：`dayloom-tui <tmp-world> --no-auto-start` + 自动聚焦 + `/status` + Ctrl+C
+- [x] PTY smoke：`dayloom-tui-old <tmp-world> --no-auto-start` + 自动聚焦 + `/status` + Ctrl+C
 - [ ] init → daily → play → settle 全流程（需 API key 手工 smoke；属 Phase D）
 - [ ] play 中 `/revise` 可打断并返回（需 API key 手工 smoke；属 Phase D）
 - [x] warning / error 显示在 TUI 内（SessionIO 契约 + 单测）
@@ -493,7 +493,7 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 ## Phase 5：TUI 体验补齐
 
-> 规格见 [`packages/tui/TODO.md`](packages/tui/TODO.md) §11。Phase C/D 体验与打磨项已落地；含 API 的全流程见 tui TODO §11.1。
+> 规格见 [`packages/tui-old/TODO.md`](packages/tui-old/TODO.md) §11。Phase C/D 体验与打磨项已落地；含 API 的全流程见 tui TODO §11.1。
 
 - [x] 多行输入（`@bindtty/widgets` Textarea：Enter 换行，Ctrl+Enter 提交）
 - [x] 顶栏：day、phase、event、suggested_actions
@@ -516,9 +516,9 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 | 包 | bin | 说明 |
 |----|-----|------|
-| `@dayloom/core` | 无 | programmatic only |
+| `@dayloom/core-old` | 无 | programmatic only |
 | `@dayloom/cli` | `dayloom` | 现有子命令，examples 依赖 |
-| `@dayloom/tui` | `dayloom-tui` | 游戏主入口 |
+| `@dayloom/tui-old` | `dayloom-tui-old` | 游戏主入口 |
 
 - [ ] 长期是否让 `dayloom` 默认启动 TUI：**另议**，本改造不阻塞
 
@@ -540,7 +540,7 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 
 - [ ] `npm test` 全绿；examples smoke 通过（cli）
 - [ ] `dayloom` 全子命令与改造前一致
-- [ ] `dayloom-tui ./world` 全流程可玩
+- [ ] `dayloom-tui-old ./world` 全流程可玩
 - [ ] play 中 `/revise` 经 `SessionExit` 交还 shell，**非** TuiSessionIO 拦截
 - [ ] play 中 `/status` 显示 event；shell 等待层 `/status` 显示 World 概览
 - [ ] session 内 `/help` 显示 session 命令；shell 等待层 `/help` 显示 shell 命令表
@@ -587,7 +587,7 @@ src/session-io.ts              ← createTuiSessionIO（无业务分支）
 | utils/ 归属 | core/cli 边界模糊 | 分阶段文件表 |
 | runNext | inspect+print+execute 耦合 | 拆 `runRecommendedAction` |
 | API 类型 | interactive/non-interactive 混用 | 分函数、分 options |
-| bin | 长期策略不清 | 短期 `dayloom` / `dayloom-tui`，长期另议 |
+| bin | 长期策略不清 | 短期 `dayloom` / `dayloom-tui-old`，长期另议 |
 
 **评级**：9.5/10，**定稿可执行**。
 
