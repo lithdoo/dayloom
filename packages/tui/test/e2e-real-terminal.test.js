@@ -52,12 +52,12 @@ test('real PTY: natural-language init streams one assistant message and submits 
     await session.waitForVisible(/这是连续输出的中文回复/, 8_000);
     await session.waitForVisible(/等待输入/, 8_000);
 
-    session.write('\x1b[Z');
-    await delay(150);
+    session.write('\t');
+    await session.waitForVisible(/消息\s+↑↓/, 8_000);
     session.write('\x1b[A');
     session.write('\x1b[B');
     await delay(100);
-    session.write('\x1b[Z');
+    session.write('\t');
     await delay(150);
     await session.typeText('/submit');
     session.write('\x1b[13;5~');

@@ -28,7 +28,7 @@ export function TextInputArea(props: { vm: ViewModel }) {
         <text value={vm.inputInstruction} wrap="truncate-end" color="gray" />
         <hstack gap={0}>
           <text value={vm.inputPrompt} />
-          <box flexGrow={1} onKey={onHistoryKey}>
+          <box flexGrow={1} focusable={false} onKey={onHistoryKey}>
             <Textarea
               id={TEXTAREA_ID}
               value={vm.inputValue}
