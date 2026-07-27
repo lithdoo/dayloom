@@ -5,12 +5,18 @@ import { isCtrlC, mountInputAutofocus } from '../dist/app.js';
 import { CONFIRM_ID, TEXTAREA_ID } from '../dist/components/constants.js';
 import { createViewModel } from '../dist/view-model.js';
 
-test('isCtrlC matches legacy control sequence and kitty-style ctrl+c', () => {
-  assert.equal(isCtrlC({ input: 'c', name: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: '\x03', name: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: 'c', name: 'c', ctrl: false }), false);
-  assert.equal(isCtrlC({ input: 'a', name: 'a', ctrl: true }), false);
+test('isCtrlC matches semantic ctrl+c key events only', () => {
+  const key = (name, ctrl) => ({
+    kind: 'key',
+    key: name,
+    modifiers: { ctrl, alt: false, shift: false, meta: false },
+    repeat: 1,
+    protocol: 'legacy-vt',
+  });
+  assert.equal(isCtrlC(key('c', true)), true);
+  assert.equal(isCtrlC(key('c', false)), false);
+  assert.equal(isCtrlC(key('a', true)), false);
+  assert.equal(isCtrlC({ kind: 'text', text: 'c', protocol: 'legacy-vt' }), false);
 });
 
 test('mountInputAutofocus focuses Textarea and confirm after input mode changes', () => {

@@ -10,12 +10,12 @@ export function TextInputArea(props: { vm: ViewModel }) {
   const disabled = computed(() => !vm.inputControlEnabled.get());
 
   function onHistoryKey(event: TerminalKeyEvent): boolean {
-    if (!event.ctrl) return false;
-    if (event.name === 'p' || event.input === 'p') {
+    if (event.kind !== 'key' || !event.modifiers.ctrl) return false;
+    if (event.key === 'p') {
       vm.navigateInputHistory(-1);
       return true;
     }
-    if (event.name === 'n' || event.input === 'n') {
+    if (event.key === 'n') {
       vm.navigateInputHistory(1);
       return true;
     }

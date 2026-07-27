@@ -74,13 +74,25 @@ test('confirm box keeps y n and enter behavior', () => {
   const confirm = findElementById(TextInputArea({ vm }), CONFIRM_ID);
   assert.ok(confirm);
 
-  assert.equal(confirm.props.onKey({ input: 'n', name: 'n' }), true);
+  assert.equal(
+    confirm.props.onKey({ kind: 'text', text: 'n', protocol: 'legacy-vt' }),
+    true,
+  );
   assert.deepEqual(answers, [false]);
 
   vm.beginConfirm('Apply changes?', (value) => answers.push(value));
   const nextConfirm = findElementById(TextInputArea({ vm }), CONFIRM_ID);
   assert.ok(nextConfirm);
-  assert.equal(nextConfirm.props.onKey({ input: '', name: 'enter' }), true);
+  assert.equal(
+    nextConfirm.props.onKey({
+      kind: 'key',
+      key: 'enter',
+      modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+      repeat: 1,
+      protocol: 'legacy-vt',
+    }),
+    true,
+  );
   assert.deepEqual(answers, [false, true]);
 });
 

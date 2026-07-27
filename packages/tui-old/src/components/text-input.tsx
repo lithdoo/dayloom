@@ -82,16 +82,15 @@ function handleConfirmKey(
   disabled: ReturnType<typeof computed<boolean>>,
 ): boolean {
   if (disabled.get()) return false;
-  const input = event.input.toLowerCase();
-  if (input === 'y' || event.name === 'y') {
+  if (event.kind === 'text' && event.text.toLowerCase() === 'y') {
     vm.submitConfirm(true);
     return true;
   }
-  if (input === 'n' || event.name === 'n') {
+  if (event.kind === 'text' && event.text.toLowerCase() === 'n') {
     vm.submitConfirm(false);
     return true;
   }
-  if (event.name === 'return' || event.name === 'enter') {
+  if (event.kind === 'key' && event.key === 'enter') {
     vm.submitConfirm(true);
     return true;
   }

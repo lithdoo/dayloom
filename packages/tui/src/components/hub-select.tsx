@@ -15,19 +15,20 @@ export function HubSelect(props: { vm: ViewModel }) {
   function onKey(event: TerminalKeyEvent): boolean {
     const page = vm.page.get();
     if (page.kind !== 'hub' || page.busy) return false;
-    if (event.name === 'up') {
+    if (event.kind === 'key' && event.key === 'up') {
       vm.moveHubSelection(-1);
       return true;
     }
-    if (event.name === 'down') {
+    if (event.kind === 'key' && event.key === 'down') {
       vm.moveHubSelection(1);
       return true;
     }
-    if (event.name === 'return' || event.name === 'enter') {
+    if (event.kind === 'key' && event.key === 'enter') {
       vm.submitHubSelection();
       return true;
     }
-    const input = (event.input ?? '').toLowerCase();
+    if (event.kind !== 'text') return false;
+    const input = event.text.toLowerCase();
     const shortcut = vm.hubActions.get().find((action) => action.shortcut === input);
     if (shortcut) {
       vm.selectHubAction(shortcut.id);

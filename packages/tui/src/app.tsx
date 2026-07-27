@@ -13,7 +13,7 @@ export interface MountAppOptions {
 }
 
 export function isCtrlC(event: TerminalKeyEvent): boolean {
-  return Boolean(event.ctrl && (event.name === 'c' || event.input === '\x03' || event.input === 'c'));
+  return event.kind === 'key' && event.modifiers.ctrl && event.key === 'c';
 }
 
 export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedTuiApp {
