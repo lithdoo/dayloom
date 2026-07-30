@@ -52,7 +52,7 @@ export function formatHubHelp(input: {
     'Hub 操作',
     '',
     '- Enter: 执行当前选择',
-    '- ↑/↓: 切换选择',
+    '- Up/Down: 切换选择',
     ...input.actions
       .filter((action) => action.shortcut)
       .map((action) => `- ${action.shortcut}: ${action.label}`),

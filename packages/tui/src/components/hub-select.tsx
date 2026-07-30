@@ -9,7 +9,7 @@ import { HUB_SELECT_ID } from './constants.js';
 export function HubSelect(props: { vm: ViewModel }) {
   const { vm } = props;
   const focused = createSignal(false);
-  const title = computed(() => focused.get() ? '指令  ↑↓' : '指令');
+  const title = computed(() => focused.get() ? '指令  Up/Down' : '指令');
   const titleColor = computed(() => focused.get() ? 'cyan' : 'gray');
 
   function onKey(event: TerminalKeyEvent): boolean {

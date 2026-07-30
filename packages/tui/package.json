@@ -27,11 +27,11 @@
   ],
   "dependencies": {
     "@bindtty/interaction": "^0.1.0-beta.4",
-    "@bindtty/terminal": "^0.1.0-beta.4",
+    "@bindtty/terminal": "file:../../../bindtty/packages/terminal",
     "@bindtty/vnode": "^0.1.0-beta.4",
     "@bindtty/widgets": "^0.1.0-beta.4",
     "@dayloom/core": "*",
-    "bindtty": "^0.1.0-beta.4"
+    "bindtty": "file:../../../bindtty/packages/bindtty"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

@@ -13,9 +13,9 @@ export function MessageList(props: { vm: ViewModel }) {
     const page = vm.page.get();
     if (page.kind === 'hub') {
       const base = page.mode === 'help' ? '帮助' : '状态';
-      return focused.get() ? `${base}  ↑↓` : base;
+      return focused.get() ? `${base}  Up/Down` : base;
     }
-    return focused.get() ? '消息  ↑↓' : '消息';
+    return focused.get() ? '消息  Up/Down' : '消息';
   });
   const titleColor = computed(() => focused.get() ? 'cyan' : 'gray');
   const contentWidth = computed(() => Math.max(1, vm.viewportWidth.get() - 1));

@@ -24,5 +24,5 @@ if not exist "%WORLD_DIR%" mkdir "%WORLD_DIR%"
 
 echo Opening dayloom-tui on: %WORLD_DIR%
 echo.
-call node "%DAY_LOOM_DIR%\packages\tui2\dist\main.js" "%WORLD_DIR%"
+call node "%DAY_LOOM_DIR%\packages\tui\dist\main.js" "%WORLD_DIR%"
 exit /b %errorlevel%

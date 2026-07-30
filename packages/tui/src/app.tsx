@@ -1,5 +1,9 @@
 import { computed, createApp, type BindTTYApp } from 'bindtty';
-import { createNodeTerminal, type TerminalKeyEvent } from '@bindtty/terminal';
+import {
+  createNodeTerminal,
+  type TerminalKeyEvent,
+  type TerminalViewport,
+} from '@bindtty/terminal';
 import type { ViewModel } from './view-model.js';
 import { CHROME_ROWS, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
 import { Footer, Header, HubSelect, LoadingBar, MessageList, TextInputArea } from './components/index.js';
@@ -27,19 +31,17 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     keyboardProtocol: 'auto',
   });
 
-  function syncLayout(): void {
-    vm.viewportWidth.set(terminal.viewport.width);
-    vm.listHeight.set(Math.max(3, terminal.viewport.height - CHROME_ROWS - vm.inputViewportRows.get()));
+  function syncLayout(viewport: TerminalViewport = terminal.viewport): void {
+    vm.viewportWidth.set(viewport.width);
+    vm.listHeight.set(Math.max(3, viewport.height - CHROME_ROWS - vm.inputViewportRows.get()));
   }
 
-  syncLayout();
   const originalSetInputViewportRows = vm.setInputViewportRows.bind(vm);
   vm.setInputViewportRows = (rows: number) => {
     originalSetInputViewportRows(rows);
     syncLayout();
   };
 
-  const unsubscribeResize = terminal.onResize(syncLayout);
   const unsubscribeExitKey = terminal.onKey((event) => {
     if (isCtrlC(event)) options.onExitRequest?.();
   });
@@ -63,7 +65,10 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
       </show>
       <Footer vm={vm} />
     </screen>,
-    { terminal },
+    {
+      terminal,
+      onViewportChange: syncLayout,
+    },
   );
 
   app.start();
@@ -72,7 +77,6 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
   return {
     dispose(): void {
       unsubscribeInputFocus();
-      unsubscribeResize();
       unsubscribeExitKey();
       app.dispose();
     },
