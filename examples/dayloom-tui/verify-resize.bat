@@ -20,6 +20,13 @@ if exist ".env" (
 
 set "WORLD_DIR=%~dp0world2-resize-test"
 set "DAY_LOOM_DIR=%~dp0..\.."
+set "DIAGNOSTIC_DIR=%~dp0.runtime\diagnostics"
+if not exist "%DIAGNOSTIC_DIR%" mkdir "%DIAGNOSTIC_DIR%"
+for /f "delims=" %%v in ('node -e "process.stdout.write(new Date().toISOString().replace(/[:.]/g,'-'))"') do set "DIAGNOSTIC_RUN_ID=%%v-%RANDOM%"
+set "DAYLOOM_DIAGNOSTIC_RUN_ID=%DIAGNOSTIC_RUN_ID%"
+set "BINDTTY_DIAGNOSTIC_RUN_ID=%DIAGNOSTIC_RUN_ID%"
+set "DAYLOOM_DIAGNOSTIC_LOG_FILE=%DIAGNOSTIC_DIR%\dayloom-%DIAGNOSTIC_RUN_ID%.jsonl"
+set "BINDTTY_DIAGNOSTIC_LOG_FILE=%DIAGNOSTIC_DIR%\bindtty-%DIAGNOSTIC_RUN_ID%.jsonl"
 
 echo ============================================================
 echo  dayloom TUI — Windows resize smoke test
@@ -31,6 +38,9 @@ echo   shell        = %ComSpec%
 echo   WT_SESSION   = %WT_SESSION%
 echo   TERM_PROGRAM = %TERM_PROGRAM%
 echo   columns/rows = %COLUMNS%x%LINES%  (may be empty in cmd)
+echo   diagnostic run = %DIAGNOSTIC_RUN_ID%
+echo   dayloom log    = %DAYLOOM_DIAGNOSTIC_LOG_FILE%
+echo   bindtty log    = %BINDTTY_DIAGNOSTIC_LOG_FILE%
 for /f "delims=" %%v in ('node -p "process.versions.node" 2^>nul') do echo   node         = %%v
 pushd "%DAY_LOOM_DIR%" >nul
 for /f "delims=" %%v in ('node -p "require(\"./node_modules/bindtty/package.json\").version" 2^>nul') do echo   bindtty      = %%v
@@ -77,6 +87,8 @@ echo  FAIL if screen stays garbled after 2s idle, or Ctrl+C leaves broken shell.
 echo.
 echo  Exit: Ctrl+C
 echo  World dir: %WORLD_DIR%
+echo  Dayloom log: %DAYLOOM_DIAGNOSTIC_LOG_FILE%
+echo  BindTTY log: %BINDTTY_DIAGNOSTIC_LOG_FILE%
 echo ============================================================
 echo.
 pause
@@ -90,5 +102,7 @@ echo.
 echo ============================================================
 echo  TUI exited with code %EXITCODE%
 echo  After exit: cursor should be visible; shell prompt should work normally.
+echo  Dayloom log: %DAYLOOM_DIAGNOSTIC_LOG_FILE%
+echo  BindTTY log: %BINDTTY_DIAGNOSTIC_LOG_FILE%
 echo ============================================================
 exit /b %EXITCODE%

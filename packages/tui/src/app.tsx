@@ -1,6 +1,7 @@
-import { computed, createApp, type BindTTYApp } from 'bindtty';
+import { computed, createApp, type AppError, type BindTTYApp } from 'bindtty';
 import {
   createNodeTerminal,
+  type DiagnosticLogger,
   type TerminalKeyEvent,
   type TerminalViewport,
 } from '@bindtty/terminal';
@@ -14,6 +15,8 @@ export interface MountedTuiApp {
 
 export interface MountAppOptions {
   onExitRequest?(): void;
+  onError?(error: AppError): void;
+  diagnostic?: DiagnosticLogger;
 }
 
 export function isCtrlC(event: TerminalKeyEvent): boolean {
@@ -21,6 +24,7 @@ export function isCtrlC(event: TerminalKeyEvent): boolean {
 }
 
 export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedTuiApp {
+  const diagnostic = options.diagnostic;
   const terminal = createNodeTerminal({
     stdout: process.stdout,
     stdin: process.stdin,
@@ -33,7 +37,19 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
 
   function syncLayout(viewport: TerminalViewport = terminal.viewport): void {
     vm.viewportWidth.set(viewport.width);
-    vm.listHeight.set(Math.max(3, viewport.height - CHROME_ROWS - vm.inputViewportRows.get()));
+    const inputRows = vm.inputViewportRows.get();
+    const listHeight = Math.max(3, viewport.height - CHROME_ROWS - inputRows);
+    vm.listHeight.set(listHeight);
+    if (diagnostic?.enabled) {
+      diagnostic.log('layout-viewport-sync', {
+        width: viewport.width,
+        height: viewport.height,
+        chromeRows: CHROME_ROWS,
+        inputRows,
+        listHeight,
+        page: vm.page.get().kind,
+      });
+    }
   }
 
   const originalSetInputViewportRows = vm.setInputViewportRows.bind(vm);
@@ -43,7 +59,10 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
   };
 
   const unsubscribeExitKey = terminal.onKey((event) => {
-    if (isCtrlC(event)) options.onExitRequest?.();
+    if (isCtrlC(event)) {
+      diagnostic?.log('exit-key');
+      options.onExitRequest?.();
+    }
   });
 
   const showHubSelect = computed(() => {
@@ -68,14 +87,35 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     {
       terminal,
       onViewportChange: syncLayout,
+      onError(error) {
+        diagnostic?.error('bindtty-error', error.error, {
+          phase: error.phase,
+          width: error.viewport.width,
+          height: error.viewport.height,
+          intentKind: error.intent.kind,
+          intentReasons: error.intent.reasons,
+          revision: error.revision,
+          schedulerState: error.schedulerState,
+          recoverable: error.recoverable,
+        });
+        options.onError?.(error);
+      },
     },
   );
 
+  diagnostic?.log('mount-start', {
+    width: terminal.viewport.width,
+    height: terminal.viewport.height,
+  });
   app.start();
   const unsubscribeInputFocus = mountAutofocus(vm, app);
 
   return {
     dispose(): void {
+      diagnostic?.log('mount-dispose', {
+        width: terminal.viewport.width,
+        height: terminal.viewport.height,
+      });
       unsubscribeInputFocus();
       unsubscribeExitKey();
       app.dispose();

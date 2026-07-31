@@ -41,10 +41,7 @@ export function MessageList(props: { vm: ViewModel }) {
             <vstack gap={0}>
               <for
                 each={vm.visibleMessages}
-                key={(item, index) => {
-                  const message = item as TuiMessage;
-                  return `${message.id ?? index}:${message.role}:${message.text}`;
-                }}
+                key={(item) => (item as TuiMessage).id}
               >
                 {(item) => {
                   const message = item as TuiMessage;

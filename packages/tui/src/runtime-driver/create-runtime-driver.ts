@@ -12,6 +12,8 @@ import {
   type RuntimeSnapshot,
   type SessionFactory,
 } from '@dayloom/core';
+import type { DiagnosticLogger } from '@bindtty/terminal';
+import { summarizeDriverState, summarizeRuntimeEvent } from '../diagnostics.js';
 import { projectHubActions } from '../hub/actions.js';
 import type { HubMode, TuiDriverState, TuiHubAction, TuiRecentResult } from '../types.js';
 
@@ -29,11 +31,13 @@ export interface CreateRuntimeDriverOptions {
   worldRoot: string;
   runtime?: DayloomRuntime;
   sessionFactory?: SessionFactory;
+  diagnostic?: DiagnosticLogger;
 }
 
 let nextLocalMessageId = 1;
 
 export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): Promise<TuiRuntimeDriver> {
+  const diagnostic = options.diagnostic;
   const archive = options.runtime ? null : createArchiveRepository({ worldRoot: options.worldRoot });
   const runtime = options.runtime ?? await createDayloomRuntime({
     worldRoot: options.worldRoot,
@@ -61,9 +65,24 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
     ? { kind: 'session', sessionId: activeSessionId, sessionKind: snapshot.session.kind }
     : { kind: 'hub', mode, busy: null };
 
+  diagnostic?.log('driver-created', {
+    worldRoot: options.worldRoot,
+    suppliedRuntime: options.runtime !== undefined,
+    sessionId: snapshot.session.id,
+    sessionKind: snapshot.session.kind,
+    sessionStatus: snapshot.session.status,
+    page: page.kind,
+  });
+
   const unsubscribeRuntime = runtime.subscribe((event) => {
     applyRuntimeEvent(event);
     refreshFromRuntime();
+    if (diagnostic?.enabled) {
+      diagnostic.log('runtime-event', {
+        ...summarizeRuntimeEvent(event),
+        ...summarizeDriverState(getState()),
+      });
+    }
     emit();
   });
 
@@ -84,6 +103,7 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
     },
     async runHubAction(actionId) {
       if (disposed) return 'exit';
+      diagnostic?.log('hub-action', { actionId });
       const action = getState().hubActions.find((candidate) => candidate.id === actionId);
       if (!action) return 'continue';
       if (action.kind === 'local') {
@@ -103,10 +123,20 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
       emit();
       try {
         const result = await runtime.executeCommand({ command: action.command });
+        diagnostic?.log('hub-action-result', {
+          actionId,
+          command: action.command,
+          ok: result.ok,
+          errorCode: result.error?.code,
+        });
         if (!result.ok && recent?.kind !== 'failed') {
           recent = { kind: 'failed', label: '操作失败', detail: result.error?.message ?? null };
         }
       } catch (error) {
+        diagnostic?.error('hub-action-error', error, {
+          actionId,
+          command: action.command,
+        });
         recent = {
           kind: 'failed',
           label: '操作失败',
@@ -123,11 +153,21 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
       if (disposed) return;
       const trimmed = text.trim();
       if (trimmed === '') return;
+      diagnostic?.log('session-input-submit', {
+        sessionId: snapshot.session.id,
+        textLength: trimmed.length,
+        slashCommand: trimmed.startsWith('/'),
+      });
       if (trimmed.startsWith('/')) {
         await handleSlashCommand(trimmed);
         return;
       }
       const result = await runtime.sendInput({ text: trimmed });
+      diagnostic?.log('session-input-result', {
+        sessionId: snapshot.session.id,
+        ok: result.ok,
+        errorCode: result.error?.code,
+      });
       if (!result.ok) {
         appendLocalSessionMessage('error', result.error?.message ?? 'Input failed.');
       }
@@ -155,11 +195,13 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
         return;
       }
       disposed = true;
+      diagnostic?.log('driver-dispose-begin', summarizeDriverState(getState()));
       unsubscribeRuntime();
       listeners.clear();
       loading = null;
       disposePromise = runtime.dispose();
       await disposePromise;
+      diagnostic?.log('driver-dispose-end');
     },
   };
 
@@ -303,14 +345,21 @@ export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): 
   function appendLocalSessionMessage(role: RuntimeMessage['role'] | 'warn', text: string): void {
     const sessionId = snapshot.session.id;
     if (!sessionId) return;
+    const messageId = `local:${nextLocalMessageId++}`;
     messages.applySessionEvent(sessionId, {
       type: 'message-added',
       message: {
-        id: `local:${nextLocalMessageId++}`,
+        id: messageId,
         role: role === 'warn' ? 'system' : role,
         text,
         status: role === 'error' ? 'error' : 'complete',
       },
+    });
+    diagnostic?.log('local-message-added', {
+      sessionId,
+      messageId,
+      role,
+      textLength: text.length,
     });
   }
 

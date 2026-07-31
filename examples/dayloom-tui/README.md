@@ -58,3 +58,10 @@ PROMPTPILE_BIN=/optional/path/to/promptpile
 ```
 
 详细交互说明见 [`packages/tui/README.md`](../../packages/tui/README.md)。
+
+## Resize diagnostics
+
+Run `verify-resize.bat` for a diagnostic resize session. Each run prints and
+writes two correlated JSONL files under `.runtime/diagnostics`: one for
+Dayloom runtime/streaming state and one for BindTTY terminal/frame state.
+Message bodies and user-entered text are not recorded.
