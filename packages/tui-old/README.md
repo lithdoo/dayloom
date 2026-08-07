@@ -15,13 +15,4 @@ npm test -w @dayloom/tui-old
 dayloom-tui-old ./world --no-auto-start
 ```
 
-上层 monorepo 计划见仓库根目录 [TODO.md](../../TODO.md)。
-
-## 开放体验 TODO
-
-- 已完成：[自动聚焦输入区](../../TODO-autofocus-input.md)
-- 已完成：[Confirm 获焦 chrome](../../TODO-confirm-focus-chrome.md)
-- 已完成：[消息区标题获焦](../../TODO-message-list-focus.md)
-- 已完成：[历史消息显示用户输入](../../TODO-user-message-history.md)
-- 待做小改：[手动上滚时勿被 stickToBottom 拽回](../../TODO-stick-to-bottom-scroll.md)
-- 待做大改：[Hub / Session 双页架构](../../TODO-hub-session-pages.md)
+旧拆包与体验改造计划保留在 Git 历史中。该包已经废弃，不再继续开放体验改造；正式设计以仓库根目录的 `AI_SESSION_REACT_DESIGN.md` 和 `@dayloom/tui` 文档为准。

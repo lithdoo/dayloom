@@ -1,7 +1,7 @@
 # @dayloom/tui-old 实施 TODO
 
 > **状态（2026-07）**：**Phase A–D 完成**（bindtty 基线 + SessionIO + 流式 throttle + i18n/错误边界/stderr 回归）。全流程 AI smoke 见 §11.1 手工清单。
-> 上层三包拆分计划见仓库根目录 [TODO.md](../../TODO.md)；`@dayloom/core-old` 与 `@dayloom/cli` **不受影响**。
+> 旧三包拆分计划保留在 Git 历史中；`@dayloom/core-old` 与 `@dayloom/cli` **不受影响**。
 
 ---
 
@@ -11,19 +11,19 @@
 
 已完成的历史焦点问题：
 
-- `beginInput` / `beginConfirm` 后自动聚焦 Textarea / Confirm（见根目录 `TODO-autofocus-input.md`）
-- MessageList 获焦改为标题反馈，正文不再整区反色（见根目录 `TODO-message-list-focus.md`）
-- Confirm 获焦使用标题 chrome，并保留 Y/N/Enter 行为（见根目录 `TODO-confirm-focus-chrome.md`）
-- 用户提交后历史显示 `[YOU]`（见根目录 `TODO-user-message-history.md`）
+- `beginInput` / `beginConfirm` 后自动聚焦 Textarea / Confirm
+- MessageList 获焦改为标题反馈，正文不再整区反色
+- Confirm 获焦使用标题 chrome，并保留 Y/N/Enter 行为
+- 用户提交后历史显示 `[YOU]`
 - Ctrl+C / Kitty ctrl+c 路径已由 `isCtrlC` + `main.ts` SIGINT 处理
 - 多行提交文案已统一为 Ctrl+Enter / macOS Meta+Enter，不再出现 Ctrl+Z 误导
 
-仍需跟踪的体验项：
+废弃前仍存在的体验限制：
 
 - 系统终端光标被 `hideCursor: true` 关闭；反色 caret 由 **`@bindtty/widgets` `Textarea`** 自绘，dayloom 不再维护 `components/textarea/`
 - `onKey: computed(() => disabled ? false : handler)` 在 disabled 时会把 handler 设为 `false`，导致 bindtty **不注册焦点项**——应用函数包装并内部判断 `disabled`
-- 手动上滚时是否应暂停 stick-to-bottom（见根目录 `TODO-stick-to-bottom-scroll.md`）
-- Hub / Session 双页架构是大改动，规格另跟踪（见根目录 `TODO-hub-session-pages.md`）
+- 手动上滚时不会暂停 stick-to-bottom；该包不再继续改造
+- Hub / Session 等正式交互设计由 `@dayloom/tui` 承接
 
 ---
 
@@ -644,7 +644,7 @@ npx dayloom-tui-old ./world
 - [x] `runGameShell` 驱动全流程；tui 无 World 读写、phase 分支、AI import
 - [x] play `/revise` 经 `SessionExit` / `handleShellCommand`，非 TuiSessionIO 拦截（`shell-recovery.test.js`）
 - [x] 自动聚焦可进入 `@bindtty/widgets` Textarea / Confirm；Tab / Shift+Tab 手动遍历仍可用；caret / 软折行 / ScrollView `focusStyle` / CJK wrap 依赖 bindtty `0.1.0-alpha.10`
-- [x] Shift+Tab 与连续 shell 命令后的焦点恢复已由 PTY E2E 覆盖（见 `TODO-autofocus-input.md`）
+- [x] Shift+Tab 与连续 shell 命令后的焦点恢复已由 PTY E2E 覆盖
 - [x] code review 通过硬约束（见 §1.2）
 
 ---
@@ -674,7 +674,6 @@ npx dayloom-tui-old ./world
 | `bindtty/packages/widgets/TEXTAREA.md` | **Textarea** widget 规格与按键矩阵 |
 | `bindtty/packages/widgets/src/textarea/` | Textarea 实现（layout / edit / render） |
 | `examples/dayloom-tui-old/README.md` | 示例启动方式 |
-| 仓库根 `TODO.md` | Phase 4–6 总览 |
 
 ---
 
