@@ -1,67 +1,19 @@
-# dayloom TUI example
+# Dayloom TUI example
 
-通过 `@dayloom/tui` 的 Hub / Session 全屏界面使用正式 `@dayloom/core` Runtime。
+标准 TUI 直接使用 `@dayloom/core2`，需要：
 
-## Prerequisites
-
-- Node.js 18+
-- 标准入口构建 `@dayloom/core` 与 `@dayloom/tui`
-- 浏览 Hub 不需要 API key；进入自然语言 Session 需要 `DEEPSEEK_API_KEY`
-- Windows 建议使用 Windows Terminal
-
-可将 `.env.example` 复制为 `.env`：
-
-```text
-DEEPSEEK_API_KEY=sk-...
-# DAYLOOM_LLM_MODEL=deepseek-chat
-# DAYLOOM_LLM_BASE_URL=https://api.deepseek.com/v1
-```
-
-## Standard TUI
-
-打开新 Runtime 使用的独立 `world2` 目录：
+- Node.js 20+
+- 一个有效、处于 `planned` phase 的 Archive V2 World
+- 一个 Promptpile caller LLM TOML config
 
 ```bash
-./open-world.sh
+./open-world.sh /absolute/path/to/world /absolute/path/to/llm.toml
 ```
 
 ```bat
-open-world.bat
+open-world.bat C:\path\to\world C:\path\to\llm.toml
 ```
 
-该入口构建并启动 `packages/tui`。Hub 可直接浏览；发送自然语言消息时才会调用远端模型。
+也可以省略第二个参数并设置 `DAYLOOM_LLM_CONFIG`。脚本会构建 `archive-protocol`、`core2` 和 `tui` 后启动界面。
 
-## Legacy TUI
-
-旧 `core-old/tui-old` 实现仍可用于迁移验证：
-
-```bash
-./open-world-old.sh
-```
-
-```bat
-open-world-old.bat
-```
-
-`run-quick.*` 和 `run-tui.*` 同样保留为 legacy 测试入口，不再承接新功能。
-
-## Configuration
-
-标准 TUI 支持以下可选环境变量：
-
-```text
-DAYLOOM_LLM_API_NAME=deepseek
-DAYLOOM_LLM_MODEL=deepseek-chat
-DAYLOOM_LLM_BASE_URL=https://api.deepseek.com/v1
-DAYLOOM_LLM_API_KEY_ENV=DEEPSEEK_API_KEY
-PROMPTPILE_BIN=/optional/path/to/promptpile
-```
-
-详细交互说明见 [`packages/tui/README.md`](../../packages/tui/README.md)。
-
-## Resize diagnostics
-
-Run `verify-resize.bat` for a diagnostic resize session. Each run prints and
-writes two correlated JSONL files under `.runtime/diagnostics`: one for
-Dayloom runtime/streaming state and one for BindTTY terminal/frame state.
-Message bodies and user-entered text are not recorded.
+旧 `core-old/tui-old` 示例仍保留在 `open-world-old.*`、`run-quick.*` 和 `run-tui.*`，仅用于迁移验证。

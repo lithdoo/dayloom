@@ -1,17 +1,17 @@
-import type { RuntimeMessage } from '@dayloom/core';
+import type { TuiMessage as DriverMessage } from './types.js';
 
-export type TuiMessageRole = RuntimeMessage['role'] | 'warn';
+export type TuiMessageRole = DriverMessage['role'] | 'error' | 'warn';
 
-export interface TuiMessage {
+export interface TuiDisplayMessage {
   id: string;
   role: TuiMessageRole;
   text: string;
 }
 
-export function runtimeMessageToTui(message: RuntimeMessage): TuiMessage {
+export function driverMessageToTui(message: DriverMessage): TuiDisplayMessage {
   return {
     id: message.id,
-    role: message.role,
+    role: message.status === 'error' && message.role === 'system' ? 'error' : message.role,
     text: message.text,
   };
 }
@@ -20,7 +20,7 @@ export function createLocalMessage(
   role: TuiMessageRole,
   text: string,
   id: string,
-): TuiMessage {
+): TuiDisplayMessage {
   return {
     id,
     role,

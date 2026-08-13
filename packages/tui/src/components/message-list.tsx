@@ -2,7 +2,7 @@ import { computed, createSignal } from 'bindtty';
 import type { InteractionNodeFocusChangeEvent } from '@bindtty/interaction';
 import { VScrollView } from '@bindtty/widgets';
 import type { ViewModel } from '../view-model.js';
-import type { TuiMessage } from '../message-history.js';
+import type { TuiDisplayMessage } from '../message-history.js';
 import { roleColor, roleLabel } from '../theme.js';
 import { MESSAGE_SCROLL_ID } from './constants.js';
 
@@ -41,10 +41,10 @@ export function MessageList(props: { vm: ViewModel }) {
             <vstack gap={0}>
               <for
                 each={vm.visibleMessages}
-                key={(item) => (item as TuiMessage).id}
+                key={(item) => (item as TuiDisplayMessage).id}
               >
                 {(item) => {
-                  const message = item as TuiMessage;
+                  const message = item as TuiDisplayMessage;
                   return (
                     <hstack gap={0}>
                       <text

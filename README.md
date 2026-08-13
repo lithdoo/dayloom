@@ -24,7 +24,7 @@ npm run build
 npm test
 ```
 
-> `@dayloom/cli` 已废弃，仅为迁移验证保留。新使用方式请采用 `@dayloom/tui`（`dayloom-tui`）与 `@dayloom/core` Runtime。
+> `@dayloom/cli` 已废弃，仅为迁移验证保留。新使用方式请采用 `@dayloom/tui`（`dayloom-tui`）与 `@dayloom/core2` application API。
 
 旧 CLI 的交互命令通过 `createCliSessionIO()` 注入 `SessionIO`。根目录 `npm install` 后仍可用 `npx dayloom` 进行兼容性验证。
 

@@ -1,2 +1,6 @@
-export * from './create-runtime-driver.js';
+export {
+  createRuntimeDriver,
+  type CreateRuntimeDriverOptions,
+  type TuiRuntimeDriver,
+} from './create-runtime-driver.js';
 

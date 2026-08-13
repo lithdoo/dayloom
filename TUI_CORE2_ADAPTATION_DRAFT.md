@@ -1,6 +1,6 @@
 # Dayloom TUI → Core2 适配实现冻结
 
-> Status: Implementation Freeze / 可直接实施  
+> Status: Implemented / 已按冻结契约落地
 > Date: 2026-08-13  
 > Target package: `@dayloom/tui`  
 > Backend target: `@dayloom/core2`

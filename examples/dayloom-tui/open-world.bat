@@ -1,28 +1,21 @@
 @echo off
-setlocal EnableDelayedExpansion
-cd /d "%~dp0"
-
-if exist ".env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
-    if not "%%a"=="" if not "%%b"=="" (
-      if /i "%%a"=="DEEPSEEK_API_KEY" set "DEEPSEEK_API_KEY=%%b"
-      if /i "%%a"=="DAYLOOM_LLM_API_NAME" set "DAYLOOM_LLM_API_NAME=%%b"
-      if /i "%%a"=="DAYLOOM_LLM_MODEL" set "DAYLOOM_LLM_MODEL=%%b"
-      if /i "%%a"=="DAYLOOM_LLM_BASE_URL" set "DAYLOOM_LLM_BASE_URL=%%b"
-      if /i "%%a"=="DAYLOOM_LLM_API_KEY_ENV" set "DAYLOOM_LLM_API_KEY_ENV=%%b"
-      if /i "%%a"=="PROMPTPILE_BIN" set "PROMPTPILE_BIN=%%b"
-    )
-  )
-)
-
-set "WORLD_DIR=%~dp0world2"
+setlocal
+set "SCRIPT_DIR=%~dp0"
 set "DAY_LOOM_DIR=%~dp0..\.."
+set "WORLD_DIR=%~1"
+set "LLM_CONFIG=%~2"
+if not defined LLM_CONFIG set "LLM_CONFIG=%DAYLOOM_LLM_CONFIG%"
 
-call "%~dp0scripts\ensure-dayloom.bat"
+if not defined WORLD_DIR goto usage
+if not defined LLM_CONFIG goto usage
+
+cd /d "%DAY_LOOM_DIR%"
+call npm run build -w @dayloom/archive-protocol -w @dayloom/core2 -w @dayloom/tui
 if errorlevel 1 exit /b 1
-if not exist "%WORLD_DIR%" mkdir "%WORLD_DIR%"
-
-echo Opening dayloom-tui on: %WORLD_DIR%
-echo.
-call node "%DAY_LOOM_DIR%\packages\tui\dist\main.js" "%WORLD_DIR%"
+call node packages\tui\dist\main.js "%WORLD_DIR%" --llm-config "%LLM_CONFIG%"
 exit /b %errorlevel%
+
+:usage
+echo Usage: open-world.bat ^<archive-v2-world^> ^<llm-config^>
+echo The config may instead be supplied through DAYLOOM_LLM_CONFIG.
+exit /b 1
