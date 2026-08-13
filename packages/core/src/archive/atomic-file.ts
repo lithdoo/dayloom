@@ -18,6 +18,18 @@ export async function writeAtomicText(
   await filesystem.syncDirectory(path.dirname(target));
 }
 
+/** 写入二进制临时文件、flush、原子 rename 并同步父目录。 */
+export async function writeAtomicBytes(
+  filesystem: CoreFileSystem,
+  target: string,
+  temporary: string,
+  content: Uint8Array,
+): Promise<void> {
+  await filesystem.writeBytes(temporary, content, { overwrite: true, flush: true });
+  await filesystem.rename(temporary, target);
+  await filesystem.syncDirectory(path.dirname(target));
+}
+
 /** 写入 JSON 文件并可选 flush。 */
 export async function writeJson(
   filesystem: CoreFileSystem,

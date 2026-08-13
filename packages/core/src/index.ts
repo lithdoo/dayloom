@@ -1,4 +1,5 @@
 export * from './archive';
+export * from './archive-v2';
 export * from './domain/availability';
 export * from './domain/command-registry';
 export * from './domain/commands';

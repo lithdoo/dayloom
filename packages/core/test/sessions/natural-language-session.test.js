@@ -97,7 +97,7 @@ test('Archive Session read model rejects a stale snapshot revision', async (t) =
 
 test('Promptpile conversation client consumes provider stream events', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-core-promptpile-bin-'));
-  const bin = path.join(root, 'fake-promptpile');
+  const bin = path.join(root, process.platform === 'win32' ? 'fake-promptpile.js' : 'fake-promptpile');
   fs.writeFileSync(
     bin,
     [

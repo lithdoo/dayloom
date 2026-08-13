@@ -2,7 +2,7 @@
 
 > **类型**：package  
 > **状态**：implemented  
-> **最后核对**：2026-07  
+> **最后核对**：2026-08
 > **代码入口**：`packages/core/src/index.ts`
 
 ## 1. 范围
@@ -24,18 +24,18 @@ Runtime 必须异步创建，因为首次暴露 snapshot 前需要读取、校�
 
 ```ts
 import {
-  createArchiveRepository,
-  createArchiveSessionWorldReadModel,
+  createArchiveV2Repository,
+  createArchiveV2SessionWorldReadModel,
   createDayloomRuntime,
   createNaturalLanguageSessionFactory,
 } from '@dayloom/core';
 
-const archive = createArchiveRepository({ worldRoot });
+const archive = createArchiveV2Repository({ worldRoot });
 const runtime = await createDayloomRuntime({
   worldRoot,
-  archiveRepository: archive,
+  archiveV2Repository: archive,
   sessionFactory: createNaturalLanguageSessionFactory({
-    readModel: createArchiveSessionWorldReadModel(archive),
+    readModel: createArchiveV2SessionWorldReadModel(archive),
     client,
   }),
 });
@@ -69,7 +69,7 @@ interface DayloomRuntime {
 | Domain | phases、commands、availability、state machine、transitions |
 | Runtime | factory、snapshot/event/result 类型 |
 | Sessions | SessionManager、MessageStore、SessionFactory、natural-language/fake/handler Session |
-| Archive | repository、transaction、reader、inspection、recovery、GC |
+| Archive V2 | document capabilities、staging、prepare、publication、inspection、recovery、GC |
 | Operations | RuntimeOperations 和业务 operations |
 | Schemas | archive/submission/common 类型与 validators |
 | Infrastructure | filesystem、clock、id generator、logger |

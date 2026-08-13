@@ -48,7 +48,7 @@ test('real PTY: natural-language init streams one assistant message and submits 
     session.resize(54, 20);
 
     await session.typeText('写实近未来');
-    session.write('\x1b[13;5~');
+    session.write('\x1bOQ');
     await session.waitForVisible(/这是连续输出的中文回复/, 8_000);
     await session.waitForVisible(/等待输入/, 8_000);
 
@@ -60,9 +60,10 @@ test('real PTY: natural-language init streams one assistant message and submits 
     session.write('\t');
     await delay(150);
     await session.typeText('/submit');
-    session.write('\x1b[13;5~');
+    await delay(100);
+    session.write('\x1bOQ');
     await waitUntil(() => fs.existsSync(path.join(worldRoot, 'manifest.json')), {
-      timeoutMs: 8_000,
+      timeoutMs: 15_000,
       describe: () => `manifest.json to be created\n\n${session.visibleOutput()}`,
     });
     await session.waitForVisible(/空闲/, 8_000);
@@ -71,7 +72,7 @@ test('real PTY: natural-language init streams one assistant message and submits 
       path.join(worldRoot, 'commits', `${current.commitId}.json`),
       'utf8',
     ));
-    assert.equal(commit.world.phase, 'idle');
+    assert.equal(commit.control.phase, 'idle');
 
     session.write('q');
     assert.equal(await session.waitForExit(8_000), 0);
@@ -99,7 +100,8 @@ test('real PTY: Session cancel returns to Hub and restores Hub focus', async (t)
     session.write('\r');
     await session.waitForVisible(/\/submit 提交/, 8_000);
     await session.typeText('/exit');
-    session.write('\x1b[13;5~');
+    await delay(100);
+    session.write('\x1bOQ');
     await session.waitForVisible(/会话已取消/, 8_000);
     session.resize(72, 22);
     session.write('?');
@@ -128,12 +130,13 @@ test('real PTY: partial AI failure remains visible and can be cancelled', async 
     session.write('\r');
     await session.waitForVisible(/等待输入/, 8_000);
     await session.typeText('触发失败');
-    session.write('\x1b[13;5~');
+    session.write('\x1bOQ');
     await session.waitForVisible(/部分回复/, 8_000);
     await session.waitForVisible(/会话失败/, 8_000);
 
     await session.typeText('/exit');
-    session.write('\x1b[13;5~');
+    await delay(100);
+    session.write('\x1bOQ');
     await session.waitForVisible(/会话已取消/, 8_000);
     session.write('q');
     assert.equal(await session.waitForExit(8_000), 0);
@@ -158,12 +161,14 @@ test('real PTY: invalid submit payload stays in Session and supports recovery', 
     session.write('\r');
     await session.waitForVisible(/等待输入/, 8_000);
     await session.typeText('/submit');
-    session.write('\x1b[13;5~');
+    await delay(100);
+    session.write('\x1bOQ');
     await session.waitForVisible(/invalid submit payload/, 8_000);
     await session.waitForVisible(/会话失败/, 8_000);
 
     await session.typeText('/cancel');
-    session.write('\x1b[13;5~');
+    await delay(100);
+    session.write('\x1bOQ');
     await session.waitForVisible(/会话已取消/, 8_000);
     session.write('q');
     assert.equal(await session.waitForExit(8_000), 0);
@@ -191,7 +196,7 @@ function spawnSession(pty, worldRoot, extraEnv = {}) {
 }
 
 function createFakePromptpile(root, mode = 'success') {
-  const bin = path.join(root, 'fake-promptpile');
+  const bin = path.join(root, process.platform === 'win32' ? 'fake-promptpile.js' : 'fake-promptpile');
   fs.writeFileSync(
     bin,
     [

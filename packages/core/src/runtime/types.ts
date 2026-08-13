@@ -1,4 +1,5 @@
 import type { ArchiveRepository } from '../archive';
+import type { ArchiveV2Repository } from '../archive-v2';
 import type { StateMachine } from '../domain/state-machine';
 import type { RuntimeCommand, SessionKind, WorldSnapshot } from '../types';
 import type { RuntimeClock } from '../infrastructure/clock';
@@ -46,6 +47,8 @@ export interface DayloomRuntimeOptions {
   sessionFactory: SessionFactory;
   operations?: RuntimeOperations;
   archiveRepository?: ArchiveRepository;
+  /** Archive Protocol V2 repository. Providing the legacy repository keeps the compatibility runtime. */
+  archiveV2Repository?: ArchiveV2Repository;
   stateMachine?: StateMachine;
   clock?: RuntimeClock;
   idGenerator?: IdGenerator;

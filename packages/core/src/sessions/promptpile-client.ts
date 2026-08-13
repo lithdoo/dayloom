@@ -225,7 +225,9 @@ function resolvePromptpileSpawn(bin: string | undefined): {
   argvPrefix: string[];
 } {
   if (bin?.trim()) {
-    return { command: bin.trim(), argvPrefix: [] };
+    const command = bin.trim();
+    if (/\.[cm]?js$/i.test(command)) return { command: process.execPath, argvPrefix: [command] };
+    return { command, argvPrefix: [] };
   }
   try {
     const packagePath = require.resolve('promptpile/package.json');

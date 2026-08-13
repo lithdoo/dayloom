@@ -19,24 +19,24 @@ Runtime 必须异步创建，因为首次读取会校验 archive 并恢复中断
 
 ```ts
 import {
-  createArchiveRepository,
-  createArchiveSessionWorldReadModel,
+  createArchiveV2Repository,
+  createArchiveV2SessionWorldReadModel,
   createDayloomRuntime,
   createNaturalLanguageSessionFactory,
 } from '@dayloom/core';
 
-const archive = createArchiveRepository({ worldRoot });
+const archive = createArchiveV2Repository({ worldRoot });
 const runtime = await createDayloomRuntime({
   worldRoot,
-  archiveRepository: archive,
+  archiveV2Repository: archive,
   sessionFactory: createNaturalLanguageSessionFactory({
-    readModel: createArchiveSessionWorldReadModel(archive),
+    readModel: createArchiveV2SessionWorldReadModel(archive),
     client,
   }),
 });
 ```
 
-旧同步 Runtime、可变 `WorldStore` 和 JSON native Session 已删除。正式 world 数据只能通过 `ArchiveRepository` 和 `ArchiveTransaction` 读写。
+默认 Runtime 使用 Archive Protocol V2。正式 world 数据只能通过 `ArchiveV2Repository` 的文档 capability 读写；Session 与 TUI 不扫描 object store 或 staging internals。`archiveRepository` 仅保留为显式 legacy compatibility 注入点。
 
 ## 文档
 

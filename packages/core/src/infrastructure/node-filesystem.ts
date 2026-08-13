@@ -17,11 +17,26 @@ export class NodeCoreFileSystem implements CoreFileSystem {
     return fs.readFile(target, 'utf8');
   }
 
+  async readBytes(target: string): Promise<Uint8Array> {
+    return fs.readFile(target);
+  }
+
   async writeText(target: string, content: string, options: FileWriteOptions = {}): Promise<void> {
     await fs.mkdir(path.dirname(target), { recursive: true });
     const handle = await fs.open(target, options.overwrite === false ? 'wx' : 'w');
     try {
       await handle.writeFile(content, 'utf8');
+      if (options.flush) await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async writeBytes(target: string, content: Uint8Array, options: FileWriteOptions = {}): Promise<void> {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const handle = await fs.open(target, options.overwrite === false ? 'wx' : 'w');
+    try {
+      await handle.writeFile(content);
       if (options.flush) await handle.sync();
     } finally {
       await handle.close();
@@ -51,9 +66,22 @@ export class NodeCoreFileSystem implements CoreFileSystem {
   }
 
   async syncDirectory(target: string): Promise<void> {
-    const handle = await fs.open(target, 'r');
+    let handle;
     try {
-      await handle.sync();
+      handle = await fs.open(target, 'r');
+    } catch (error) {
+      if (process.platform === 'win32' && isUnsupportedDirectorySync(error)) return;
+      throw error;
+    }
+    try {
+      try {
+        await handle.sync();
+      } catch (error) {
+        // Windows does not provide portable directory fsync semantics.  Only
+        // suppress the errors produced for a directory handle; file fsync
+        // failures still propagate from writeText.
+        if (!(process.platform === 'win32' && isUnsupportedDirectorySync(error))) throw error;
+      }
     } finally {
       await handle.close();
     }
@@ -67,4 +95,10 @@ export function createNodeCoreFileSystem(): CoreFileSystem {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function isUnsupportedDirectorySync(error: unknown): boolean {
+  return error instanceof Error
+    && 'code' in error
+    && ['EPERM', 'EACCES', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '');
 }

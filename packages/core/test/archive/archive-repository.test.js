@@ -592,6 +592,7 @@ test('garbage collection removes only orphan objects, stale terminal workspaces,
     fixture.writeJson('current.json.tmp-op_stale', { stale: true });
 
     const before = await repository.readCurrent();
+    await new Promise((resolve) => setTimeout(resolve, 2));
     const dryRun = await repository.collectGarbage({ operationRetentionMs: 0 });
     assert.equal(dryRun.deleted.length, 0);
     assert.equal(dryRun.candidates.includes('commits/commit_orphan.json'), true);

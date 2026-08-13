@@ -15,13 +15,13 @@ export async function collectArchiveGarbage(
   const inspection = await inspectArchive(filesystem, paths);
   const retentionMs = options.operationRetentionMs ?? 7 * 24 * 60 * 60 * 1_000;
   const candidates = [
-    ...inspection.orphanCommits.map((id) => path.relative(paths.root, paths.commit(id))),
-    ...inspection.orphanCanonRevisions.map((id) => path.relative(paths.root, paths.canonRevision(id))),
+    ...inspection.orphanCommits.map((id) => archiveRelative(paths.root, paths.commit(id))),
+    ...inspection.orphanCanonRevisions.map((id) => archiveRelative(paths.root, paths.canonRevision(id))),
   ];
   for (const day of await filesystem.listDirectory(paths.days())) {
     for (const revision of inspection.orphanDayRevisions) {
       const target = paths.dayRevision(day, revision);
-      if (await filesystem.exists(target)) candidates.push(path.relative(paths.root, target));
+      if (await filesystem.exists(target)) candidates.push(archiveRelative(paths.root, target));
     }
   }
   for (const entry of inspection.operations) {
@@ -30,7 +30,7 @@ export async function collectArchiveGarbage(
     const age = clock.now().getTime() - Date.parse(operation.updatedAt);
     const workspace = paths.workspace(operation.id);
     if (Number.isFinite(age) && age >= retentionMs && await filesystem.exists(workspace)) {
-      candidates.push(path.relative(paths.root, workspace));
+      candidates.push(archiveRelative(paths.root, workspace));
     }
   }
   for (const entry of await filesystem.listDirectory(paths.root)) {
@@ -47,4 +47,8 @@ export async function collectArchiveGarbage(
     }
   }
   return { candidates: uniqueCandidates, deleted };
+}
+
+function archiveRelative(root: string, target: string): string {
+  return path.relative(root, target).split(path.sep).join('/');
 }

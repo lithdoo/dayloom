@@ -197,7 +197,7 @@ test('every Archive Operation failure leaves current at its previous publication
         injected.failNext(
           'rename',
           new Error(`${scenario.name} current rename failed`),
-          (_source, target) => target.endsWith('/current.json'),
+          (_source, target) => path.basename(target) === 'current.json',
         );
 
         const result = await runtime.executeCommand({ command: scenario.command });

@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc",
-    "test": "npm run build && npm run test:types && node --test test/*.test.js test/**/*.test.js",
+    "test": "npm run build && npm run guard && npm run test:types && node --test test/*.test.js test/**/*.test.js",
+    "guard": "node scripts/check-archive-v2-architecture.mjs",
     "test:types": "tsc -p test/tsconfig.types.json"
   },
   "keywords": [
@@ -29,6 +30,7 @@
     "package.json"
   ],
   "dependencies": {
+    "@dayloom/archive-protocol": "0.0.0",
     "promptpile": "^0.1.0-beta.0"
   },
   "devDependencies": {

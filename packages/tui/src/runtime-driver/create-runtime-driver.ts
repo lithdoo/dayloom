@@ -1,7 +1,7 @@
 import {
   MessageStore,
-  createArchiveRepository,
-  createArchiveSessionWorldReadModel,
+  createArchiveV2Repository,
+  createArchiveV2SessionWorldReadModel,
   createDayloomRuntime,
   createNaturalLanguageSessionFactory,
   createPromptpileConversationClient,
@@ -38,12 +38,12 @@ let nextLocalMessageId = 1;
 
 export async function createRuntimeDriver(options: CreateRuntimeDriverOptions): Promise<TuiRuntimeDriver> {
   const diagnostic = options.diagnostic;
-  const archive = options.runtime ? null : createArchiveRepository({ worldRoot: options.worldRoot });
+  const archive = options.runtime ? null : createArchiveV2Repository({ worldRoot: options.worldRoot });
   const runtime = options.runtime ?? await createDayloomRuntime({
     worldRoot: options.worldRoot,
-    archiveRepository: archive ?? undefined,
+    archiveV2Repository: archive ?? undefined,
     sessionFactory: options.sessionFactory ?? createNaturalLanguageSessionFactory({
-      readModel: createArchiveSessionWorldReadModel(archive!),
+      readModel: createArchiveV2SessionWorldReadModel(archive!),
       client: createPromptpileConversationClient(),
     }),
   });

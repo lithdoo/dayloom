@@ -10,7 +10,9 @@ export interface FileWriteOptions {
 export interface CoreFileSystem {
   exists(path: string): Promise<boolean>;
   readText(path: string): Promise<string>;
+  readBytes(path: string): Promise<Uint8Array>;
   writeText(path: string, content: string, options?: FileWriteOptions): Promise<void>;
+  writeBytes(path: string, content: Uint8Array, options?: FileWriteOptions): Promise<void>;
   makeDirectory(path: string): Promise<void>;
   listDirectory(path: string): Promise<string[]>;
   rename(source: string, target: string): Promise<void>;

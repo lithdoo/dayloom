@@ -2,6 +2,7 @@ export * from './abandon-day';
 export * from './cancel-session';
 export * from './initialize-world';
 export * from './runtime-operations';
+export * from './runtime-operations-v2';
 export * from './settle-day';
 export * from './start-session';
 export * from './submit-planning';
