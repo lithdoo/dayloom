@@ -1,21 +1,96 @@
-# Dayloom Core → Archive Protocol 适配实施冻结草案
+# Dayloom Core → Archive Protocol 单写者适配修复冻结
 
-> 状态：Implemented / Freeze candidate（待 CI 跨平台证据）
+> 状态：**Architecture Correction Freeze / 当前实现需按本文收敛**  
 > 日期：2026-08-13  
 > 实施顺序：**Phase 1B / 3**  
 > 前置：`ARCHIVE_PROTOCOL_PACKAGE_DRAFT.md`  
 > 后续：`PERSISTENT_CONVERSATION_COMPRESSION_DRAFT.md`、`PROMPTPILE_AGENT_RUNTIME_DRAFT.md`  
-> 原则：`@dayloom/core` 直接依赖 `@dayloom/archive-protocol`；本阶段不创建 `@dayloom/archive` runtime package。
+> 边界：`@dayloom/core` 直接依赖 `@dayloom/archive-protocol`；本阶段不创建 `@dayloom/archive` runtime package。
 
-> 实施证据：默认 Runtime 已切换 Archive V2；Session/WorldOperation 一一绑定；prepare/publish/GC/restart/fault/concurrency 测试位于 `packages/core/test/archive-v2/`；Linux/Windows、Node 18/22 的 Protocol/Core/TUI 门禁位于 `.github/workflows/archive-protocol.yml`。旧 V1 仅保留为显式注入的 deprecated compatibility path，不参与默认运行时。
+> **纠偏说明**：上一版 Phase 1B 把 Archive 格式正确、Dayloom gameplay runtime、任意多进程 writer 并发、在线 GC、Session 自动恢复、filesystem power-loss durability 同时纳入 Freeze surface，导致当前实现演化出 `publish.lock + session-claim.lock + operation.lock`、多套 recovery/reconciliation 与大量交叉状态机。该方向技术上可以继续补强，但已经偏离 Dayloom 当前真正需要的 local-first World runtime。本文重新冻结目标：**用更小的状态空间获得更强、更容易证明的闭环。**
+
+---
 
 ## 1. 一句话结论
 
-Phase 1B 只解决一个问题：
+Phase 1B 最终目标不是一个通用并发事务数据库，而是：
 
-> **Dayloom Core 如何从当前强类型 Archive V1 迁移到 Archive Protocol V2，同时继续安全拥有 filesystem transaction/runtime，并把 World semantic data 改造成文档原生模型。**
+```text
+Dayloom Core Phase 1B
+= Archive Protocol V2 的 single-writer local World runtime adapter
+```
 
-最终依赖：
+它必须做到：
+
+```text
+one World
+→ at most one mutation owner
+
+Published World
+= current
+→ immutable commit
+→ immutable tree
+→ immutable blobs
+
+Session
+→ one ArchiveOperation
+→ one staging authority
+
+process crash
+→ Published truth remains uniquely readable
+→ unfinished Session/workspace is preserved as interrupted
+
+mutating maintenance
+→ exclusive / offline with gameplay writer
+```
+
+核心设计原则：
+
+> **不要为不需要存在的并发状态写补丁；通过 ownership contract 让这些状态根本无法产生。**
+
+---
+
+## 2. Phase 1B 真正需要保证什么
+
+### 2.1 强保证
+
+Phase 1B 必须保证：
+
+```text
+Protocol-valid Archive facts
+single writer ownership
+pinned-base staging
+immutable candidate graph
+current sole publication authority
+process-crash consistency
+Session workspace durability/preservation
+safe physical path boundary
+explicit maintenance ownership
+```
+
+### 2.2 本阶段明确不保证
+
+以下全部退出 Phase 1B Formal Freeze：
+
+```text
+multiple concurrent World writers
+online GC delete concurrent with gameplay mutation
+rollback/branch tool concurrent with running Dayloom Runtime
+automatic Session continuation after process crash
+distributed coordination
+network filesystem locking theorem
+general-purpose transaction engine
+power-loss-proof database durability across every filesystem
+arbitrary syscall interleaving recovery
+```
+
+它们不是“以后永远不能做”，而是**不能继续扩大当前 Core adapter 的 correctness surface**。
+
+---
+
+## 3. Package / ownership 边界保持不变
+
+最终依赖仍然是：
 
 ```text
 @dayloom/archive-protocol
@@ -25,215 +100,7 @@ Phase 1B 只解决一个问题：
       @dayloom/tui
 ```
 
-Core 继续拥有：
-
-```text
-filesystem Archive repository
-operation workspace
-staging physical files
-publish lock / OCC
-immutable object publication
-atomic current replacement
-inspect / GC execution
-Dayloom World Profile
-mutation policy
-state machine / Session / gameplay
-```
-
-Core 不再拥有：
-
-```text
-Archive V2 data shapes
-path identity
-canonical tree encoding
-hash semantics
-protocol parsers
-staging data contract
-operation data contract
-cross-object protocol relations
-recovery classification rules
-```
-
-这些必须来自 `@dayloom/archive-protocol` public exports。
-
----
-
-## 2. 本阶段明确不做什么
-
-不实现：
-
-```text
-@dayloom/archive runtime package
-Promptpile persistent Conversation
-promptpile-compress
-promptpile-react
-promptpile-mcp
-branch manager
-rollback CLI
-V1/V2 long-term dual runtime
-```
-
-这些能力即使未来存在，也不能扩大 Phase 1B correctness surface。
-
-特别是：
-
-```text
-Core direct-depends Protocol
-```
-
-是本阶段有意边界，不要求为了理论纯度再拆一层 Archive runtime package。
-
----
-
-## 3. 本阶段的三个核心状态机
-
-Phase 1B 不再把 correctness 分散成多个模糊流程。
-
-真正需要实现并证明的只有三个 durable state machine：
-
-```text
-A. Session / ArchiveOperation
-B. Staging / Prepare
-C. Publication
-```
-
-它们分别拥有唯一 visibility switch：
-
-```text
-staging/index.json
-= staged state visibility switch
-
-operation.json status=open→prepared
-= prepared candidate visibility switch
-
-current.json
-= Published World visibility switch
-```
-
-总原则：
-
-> **每一个 durable state 都有唯一 authority；每一个 state transition 都有唯一 visibility switch；每一个 crash point 都能从 durable facts 唯一分类。**
-
----
-
-## 4. 从当前实现保留什么
-
-当前 Archive V1 已经验证了一套值得继承的 publication theorem：
-
-```text
-isolated workspace
-→ validate
-→ publish lock
-→ expected-base re-check
-→ immutable objects first
-→ FINAL current replacement
-```
-
-Phase 1B 保留：
-
-- `current` 是唯一 Published World authority；
-- operation workspace 隔离；
-- publish lock；
-- optimistic conflict/base check；
-- immutable object first/current last；
-- crash 可以留下 garbage，不可留下 visible partial state；
-- operation metadata 只做 durable workflow/diagnostic authority，不替代 `current`；
-- logs 非权威；
-- inspect/GC 基于引用图；
-- Runtime mutation lock 与跨进程 Archive publish lock 分层。
-
-不重新发明 publication primitive。
-
----
-
-## 5. 从当前实现删除什么
-
-Archive V1 当前把 narrative/domain schema 固化到 Archive：
-
-```text
-CanonDocuments
-canonRevision
-DayRevision
-DayHead
-PlanDocument
-PlayDocument
-PlayEventDocument
-SettlementDocument
-AbandonedDocument
-InitSubmission
-PlanningSubmission
-PlaySubmission
-ReviseSubmission
-activeSession in ArchiveCommit
-start-session commit
-cancel-session commit
-```
-
-Phase 1B 完成后，这些不得继续作为 Archive canonical read/write schema。
-
-Archive 内容模型统一成：
-
-```text
-CurrentPointerV2
-→ ArchiveCommitV2
-→ RootTreeV1
-→ Blob(s)
-```
-
-Core Archive runtime 只理解：
-
-```text
-protocol objects
-+ filesystem transaction
-```
-
-不再让 archive schema 理解人物、场景、计划、事件等 narrative ontology。
-
----
-
-## 6. Truth domains
-
-Phase 1B 冻结三个 truth domain：
-
-```text
-1. Published World
-   = current → commit → tree → blobs
-
-2. Session Workspace
-   = CoreSessionRecord
-   + one ArchiveOperationV2
-   + its staging overlay
-
-3. AI Conversation
-   = Phase 2/3 owned
-```
-
-必须成立：
-
-```text
-AI text
-≠ World fact
-
-Session message
-≠ World fact
-
-staged file alone
-≠ staged fact
-
-prepared target graph alone
-≠ Published World
-
-current atomically advances
-= Published World changed
-```
-
----
-
-## 7. Core 与 Protocol ownership
-
-### 7.1 Protocol owns meaning
-
-Core 必须直接 import public exports：
+### `@dayloom/archive-protocol` owns
 
 ```text
 ArchiveManifestV2
@@ -241,184 +108,572 @@ CurrentPointerV2
 ArchiveCommitV2
 PublishedWorldPhase
 RootTreeV1
-DocumentTreeEntryV1
 StagingManifestV1
 ArchiveOperationV2
 ArchiveOperationErrorV1
-```
-
-以及至少：
-
-```text
-protocol parsers
-path normalization / validation
-portable collision
-content/blob validation
-canonical tree encoder/hash
-applyStagedChangesV1
-buildCandidateTreeV1
-validateCurrentCommitRelationV2
-validateCommitParentRelationV2
-validateOperationStagingRelationV2
-validatePreparedTargetRelationV2
+path/media/blob rules
+canonical tree encoding/hash
+cross-object relation validators
 recovery classification
-archive-relative layout helpers
+archive-relative layout vocabulary
 ```
 
-Core 不得重新手写这些不变量。
-
-### 7.2 Core owns side effects
-
-Core Archive runtime 执行：
+### `@dayloom/core` owns
 
 ```text
-resolve worldRoot
-read/write files
-validate physical object existence
-symlink/path escape prevention
-operation workspace lifecycle
-Session workspace lifecycle
-publish lock lifecycle
-PID/token stale-lock handling
-OCC
-write temp
-flush/fsync
-atomic rename/replace
-repair diagnostic metadata
-GC deletion
+filesystem I/O
+single World mutation ownership
+operation/session workspace
+staging physical files
+immutable object materialization
+atomic mutable metadata replacement
+Dayloom World Profile
+Dayloom mutation policy
+Session/gameplay lifecycle
+inspect / GC execution
 ```
 
-关键边界：
+保持：
 
 ```text
-Protocol tells Core what Archive facts mean.
-Core proves that filesystem mutation realizes those facts safely.
+Protocol = what Archive facts mean
+Core     = how Dayloom safely realizes those facts locally
 ```
+
+不新增 `@dayloom/archive`。
 
 ---
 
-## 8. ID ownership：Command Operation 与 World Operation 必须分离
+## 4. Truth domains
 
-当前 Runtime 的一次 command 会拥有 correlation id；长期 Session 也需要一个 durable ArchiveOperation id。
+Phase 1B 只保留三个 truth domain。
 
-这两个概念不得继续混用。
+### 4.1 Published World
 
-定义：
-
-```text
-RuntimeCommandOperationId
-= 一次 Runtime command/event correlation id
-
-WorldOperationId
-= ArchiveOperationV2.id
-= 一次 durable World mutation lifecycle identity
-```
-
-对于 Session：
+唯一 authority：
 
 ```text
-one Session
-→ exactly one WorldOperationId
+current.json
+  → ArchiveCommitV2
+  → RootTreeV1
+  → Blob(s)
 ```
+
+必须成立：
+
+```text
+current did not advance
+⇒ Published World did not change
+```
+
+以及：
+
+```text
+current references target
+⇒ target graph must be Protocol-valid and complete
+```
+
+### 4.2 Working Session
+
+```text
+CoreSessionRecordV1
++ exactly one ArchiveOperationV2
++ its StagingManifestV1
++ Session workspace
+```
+
+它是工作状态，不是 Published World。
+
+### 4.3 AI Conversation
+
+```text
+Phase 2/3 owned
+```
+
+Phase 1B 只保存当前 Session workspace/checkpoint/transcript 所需数据，不声称可以恢复完整模型上下文。
+
+---
+
+## 5. 最重要的纠偏：One World → One Mutation Owner
+
+当前实现已经出现：
+
+```text
+publish.lock
+session-claim.lock
+operation.lock
+RuntimeMutationLock
+```
+
+这说明系统正在形成 lock graph。
+
+Phase 1B 不继续扩展该模型。
+
+冻结：
+
+```text
+one World
+→ at most one cross-process mutation owner
+```
+
+只读能力不需要 ownership：
+
+```text
+read current
+read documents
+inspect
+dry-run GC
+export
+verify
+```
+
+所有 mutation 必须属于同一个 owner：
+
+```text
+gameplay Session
+stable command
+prepare
+publish
+abort
+GC delete
+future offline migration/repair through Core
+```
+
+因此第一版不存在：
+
+```text
+prepare × concurrent GC delete
+publish × concurrent abort
+Session A × Session B in another writer process
+operation lock × publish lock order
+session lock × operation lock order
+```
+
+这些不是靠更多 lock 解决，而是由 ownership precondition 消除。
+
+---
+
+## 6. Core capability boundary：Reader / Writer
+
+不创建新 package，但 Core 内部必须把能力分成只读和单写者两类。
+
+概念接口：
+
+```ts
+interface ArchiveV2Reader {
+  readCurrent(): Promise<ArchiveV2ReadResult>;
+  readPublishedSnapshot(): Promise<PublishedArchiveSnapshot | null>;
+  inspect(): Promise<ArchiveV2Inspection>;
+  collectGarbageDryRun(): Promise<ArchiveV2GarbageCollectionResult>;
+}
+
+interface ArchiveV2Writer extends ArchiveV2Reader {
+  beginWorldOperation(...): Promise<ArchiveOperationV2>;
+  stageManifest(...): Promise<void>;
+  putDocument(...): Promise<StagingManifestV1>;
+  deleteDocument(...): Promise<StagingManifestV1>;
+  prepare(...): Promise<ArchiveOperationV2>;
+  publish(...): Promise<ArchiveV2ReadResult>;
+  abort(...): Promise<ArchiveOperationV2>;
+  createSession(...): Promise<CoreSessionRecordV1>;
+  updateSessionStatus(...): Promise<CoreSessionRecordV1>;
+  collectGarbageDelete(): Promise<ArchiveV2GarbageCollectionResult>;
+  close(): Promise<void>;
+}
+```
+
+`ArchiveV2Writer` 只能通过：
+
+```text
+acquireWorldMutationOwnership(worldRoot)
+```
+
+获得。
+
+Runtime 生命周期：
+
+```text
+createDayloomRuntime
+↓
+acquire WorldMutationOwnership
+↓
+create ArchiveV2Writer
+↓
+run gameplay
+↓
+dispose Runtime
+↓
+release ownership
+```
+
+这样 mutation serialization 是能力边界，不是每个方法自己猜应该拿哪把锁。
+
+---
+
+## 7. WorldMutationOwnership：唯一跨进程协调 primitive
+
+该 ownership 是 Core runtime contract，不进入 Archive Protocol。
+
+推荐物理结构：
+
+```text
+<world-root>/.locks/
+├── world-write.lock/
+│   └── owner.json
+└── .world-write-<token>.tmp/
+```
+
+owner 最小信息：
+
+```ts
+interface WorldMutationOwnerRecordV1 {
+  schemaVersion: 1;
+  token: string;
+  pid: number;
+  createdAt: string;
+}
+```
+
+### 7.1 Claim
+
+禁止直接创建最终 lock file 再慢慢写 JSON。
+
+采用：
+
+```text
+create unique temp lock directory
+↓
+write + flush owner.json
+↓
+atomic rename temp directory
+→ .locks/world-write.lock
+```
+
+rename 成功即 ownership acquired。
+
+若 final lock 已存在：
+
+```text
+owner process alive
+→ WORLD_BUSY
+```
+
+若 owner 已死亡或 lock 内容损坏：
+
+```text
+atomically rename existing final lock
+→ unique stale quarantine path
+↓
+retry normal claim
+```
+
+关键点：
+
+```text
+never: read stale → remove final path
+```
+
+否则 stale reclaimer 可能删除另一个进程刚创建的新 lock。
+
+### 7.2 Release
+
+```text
+read owner token
+→ require token == this writer token
+→ remove/rename own lock directory
+```
+
+release failure只产生 maintenance diagnostic；不得改变 Published truth。
+
+### 7.3 删除现有多 lock 模型
+
+Phase 1B 修复后不再需要：
+
+```text
+session-claim.lock
+per-operation operation.lock
+publish.lock as an independent gameplay lock domain
+```
+
+如果 legacy V1 仍临时使用 `publish.lock`，它只能留在 legacy compatibility path，不得继续进入 modern V2 architecture。
+
+---
+
+## 8. 进程内 mutation serialization
+
+获得 cross-process writer 后，Writer 内再有一个简单 async mutex：
+
+```text
+WorldMutationGate
+```
+
+所有 mutation API 串行执行。
 
 因此：
 
 ```text
-start Session
-→ create ArchiveOperation(open)
-
-sendInput
-→ mutate SAME ArchiveOperation staging
-
-sendInput
-→ mutate SAME ArchiveOperation staging
-
-/submit
-→ prepare SAME ArchiveOperation
-→ publish SAME ArchiveOperation
-
-/cancel
-→ abort SAME ArchiveOperation
+put/delete/prepare/publish/abort/GC delete
 ```
 
-禁止：
+不会在同一 Writer 中互相交叉。
 
-```text
-start Session → op_A
-submit Session → op_B
-```
+Runtime 原有 `RuntimeMutationLock` 可以继续负责 command-level reentry/busy semantics；Archive Writer gate负责 filesystem mutation serialization。
 
-否则 pinned base/staging/candidate 会失去统一 authority。
-
-对于一次性稳定命令：
-
-```text
-settle
-abandon-day
-```
-
-可以由一次 command 创建一次 WorldOperation，但仍应在类型/字段上保持两个 ID 的概念区分。
+两者职责不同，但**不形成跨进程 lock graph**。
 
 ---
 
-## 9. Core-owned durable Session authority
+## 9. Failure model：只冻结真正需要的级别
 
-删除 `ArchiveCommit.activeSession` 后，Session lifecycle 不能退化为纯内存状态。
+### 9.1 Formal guarantee
 
-Phase 1B 必须拥有一个 **Core-owned durable Session record**，它不属于 Archive Protocol。
-
-概念上至少包含：
-
-```ts
-interface CoreSessionRecordV1 {
-  schemaVersion: 1;
-  sessionId: string;
-  kind: 'init' | 'planning' | 'play' | 'revise';
-  archiveOperationId: string;
-  status: 'active' | 'submitting' | 'completed' | 'cancelled' | 'interrupted';
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-具体文件名可以由 Core 实现决定，但 authority 必须唯一、durable、可重新发现。
-
-第一版冻结：
+Phase 1B 保证：
 
 ```text
-one World
-→ at most one active gameplay Session
+process-crash consistency
 ```
 
-该约束由 Core Session authority 管理，不进入 ArchiveCommit。
+也就是进程在任意业务步骤退出后，restart 能通过 canonical durable facts 得到唯一 Published truth，并把未完成工作分类为 interrupted/garbage/prepared candidate。
 
-因此 restart 时：
+### 9.2 Best-effort guarantee
+
+以下降级为 filesystem best effort：
 
 ```text
-read Published World
-+
-read durable CoreSessionRecord
-+
-read referenced ArchiveOperation/staging
-→ reconstruct Runtime presentation phase
+power loss exactly between rename and directory fsync
+filesystem-specific metadata persistence
+portable Windows directory fsync equivalence
 ```
 
-必须能区分：
+普通 file flush failure仍传播；Core 可以调用 parent sync，但不把所有 filesystem 的 power-loss 行为变成 Phase 1B database theorem。
+
+### 9.3 Visibility switch 返回错误后的规则
+
+如果 I/O 在 atomic rename 之后报错，调用方不能只根据 exception 猜结果。
+
+必须：
 
 ```text
-no active Session
-active recoverable Session
-completed Session requiring diagnostic reconciliation
-invalid/corrupt Session workspace
+re-read canonical authority
+↓
+canonical state == expected
+→ treat transition as committed
+
+canonical state != expected
+→ transition not proven
+→ fail
 ```
 
-Session lifecycle 不修改 Published World，但 Session 自己仍必须 durable。
+尤其 publication：
+
+```text
+publish error
+↓
+read current
+↓
+current == target
+→ publication succeeded
+
+current == pinned base
+→ publication did not happen
+```
+
+这已经足够关闭 process-crash/ambiguous-return 语义，不需要继续扩展到通用 WAL/replay engine。
 
 ---
 
-## 10. Runtime phase projection
+## 10. Mutable authorities 只保留三个 visibility switch
 
-Protocol Commit 只保存稳定 Published state：
+继续保留：
+
+```text
+staging/index.json
+= staged truth changed
+
+operation.json open → prepared
+= prepared candidate became authoritative
+
+current.json
+= Published World changed
+```
+
+这些 mutable metadata 使用：
+
+```text
+write temp
+→ flush file
+→ atomic replace
+→ best-effort parent sync
+→ re-read on ambiguous failure
+```
+
+`CoreSessionRecordV1` 同样原子更新，但它不是 Archive Protocol truth。
+
+不再为这些 switch 各自创建独立跨进程锁；它们都在同一个 `ArchiveV2Writer` mutation ownership 中发生。
+
+---
+
+## 11. Manifest theorem 保持简单
+
+`manifest.json` 是 Archive identity：
+
+```text
+create-once
+```
+
+规则：
+
+```text
+absent
+→ create expected manifest without overwrite
+
+exists
+→ parse
+→ require same world identity
+→ never rewrite a different identity
+```
+
+因为 initialization 已处于 single writer ownership，不再需要证明两个并发 init writer 的所有 interleaving。
+
+仍必须保证 final manifest 不以 partial file 可见；使用 temp + atomic create/promote。
+
+```text
+manifest exists + current absent
+= provisional / interrupted initialization
+```
+
+restart 时不自动继续 init Session；只保留 workspace，并将 Session 标记 interrupted。
+
+---
+
+## 12. Session：durable preservation，不做 Phase 2 的 continuation
+
+这是本轮第二个重要纠偏。
+
+Phase 1B Session theorem：
+
+```text
+one active Runtime Session
+→ one CoreSessionRecordV1
+→ one ArchiveOperationV2
+```
+
+### 12.1 Session ID 只有一个来源
+
+当前实现 durable Session 与 RuntimeSession 分别生成 sessionId，必须修复。
+
+冻结：
+
+```text
+Runtime creates sessionId exactly once
+↓
+passes SAME sessionId to CoreSessionRecord creation
+↓
+passes SAME sessionId to SessionManager / RuntimeSession
+```
+
+必须有：
+
+```text
+RuntimeSession.id
+== CoreSessionRecord.sessionId
+```
+
+### 12.2 正常生命周期
+
+```text
+start
+→ ArchiveOperation(open)
+→ CoreSessionRecord(active)
+→ RuntimeSession active
+→ Published World unchanged
+
+submit
+→ SAME operation staging
+→ prepare
+→ publish
+→ CoreSessionRecord(completed)
+→ RuntimeSession completed
+
+cancel
+→ SAME operation aborted
+→ CoreSessionRecord(cancelled)
+→ Published World unchanged
+```
+
+### 12.3 Restart 生命周期
+
+Phase 1B **不重新构建并继续运行旧 RuntimeSession**。
+
+Writer startup 后执行一次 deterministic reconciliation：
+
+```text
+CoreSessionRecord active/submitting
+↓
+if its target commit is already in Published commit ancestry
+   → completed
+else
+   → interrupted
+```
+
+然后：
+
+```text
+no active RuntimeSession is reconstructed
+Runtime phase = Published stable phase
+workspace/staging/operation preserved
+```
+
+例如：
+
+```text
+crash during planning before publish
+→ restart
+→ Published = idle
+→ old Session = interrupted
+→ staging/workspace preserved
+```
+
+```text
+crash after current switched before Session finalization
+→ restart
+→ target commit reachable from Published ancestry
+→ Session = completed
+→ Published World remains target/newer descendant
+```
+
+这就是 Phase 1B recovery 的完整语义：
+
+> **preservation, not continuation**。
+
+Conversation-level resume 留给 Phase 2。
+
+### 12.4 Interrupted Session
+
+`interrupted`：
+
+```text
+不是 active Session
+不投影 planning/playing/revising phase
+不能直接 submit/cancel
+不会自动删除 operation/staging/workspace
+```
+
+允许后续：
+
+```text
+inspect
+discard
+future Phase 2 resume/migration
+```
+
+第一版可以允许新的 gameplay Session 在同一 writer 下开始；旧 interrupted operation 只是 retained working artifact，不是第二个 writer。
+
+---
+
+## 13. Runtime phase 重新收敛
+
+Published Commit 只保存：
 
 ```text
 idle
@@ -426,1513 +681,1116 @@ planned
 awaiting-settle
 ```
 
-Runtime-only phase：
+运行中 active Session 才投影：
 
 ```text
-initializing
-planning
-playing
-revising
-invalid
+init     → initializing
+planning → planning
+play     → playing
+revise   → revising
 ```
 
-Runtime phase 必须由：
-
-```text
-archive read status
-+ PublishedWorldPhase
-+ CoreSessionRecord kind/status
-→ Runtime presentation phase
-```
-
-例如：
-
-```text
-Published = idle
-Session kind = planning + active
-→ Runtime = planning
-```
-
-```text
-current absent
-Session kind = init + active
-→ Runtime = initializing
-```
-
-```text
-archive/session invalid
-→ Runtime = invalid
-```
-
-必须成立：
-
-```text
-Session lifecycle
-≠ Published World lifecycle
-```
-
----
-
-## 11. Session start/cancel state machine
-
-### 11.1 Start
-
-```text
-validate command availability
-↓
-create ArchiveOperationV2(open) with pinned base
-↓
-create CoreSessionRecord(active) referencing operation
-↓
-create Session workspace
-↓
-activate RuntimeSession
-↓
-Published World unchanged
-```
-
-如果 start 在 authority 创建过程中 crash，restart 必须通过 durable artifacts 分类：
-
-```text
-operation exists + Session record exists
-→ recoverable Session candidate
-
-operation exists + Session record absent
-→ incomplete start / administrative cleanup candidate
-```
-
-不得通过发布一个 World commit 来表达 Session 活跃状态。
-
-### 11.2 Cancel
-
-```text
-stop/await background Session task
-↓
-ArchiveOperation open → aborted
-↓
-CoreSessionRecord → cancelled
-↓
-cleanup workspace according retention policy
-↓
-Published World unchanged
-```
-
-cancel 不产生 World revision。
-
----
-
-## 12. Archive V2 physical layout
-
-Core 按 protocol layout vocabulary 实现 Archive objects；Core-owned Session metadata 与 Archive Protocol metadata 分离。
-
-```text
-<world-root>/
-├── manifest.json
-├── current.json
-├── commits/
-├── objects/
-│   ├── trees/sha256/
-│   └── blobs/sha256/
-├── operations/
-│   └── <world-operation-id>/
-│       ├── operation.json
-│       └── workspace/
-│           ├── session.json        # Core-owned Session record/workspace metadata
-│           └── staging/
-│               ├── index.json
-│               └── files/<opaque-id>
-├── .locks/
-└── logs/
-```
-
-`session.json` 不是 Archive Protocol object；它属于 Core runtime contract。
-
-逻辑 World path 永远不直接拼成 object-store path。
-
-Core 使用 protocol relative-layout helpers，再由 filesystem layer 安全解析到 `worldRoot` 内。
-
-必须验证：
-
-```text
-resolved physical target ∈ worldRoot
-```
-
-并防止 symlink/path traversal escape。
-
----
-
-## 13. Mutable metadata atomicity theorem
-
-Phase 1B 有三个 mutable authority：
-
-```text
-staging/index.json
-operation.json
-current.json
-```
-
-它们都必须通过：
-
-```text
-write temporary
-→ flush file
-→ atomic replace/rename
-→ sync parent directory
-```
-
-更新。
-
-禁止直接 truncate-and-overwrite canonical metadata。
-
-三个 visibility switch：
-
-```text
-staging/index.json replacement
-= staged fact changed
-
-operation.json open→prepared replacement
-= prepared candidate became durable authority
-
-current.json replacement
-= Published World changed
-```
-
-允许相应阶段留下 unreachable garbage；不允许 canonical mutable metadata 指向 incomplete data。
-
-CoreSessionRecord 若作为独立 mutable authority，也必须使用同等级 atomic update theorem。
-
----
-
-## 14. Manifest create-once theorem
-
-`manifest.json` 是稳定 Archive identity，不在 `current` 引用图里，因此必须有独立的一次性语义。
+restart 后 Session 被标记 `interrupted`，因此不再投影运行中 phase。
 
 冻结：
 
 ```text
-manifest is create-once
+Runtime phase
+= Published phase
++ current-process active RuntimeSession only
 ```
 
-规则：
+而不是：
 
 ```text
-manifest absent
-→ initialization may create expected manifest atomically
-
-manifest exists
-→ parse and validate
-→ require same world identity expected by this initialization
-→ never overwrite with a different identity
+durable unfinished Session record
+→ pretend old RuntimeSession is still active
 ```
 
-因此：
-
-```text
-manifest exists + current absent
-= provisional initialization
-```
-
-同一初始化 retry 可以复用一致 manifest；不同 identity 初始化必须 conflict/fail-closed。
-
-必须成立：
-
-```text
-current exists
-⇒ manifest exists and valid
-```
-
-禁止：
-
-```text
-Init A writes manifest A
-Init B overwrites manifest B
-Init A publishes current
-```
-
-`manifest.json` 不得用普通 overwrite 写法实现初始化竞争。
+这消除当前 `SessionManager empty` 与 `world.phase=planning` 之类的半恢复状态。
 
 ---
 
-## 15. Dayloom World Profile v1
+## 14. Staging / Effective World
 
-Archive Protocol 不拥有 narrative schema，但 Core 必须冻结一个最小 product vocabulary，避免 Session/MCP/TUI 各自猜路径。
-
-第一版 canonical path family：
+继续保留正确设计：
 
 ```text
-canon/premise.md
-canon/rules.md
-canon/style.md
-canon/user-role.md
-
-days/<day>/plan.md
-days/<day>/play.md
-days/<day>/summary.md
-
-characters/**
-scenes/**
-arcs/**
-memory/**
-custom/**
-```
-
-其中：
-
-```text
-canon/*.md
-= canonical semantic documents
-
-days/<day>/*.md
-= canonical per-day workflow/history documents
-
-characters/** / scenes/** / arcs/** / memory/** / custom/**
-= extensible semantic namespace
-```
-
-新增普通文档路径不应要求修改 Archive Protocol object model。
-
-如后续需要 JSON/YAML 文件，只扩展 World Profile convention，不修改 Blob/Tree/Commit schema。
-
-### 15.1 Required-by-operation policy
-
-Archive core 不定义全局 required documents；Core business operation 定义提交前置。
-
-概念上：
-
-```text
-init submit
-→ requires canon/premise.md
-          canon/rules.md
-          canon/style.md
-          canon/user-role.md
-
-planning submit
-→ requires days/<current-day>/plan.md
-
-play submit
-→ requires days/<current-day>/play.md
-        + days/<current-day>/summary.md
-```
-
-具体内容由 AI/human 解释，Core 只验证 required path/media/policy 是否满足。
-
----
-
-## 16. Dayloom mutation policy
-
-Protocol staging 只拥有 PUT/DELETE；Core 在写 staging 之前执行产品 policy。
-
-第一版 path-family policy：
-
-```text
-canon/**
-→ replaceable semantic documents
-
-characters/**
-scenes/**
-arcs/**
-memory/**
-custom/**
-→ replaceable semantic documents unless a higher business rule narrows it
-
-days/<day>/plan.md
-→ replaceable before publication for that operation
-
-days/<day>/play.md
-days/<day>/summary.md
-→ append/history-oriented; once published for historical day, ordinary gameplay must not silently rewrite
-
-reserved/internal physical paths
-→ inaccessible through World document mutation API
-```
-
-如果需要保存用户原始 source/input，必须给它独立的 append-only/immutable path convention；不能依赖 AI semantic summary 作为原文 authority。
-
-原则：
-
-```text
-Protocol validates structural legality.
-Core validates Dayloom business permission.
-```
-
-未来普通 MCP gameplay tools 只能调用 Core/domain capabilities，不能直接编辑 operation files。
-
----
-
-## 17. Staging write state machine
-
-### 17.1 Staging authority
-
-```text
-StagingManifestV1 (index.json)
+StagingManifestV1
 = sole staged truth
 ```
 
-`workspace/staging/files/*` 里的文件只有被 `index.json` 引用时才是 staged fact。
-
-### 17.2 PUT
+PUT：
 
 ```text
-normalize/validate path via Protocol
-↓
-Core mutation policy
-↓
-validate bytes/media via Protocol
-↓
-write opaque staging temp file
-↓
-flush
-↓
-atomic promote opaque staging file
-↓
-verify bytes/hash
-↓
-construct next StagingManifestV1
-↓
-Protocol parse/validate
-↓
-ATOMIC index.json replacement
+validate path/media/content
+→ write durable opaque staged file
+→ build next staging manifest
+→ atomic index.json switch
 ```
 
-Crash before final index switch：
+DELETE：
 
 ```text
-old staging remains authoritative
-new unreferenced file = garbage
+build next staging manifest
+→ atomic index.json switch
 ```
 
-Crash after index switch：
+Session effective view：
 
 ```text
-new staged mutation must be complete/readable
+effective World
+= overlay(pinned base tree, staging manifest)
 ```
 
-### 17.3 DELETE
+禁止回退到 live `current`。
 
-DELETE 只修改 next manifest；同样通过 atomic `index.json` replacement 生效。
-
-### 17.4 Final-state algebra
-
-同一路径只保存最终 mutation：
-
-```text
-PUT
-DELETE
-or no entry
-```
-
-它不是 edit log。
+因为 one Writer mutation gate 串行 staging 与 prepare，不再需要 per-operation lock + prepare-final-staging-reread 来对抗同一个 Core 内部的并发修改。
 
 ---
 
-## 18. Effective read model
+## 15. Pinned snapshot reader：彻底消除 live-current TOCTOU
 
-Published read：
+当前 `session-world-read-model.ts` 先检查 current，然后多个 `readPublishedDocument()` 又重新读取 current；这是不必要的 split-view surface。
 
-```text
-current
-→ commit
-→ root tree
-→ blob
+Core 增加一个 anchored read capability：
+
+```ts
+interface PublishedArchiveSnapshot {
+  pointer: CurrentPointerV2;
+  commit: ArchiveCommitV2;
+  tree: RootTreeV1;
+  read(path: string): Promise<Uint8Array | null>;
+  list(): readonly DocumentTreeEntryV1[];
+}
 ```
 
-Session effective read：
+`read()` 只根据该 snapshot 的 immutable tree/blob 读取，不重新查询 live current。
+
+Session 使用：
 
 ```text
-staged PUT
-  > staged DELETE
-  > published entry
+published view
+→ pinned PublishedArchiveSnapshot
+
+working view
+→ operation pinned base + staging overlay
 ```
 
-Core 对上层暴露能力：
-
-```text
-readPublishedDocument(path)
-listPublishedDocuments()
-readEffectiveDocument(worldOperationId, path)
-listEffectiveDocuments(worldOperationId)
-inspectStaging(worldOperationId)
-```
-
-未来 Session/MCP/TUI 只能包装这些 capability，不直接扫描 object store/staging internals。
+任何一次 domain read 都来自一个固定 view。
 
 ---
 
-## 19. Prepare state machine
+## 16. Prepare：只证明 prepared candidate 完整
 
-Prepare 只允许：
-
-```text
-ArchiveOperation.status == open
-```
+Prepare 在 single Writer gate 内执行。
 
 流程：
 
 ```text
-read + protocol-parse operation
+require operation=open
 ↓
-read + protocol-parse staging
+read/parse operation + staging
 ↓
 validateOperationStagingRelationV2
 ↓
-freeze staging authority for this operation
+verify staged PUT files
 ↓
-verify every staged PUT physical file hash/bytes/media
+load pinned base
 ↓
-load pinned base tree
+buildCandidateTreeV1
 ↓
-buildCandidateTreeV1({ baseTree, staging })
+materialize/deduplicate immutable blobs
 ↓
-construct/deduplicate immutable blobs
+materialize canonical tree
 ↓
-write canonical RootTree bytes via Protocol encoder/hash
-↓
-construct immutable ArchiveCommitV2
+construct target commit
 ↓
 validatePreparedTargetRelationV2
 ↓
-persist immutable target graph completely
+verify complete target graph
 ↓
-construct ArchiveOperationV2(status=prepared, target ids)
+atomic operation.json → prepared
+```
+
+唯一 theorem：
+
+```text
+operation.status == prepared
+⇒ exactly one complete Protocol-valid target graph exists
+```
+
+### 16.1 不再要求自动 prepare continuation
+
+若 crash 在 prepared switch 之前：
+
+```text
+operation remains open
+partial immutable objects = garbage/dedup artifacts
+Session becomes interrupted on restart
+```
+
+Core 不自动重新执行 semantic prepare。
+
+显式 maintenance/retry 若未来需要，可由 durable staging 重新构造；它不是 Phase 1B gameplay restart theorem。
+
+因此不需要为了“任意 retry 参数也必须生成同一 candidate”增加新的 prepare intent state machine。
+
+### 16.2 Immutable temp 不进入 canonical object namespace
+
+当前实现会在 canonical blob/tree/commit 目录旁留下 `.tmp-*`。
+
+修复：
+
+```text
+operations/<operation-id>/workspace/tmp/
+```
+
+作为 immutable materialization temp 区。
+
+然后：
+
+```text
+write temp in workspace
+→ flush
+→ promote/link/rename to canonical immutable path
+```
+
+canonical object 目录只允许合法 Protocol object 名，不让 crash temp 参与 GC/object parser。
+
+---
+
+## 17. Publication：single writer 下仍保留强 Published theorem
+
+Publication 不再获取独立 `publish.lock`；Writer 本身已经拥有 World mutation ownership。
+
+流程：
+
+```text
+require operation=prepared
 ↓
-ATOMIC operation.json replacement
+read target commit/tree/blobs
+↓
+validatePreparedTargetRelationV2
+↓
+verify every blob
+↓
+read current
+↓
+if current == target
+   → already published / success reconciliation
+↓
+require current == pinned base
+↓
+construct CurrentPointerV2
+↓
+validateCurrentCommitRelationV2
+↓
+atomic current.json replacement
+↓
+re-read current if write result is ambiguous
+↓
+current == target
+→ publication success
+↓
+best-effort operation/session diagnostic finalization
 ```
 
 必须成立：
 
 ```text
-prepared
-⇒ exactly one pinned base
-⇒ exactly one frozen staging final state
-⇒ exactly one target tree
-⇒ exactly one target commit
-⇒ complete target graph already durable
+successful publication
+⇒ target graph Protocol-valid
+⇒ current references target
+```
+
+以及：
+
+```text
+failure proven before current switch
+⇒ previous Published World unchanged
+```
+
+`operation.json → published` 与 Session completion 都是 post-publication workflow metadata；失败不能把一个 valid Published World 变成 invalid。
+
+---
+
+## 18. OCC 保留，但降回 integrity guard
+
+Protocol 有 pinned base；Core 继续校验：
+
+```text
+current == operation.base
+```
+
+这仍然是有价值的 integrity invariant。
+
+但在 Phase 1B Core single-writer 模式下，它不是用来支持多个 gameplay writer 的 merge/concurrency model。
+
+如果 OCC 失败：
+
+```text
+fail closed
+preserve prepared candidate/staging
+no auto rebase
+```
+
+这足够支持 future offline tools 与 corrupted/foreign mutation detection。
+
+---
+
+## 19. Maintenance / GC：退出在线并发状态机
+
+### 19.1 Inspect
+
+```text
+read-only
+no Writer required
+```
+
+检查：
+
+```text
+manifest/current graph
+commit ancestry
+tree/blob integrity
+operations
+prepared target graphs
+SessionRecord ↔ operation relation
+orphans
+```
+
+### 19.2 GC dry-run
+
+```text
+read-only
+no Writer required
+```
+
+### 19.3 GC delete
+
+```text
+requires ArchiveV2Writer / WorldMutationOwnership
+serialized by WorldMutationGate
 ```
 
 因此：
 
 ```text
-operation.json prepared
+GC delete cannot run concurrently with prepare/publish/staging
 ```
 
-是 prepared candidate 的唯一 visibility switch。
-
-prepared 后普通 PUT/DELETE 必须拒绝。
-
-需要继续编辑：
+不再需要构造：
 
 ```text
-abort old operation
-→ create new operation pinned to an explicit base
+prepare × GC delete race theorem
 ```
+
+roots 仍然是：
+
+```text
+Published ancestry
+∪ prepared-operation target graphs
+```
+
+真正 orphan 才能删除。
+
+如果 gameplay Runtime 长期持有 Writer，外部 GC delete 必须等 Runtime 关闭；这正是第一版 intentional maintenance contract。
 
 ---
 
-## 20. Immutable object retry/idempotency
+## 20. Standalone Archive tools 的边界
 
-Prepare crash 后允许部分 immutable objects 已存在。
-
-因此 immutable object publication 必须是 idempotent-by-identity：
+`@dayloom/archive-protocol` 仍允许独立：
 
 ```text
-blob/tree target absent
-→ create without overwrite
-
-blob/tree target exists
-→ verify expected hash/bytes
-→ identical = success/dedup
-→ mismatch = integrity failure
+verify
+inspect
+migration reader
+history viewer
+future rollback/branch implementation
 ```
 
-Commit object：
+只读工具可以和 Dayloom Runtime 同时运行。
+
+本阶段对**直接依赖 Protocol 的 mutating standalone tools**冻结为：
 
 ```text
-commit target absent
-→ create without overwrite
-
-commit target exists
-→ parse and require exact expected commit
-→ identical = retry success
-→ different content = ID collision/integrity failure
+offline mutation only
+→ Dayloom gameplay writer must be closed
 ```
 
-禁止：
+Phase 1B 不为了尚未实现的 rollback/branch tool 建立共享 multi-writer transaction runtime。
 
-```text
-immutable target exists
-→ blindly overwrite
-```
-
-也不应把“identical object already exists”一律当 conflict，否则 crash retry 无法闭环。
+如果未来多个 mutating consumer 真实出现，再单独评估是否提取共享 Archive runtime/ownership primitive；不是当前 Core 的前置条件。
 
 ---
 
-## 21. Publication state machine
+## 21. World Profile v1：与真实媒体类型对齐
 
-Publication 只允许：
-
-```text
-ArchiveOperation.status == prepared
-```
-
-流程：
+第一版 canonical convention 统一为：
 
 ```text
-read + parse prepared operation
-↓
-read target commit/tree/blobs
-↓
-validate prepared target graph
-↓
-acquire publish lock
-↓
-re-read current
-↓
-require current == pinned base
-↓
-validate parent/current relation as applicable
-↓
-re-verify target immutable graph
-↓
-construct next CurrentPointerV2
-↓
-validateCurrentCommitRelationV2({ current: nextPointer, commit: targetCommit })
-↓
-write current temp
-↓
-flush
-↓
-FINAL ATOMIC current replacement
-↓
-sync parent directory
-↓
-Published World changed
-↓
-best-effort reconcile operation.json → published
-↓
-best-effort Session completion diagnostics
-↓
-release lock
+canon/premise.md        text/markdown
+canon/rules.md          text/markdown
+canon/style.md          text/markdown
+canon/user-role.md      text/markdown
+
+days/<day>/plan.json       application/json
+days/<day>/play.json       application/json
+days/<day>/summary.md      text/markdown
+days/<day>/settlement.md   text/markdown
+days/<day>/abandoned.md    text/markdown
+
+characters/**
+scenes/**
+arcs/**
+memory/**
+custom/**
 ```
 
-锁只覆盖 publication critical section，不覆盖长期 Session/staging。
+Archive Protocol 不理解 narrative schema。
+
+Core policy：
+
+```text
+canon/**
+→ replaceable semantic docs
+
+plan.json
+→ current day planning document
+
+play.json / summary.md
+→ historical gameplay docs；ordinary gameplay 不静默覆盖
+
+settlement.md / abandoned.md
+→ history fact；append/history-oriented
+```
+
+未来增加 JSON/YAML/Markdown 普通语义文件，只扩 World Profile，不改 Commit/Tree/Blob schema。
 
 ---
 
-## 22. Publication theorem
+## 22. Domain transition 不能由 Archive adapter 决定
 
-成功：
+当前 `runtime-operations-v2.ts` 自己计算 `nextDay()`、`lastSettledDay` 等，会把 gameplay semantics 泄漏进 persistence adapter。
+
+修复：
 
 ```text
-publish success
-⇒ current references target commit
-⇒ target commit is complete/immutable
-⇒ target tree is canonical/hash-valid
-⇒ every referenced blob exists and hash matches
-⇒ target tree == buildCandidateTreeV1(pinned base, frozen staging)
-⇒ target commit satisfies Protocol relation validators
-⇒ pinned base was still current at visibility switch
+Domain state machine
+→ owns complete target World control
+
+Archive adapter
+→ stages semantic documents
+→ persists EXACT request.target control
 ```
 
-失败：
+因此：
 
 ```text
-failure before current replacement
-⇒ previous Published World remains current
+settle day progression
+abandon-day control behavior
+```
+
+全部在 `domain/transitions.ts` + domain tests 冻结。
+
+Archive V2 runtime 不再拥有：
+
+```text
+previousDay()
+nextDay()
+phase/business transition correction
+```
+
+这样 storage migration 不会偷偷改变 gameplay rules。
+
+---
+
+## 23. Legacy DTO / V1 read projection：只允许真正的 domain projection
+
+当前 V2 read adapter 仍会构造：
+
+```text
+DayRevisionMeta
+PlanDocument
+PlayDocument
+...
+```
+
+并填入类似：
+
+```text
+dayrev_document_profile
+op_document_profile
+```
+
+的假 Archive identity。
+
+这是必须删除的 architecture debt。
+
+冻结：
+
+```text
+V2 documents
+→ MAY project to Dayloom domain DTO
+→ MUST NOT fabricate V1 Archive identity
 ```
 
 允许：
 
 ```text
-unreachable immutable blobs/tree/commit
-unreferenced staging files
+Canon semantic DTO
+parsed plan/play domain DTO
 ```
 
-禁止：
+前提是它们只是 domain view，不带假的：
 
 ```text
-partially visible Published World
-canonical staging index referencing incomplete staged file
-prepared operation referencing incomplete target graph
+revision
+parentRevision
+operationId
+V1 day-head identity
 ```
 
-核心原则：
+`packages/core/src/sessions/world-read-model.ts` 应改成 document-native/domain-native read model，不再 import `schemas/archive` 的 V1 revision types。
 
-> **garbage is allowed; corrupt visible state is not.**
-
----
-
-## 23. OCC / conflict
-
-Core publication 必须同时满足：
-
-```text
-exclusive publication ownership
-AND
-current == pinned base
-```
-
-若 current 已变化：
-
-```text
-ARCHIVE_CONFLICT
-no current mutation
-prepared operation preserved
-staging preserved
-candidate preserved
-```
-
-第一版不自动 merge/rebase。
-
-冲突后的下一步由上层显式决定：
-
-```text
-retry same prepared candidate only if base condition again valid
-or abort
-or create new operation against newer base
-```
-
-不得自动重新解释 semantic intent。
-
----
-
-## 24. Operation failure / retry semantics
-
-Protocol statuses：
-
-```text
-open
-prepared
-published
-aborted
-```
-
-没有 terminal `failed`。
-
-错误通过：
-
-```text
-ArchiveOperationErrorV1
-```
-
-持久化。
-
-规则：
-
-```text
-staging/validation failure before prepare
-→ status remains open
-→ lastError source=protocol|runtime|tool
-```
-
-```text
-prepare I/O failure before prepared visibility switch
-→ status remains open
-→ partial immutable garbage allowed
-→ explicit prepare retry recomputes SAME candidate from unchanged staging authority
-```
-
-```text
-publication failure after prepare, before current switch
-→ status remains prepared
-→ lastError updated
-→ explicit retry uses SAME target ids
-```
-
-```text
-current == target after crash
-→ Protocol recovery classifier returns already-published
-→ Core may repair diagnostics to published
-```
-
----
-
-## 25. Crash / recovery theorem
-
-Recovery：
-
-```text
-= classify durable facts
-≠ guess semantic intent
-≠ automatically build a different target
-≠ silently overwrite newer current
-```
-
-Core 收集 facts；Protocol 做纯关系验证/分类。
-
-Prepared operation：
-
-```text
-current == target
-→ publication happened
-
-current == pinned base
-→ target not published
-→ explicit retry/discard allowed
-
-current != base && current != target
-→ superseded/conflicted
-→ no automatic replay
-```
-
-Open operation：
-
-```text
-staging/index.json
-= current staged authority
-
-unreferenced staging files
-= garbage
-
-immutable target-like objects without prepared operation reference
-= garbage unless another root retains them
-```
-
-Session recovery：
-
-```text
-CoreSessionRecord active/submitting
-+ referenced operation open/prepared
-→ reconstruct recoverable Session boundary
-```
-
-如果 AI Conversation 尚未进入 Phase 2 持久化，本阶段可以恢复 Session workspace/control state，但不声称能恢复尚未持久化的模型上下文；该限制必须显式暴露，不得伪装完整 conversational recovery。
-
----
-
-## 26. Inspect
-
-`inspectArchive()` 执行 I/O；Protocol 提供 parsers/hash/graph relations。
-
-至少检查：
-
-```text
-manifest
-current
-current commit
-parent chain
-root tree canonical hash
-path identity/collision
-blob existence/hash/bytes
-published control
-operations
-operation ↔ staging relation
-prepared target relations
-CoreSessionRecord ↔ operation relation
-orphan immutable objects
-protected prepared target objects
-```
-
-Inspection 必须区分：
-
-```text
-Protocol invalid
-filesystem/reference missing
-Core Session metadata invalid
-prepared-but-unpublished
-true orphan garbage
-```
-
-Inspection 只读。
-
----
-
-## 27. GC reachability theorem
-
-GC roots 不能只有 `current`。
-
-正式 roots：
-
-```text
-A. Published roots
-   current
-   → retained commit parent chain
-   → root trees
-   → blobs
-
-B. Prepared-operation roots
-   every valid ArchiveOperation(status=prepared)
-   → target commit
-   → target root tree
-   → blobs
-```
-
-因此：
-
-```text
-prepared target graph
-≠ orphan
-```
-
-必须保留。
-
-Workspace retention：
-
-```text
-open
-prepared
-→ preserve operation/staging workspace
-
-published
-aborted
-→ cleanup only under explicit retention policy
-```
-
-True orphan immutable objects 才可以删除。
-
-真实删除：
-
-```text
-default dry-run/report first
-explicit delete required
-mutually exclusive with publication
-re-evaluate roots under deletion lock/ownership
-```
-
-GC 永远不能删除 current-reachable 或 prepared-operation-reachable objects。
-
----
-
-## 28. Initialization state machine
-
-Init 同时涉及 Archive identity 与 first publication。
-
-```text
-create ArchiveOperation(open, baseRevision=0)
-↓
-create CoreSessionRecord(init, active)
-↓
-Session stages required World Profile documents
-↓
-submit
-↓
-create-or-verify manifest (create-once)
-↓
-prepare candidate root/commit revision=1
-↓
-publish current revision=1
-↓
-Session completed
-```
-
-必须处理：
-
-```text
-manifest exists + current absent
-→ same identity retry allowed
-
-manifest exists with different identity
-→ conflict
-
-current exists
-→ second initialization forbidden
-```
-
----
-
-## 29. Dayloom business operation mapping
-
-### init
-
-输出 World Profile docs + initial published control：
-
-```text
-phase = idle
-initial day according product rule
-lastSettledDay = null
-```
-
-一次 publication。
-
-### planning
-
-对同一 Session operation staging：
-
-```text
-days/<day>/plan.md
-```
-
-submit 时 publish：
-
-```text
-phase = planned
-day = current day
-```
-
-### play
-
-对同一 Session operation staging 更新：
-
-```text
-days/<day>/play.md
-days/<day>/summary.md
-```
-
-以及允许的其它 semantic docs。
-
-submit publish：
-
-```text
-phase = awaiting-settle
-```
-
-### settle
-
-一次性 WorldOperation：
-
-```text
-update settlement/history semantic documents if required
-phase = idle
-day = nextDay(day)
-lastSettledDay = settled day
-```
-
-### abandon-day
-
-一次性 WorldOperation：
-
-```text
-record abandoned/history fact as documents
-update published control deterministically
-```
-
-### revise
-
-同一 Session operation 直接 staging semantic documents；不再重建完整 `CanonDocuments` object。
-
-具体 AI 文本格式不进入 Archive Protocol schema。
-
----
-
-## 30. Legacy SessionSubmission 过渡边界
-
-Phase 1B 可以短期保留当前强类型 `SessionSubmission` 作为**单向 adapter input**，以降低一次性迁移风险：
+Phase 1B 仍可短期保留：
 
 ```text
 legacy SessionSubmission
-→ deterministic World Profile document mutations
-→ V2 staging
+→ one-way deterministic document mutations
 ```
+
+作为写入 adapter。
 
 禁止：
 
 ```text
 V2 documents
-→ rebuild V1 CanonDocuments/DayRevision
+→ reconstruct V1 Archive model
 ```
-
-禁止长期 dual-write：
-
-```text
-V1 Archive
-+
-V2 Archive
-```
-
-Freeze 前必须删除 modern canonical write path 上的 V1 archive/submission builders。
-
-Phase 3 最终让 AI 直接通过 Dayloom tools 操作 staging；Phase 1B 不依赖它。
 
 ---
 
-## 31. V1 → V2 cutover
+## 24. 当前实现偏离清单与明确修复
 
-第一选择：明确 breaking cutover。
+### 24.1 `packages/core/src/archive-v2/repository.ts`
 
-```text
-modern Core V2 reader accepts Archive V2 only
-V1 Archive code removed from modern runtime path
-```
-
-如果需要旧 demo/world：
+当前偏离：
 
 ```text
-explicit one-shot migration tool
+withOperationLock()
+sessionLock()
+publish lock domain
+reconcileSessions() auto-interrupt model
+GC/publish/prepare 各自协调
+immutable temp 放 canonical object dir
 ```
 
-禁止：
+修复：
 
 ```text
-open world
-→ silently guess V1/V2
-→ keep both runtimes forever
+引入 ArchiveV2Writer capability
+所有 mutation 经过一个 WorldMutationGate
+删除 per-operation lock
+删除 session claim lock
+V2 publish 不再单独拿 publish lock
+GC delete 只允许 Writer 调用
+immutable temp 搬到 operation workspace/tmp
+Session reconciliation 改为 startup-only interrupted/completed classification
 ```
 
-Schema version mismatch fail-closed。
+### 24.2 `packages/core/src/archive-v2/paths.ts`
+
+删除 modern V2：
+
+```text
+sessionLock()
+operationLock()
+```
+
+新增/保留：
+
+```text
+worldMutationLockDir()
+worldMutationTempLock(token)
+operationTemp(id)
+```
+
+### 24.3 `packages/core/src/archive/publish-lock.ts`
+
+不再把这个旧 primitive 泛化给 V2。
+
+处理：
+
+```text
+legacy V1 若仍需要 → 留在 legacy path
+modern V2 → 新建单一 WorldMutationOwnership primitive
+```
+
+完成 V1 exit 后可删除旧 publish-lock implementation。
+
+### 24.4 `packages/core/src/runtime/create-runtime.ts`
+
+当前偏离：
+
+```text
+startup 直接 reconcileSessions()
+但不真正恢复 RuntimeSession
+```
+
+修复：
+
+```text
+acquire ArchiveV2Writer first
+↓
+read Published World
+↓
+reconcile durable unfinished Sessions:
+  target reachable → completed
+  otherwise → interrupted
+↓
+construct Runtime with NO restored active RuntimeSession
+↓
+world phase from Published stable state
+```
+
+### 24.5 `packages/core/src/operations/runtime-operations-v2.ts`
+
+修复：
+
+```text
+Session id 由 Runtime 生成一次并传给 createSession
+remove adapter-owned nextDay()/business control rewriting
+persist request.target control exactly
+continue one Session → one WorldOperation
+continue submission → document mutation adapter
+```
+
+### 24.6 `packages/core/src/archive-v2/session-world-read-model.ts`
+
+当前偏离：
+
+```text
+check live current
+→ later repeatedly read live current
+→ possible split-view
+→ fabricate V1 day revision identities
+```
+
+修复：
+
+```text
+use PublishedArchiveSnapshot or operation EffectiveView
+all reads anchored to one immutable tree/base
+remove fake DayRevisionMeta / operation ids
+return document-native/domain projection
+```
+
+### 24.7 `packages/core/src/sessions/world-read-model.ts`
+
+删除对 V1 Archive revision schema 的依赖。
+
+新的 read model 只表达 Session 真正需要的 semantic context，不表达不存在的 Archive V1 revision identity。
+
+### 24.8 `packages/core/src/domain/transitions.ts`
+
+确保完整拥有：
+
+```text
+settle day progression
+lastSettledDay
+abandon-day business control
+```
+
+Archive adapter 不再补 domain transition。
+
+### 24.9 `packages/core/test/archive-v2/**`
+
+删除/降级那些仅用于证明 multi-writer online interleaving 的 tests。
+
+保留并加强 single-writer theorem tests，见本文 Evidence。
+
+### 24.10 `.github/workflows/archive-protocol.yml` / Core scripts
+
+当前 CI 已经正确把 Protocol/Core/TUI 放入矩阵，但 Node 18 会因为 `import.meta.dirname` 在 Core build script 先失败。
+
+修复：
+
+```text
+build/guard scripts 使用 package 声明 Node floor 支持的 API
+```
+
+如果 Dayloom 仍声明 Node 18，则使用：
+
+```text
+fileURLToPath(import.meta.url)
+```
+
+等兼容写法。
+
+CI matrix 建议：
+
+```text
+fail-fast: false
+```
+
+确保每个平台都产生证据。
 
 ---
 
-## 32. Core public capability boundary
+## 25. 应删除什么 / 应保留什么
 
-Phase 1B 后 Core 至少概念上拥有：
+### 删除或退出 modern V2 path
 
 ```text
-readCurrentWorld()
-readPublishedDocument(path)
-listPublishedDocuments()
-
-startWorldSession(...)
-readSessionRecord(...)
-
-stagePut(worldOperationId, ...)
-stageDelete(worldOperationId, ...)
-inspectStaging(worldOperationId)
-readEffectiveDocument(worldOperationId, path)
-listEffectiveDocuments(worldOperationId)
-
-prepare(worldOperationId)
-publish(worldOperationId)
-discard(worldOperationId)
-
-inspectArchive()
-collectGarbage()
+session-claim.lock
+per-operation lock
+independent V2 publish lock domain
+multi-writer stale-lock theorem
+online concurrent GC delete theorem
+restart reconstruct active RuntimeSession theorem
+fake V1 DayRevision/operation identities
+Archive adapter-owned day transition logic
+canonical object directory中的 temp files
 ```
 
-是否全部公开给外部 package 由 Core API 设计决定；内部 ownership 必须围绕这些 capability，而不是 `stageCanon/stageDay`。
+### 保留
+
+```text
+@dayloom/archive-protocol package boundary
+CurrentPointer → Commit → Tree → Blob
+Protocol validators/hash/path rules
+StagingManifest final-state overlay
+one Session → one ArchiveOperation
+CoreSessionRecord durability
+atomic staging index
+atomic prepared switch
+atomic current publication
+manifest create-once
+pinned effective read
+immutable object identity/dedup
+OCC base validation
+inspect / prepared roots
+World Profile + mutation policy
+```
+
+目标是删掉并发协调层，而不是删掉 Archive 的数据完整性。
 
 ---
 
-## 33. Architecture guard
+## 26. 修复实施顺序
 
-必须增加 guard，证明：
-
-### Core consumes Protocol publicly
-
-禁止：
+### R0 — 先冻结目标
 
 ```text
-@dayloom/archive-protocol/dist/*
-relative imports into packages/archive-protocol/src
+本文成为 Phase 1B implementation authority
+旧“multi-lock/multi-writer”推导不再作为 acceptance
 ```
 
-### Core does not duplicate Protocol
-
-不得另定义等价：
+### R1 — Single Writer capability
 
 ```text
-ArchiveManifestV2
-CurrentPointerV2
-ArchiveCommitV2
-RootTreeV1
-StagingManifestV1
-ArchiveOperationV2
-WorldDocumentPath canonical rules
-canonical tree hash rules
-cross-object protocol relations
+实现 WorldMutationOwnership
+拆 Reader / Writer capability
+Writer 增加 process-local WorldMutationGate
+Runtime lifecycle 持有 Writer
 ```
 
-### Protocol remains pure
+完成后先删除：
 
-Protocol 不反向 import Core。
+```text
+session claim lock
+operation locks
+modern V2 independent publish lock
+```
 
-### Session metadata stays Core-owned
+### R2 — Repository 简化
 
-`CoreSessionRecord` 不进入 archive-protocol package，除非未来有独立 admission 决策。
+```text
+put/delete/prepare/publish/abort/GC delete
+全部只在 Writer gate 内运行
+
+immutable temp → operation workspace/tmp
+publish 增加 current==target reconciliation
+```
+
+### R3 — Session 简化
+
+```text
+single sessionId
+startup active/submitting → completed | interrupted
+no RuntimeSession continuation
+interrupted workspace retained
+Runtime phase only reflects current-process active Session
+```
+
+### R4 — Read model 清理
+
+```text
+PublishedArchiveSnapshot
+EffectiveView pinned to operation
+remove live-current TOCTOU
+remove fake V1 revision identities
+```
+
+### R5 — Domain / Archive boundary
+
+```text
+state machine owns all control transitions
+Archive adapter only persists target control + document mutations
+align plan/play JSON and history Markdown profile
+```
+
+### R6 — Maintenance
+
+```text
+inspect read-only
+GC dry-run read-only
+GC delete Writer-only/offline with other writer
+```
+
+### R7 — V1 exit
+
+```text
+modern V2 path no longer reads/writes V1 Archive canonical schema
+legacy explicit injection remains deprecated only if still required
+no silent dual runtime
+```
+
+### R8 — Evidence + docs
+
+```text
+Core/TUI cross-platform green
+update doc/reference/ARCHIVE_FORMAT.md to single-writer model
+mark this draft completed
+move stable facts to canonical doc
+```
 
 ---
 
-## 34. Executable evidence
+## 27. Executable evidence：只证明目标，不证明数据库
 
-Phase 1B Formal Freeze 至少需要以下证据。
+Formal Freeze 必须有以下 evidence。
 
-### Protocol consumer conformance
+### Ownership
 
 ```text
-Core reads protocol golden Archive
-→ same hashes/paths/control
+Writer A owns World
+→ Writer B mutation open fails WORLD_BUSY
+
+Reader while Writer active
+→ succeeds
+
+writer crash leaves stale ownership
+→ next writer safely reclaims without two simultaneous owners
 ```
 
-### Session / operation identity
+### Published graph
 
 ```text
-start Session
-→ one WorldOperation
-
-multiple input turns
-→ same WorldOperation
-
-submit
-→ same WorldOperation prepared/published
-
-cancel
-→ same WorldOperation aborted
-→ current unchanged
+publish
+→ current references valid commit/tree/blobs
+→ restart reads same World
 ```
 
-### Session restart
+### Staging
 
 ```text
-start Session
-→ restart process
-→ Session record + operation discoverable
-→ Runtime phase reconstructed deterministically
+failure before index switch
+→ old staging
+
+index switched
+→ referenced staged file complete
 ```
 
-### Staging crash boundaries
-
-Fault inject：
+### Prepare
 
 ```text
-before staged file write
-after staged file durable before index switch
-after index switch
-```
+prepared
+→ complete target graph
 
-必须证明：
-
-```text
-before index switch → old staging
-
-after index switch → complete new staging
-```
-
-### Prepare crash boundaries
-
-Fault inject：
-
-```text
-after blob write
-after tree write
-after commit write
-before operation prepared switch
-after operation prepared switch
-```
-
-必须证明：
-
-```text
-before prepared switch
+crash before prepared switch
 → operation remains open
-→ target garbage allowed
-→ prepare retry deterministic
-
-after prepared switch
-→ complete target graph exists
+→ partial objects are garbage/dedup only
 ```
 
-### Publication
+### Publication ambiguity
 
 ```text
-stage PUT/DELETE
-→ prepare
-→ publish
+failure before current switch
+→ old current
+
+current switch succeeded but later step failed
+→ re-read current == target
+→ classify publication successful
+```
+
+### Session
+
+```text
+RuntimeSession.id == CoreSessionRecord.sessionId
+
+start → one WorldOperation
+submit → same WorldOperation
+cancel → same WorldOperation aborted + current unchanged
+```
+
+### Restart
+
+```text
+crash active Session before publication
 → restart
-→ same Published World
+→ Session interrupted
+→ Published stable phase restored
+→ staging/workspace preserved
+→ no fake active RuntimeSession
 ```
-
-### Conflict
 
 ```text
-op A pins C1
-op B publishes C2
-op A publish
-→ conflict
-→ C2 remains current
-→ A staging/candidate preserved
+crash after current publication before Session finalization
+→ restart
+→ target reachable
+→ Session completed
+→ new Published World retained
 ```
 
-### Publication crash boundaries
-
-至少：
+### Pinned read
 
 ```text
-before current temp
-before current replace
-after current replace before operation reconciliation
-after current replace before Session finalization
+one PublishedArchiveSnapshot
+→ every document comes from same immutable tree
 ```
-
-restart 后必须由 durable facts 唯一分类。
-
-### Manifest initialization
 
 ```text
-crash after manifest create before current
-→ same init retry succeeds
-
-different manifest identity
-→ conflict
+operation EffectiveView
+= pinned base + staging
 ```
 
-### Immutable idempotency
+### Maintenance
 
 ```text
-expected immutable object already exists identically
-→ retry succeeds
-
-same path/id with mismatched bytes/object
-→ fail closed
+GC delete cannot acquire writer while gameplay writer active
 ```
-
-### GC prepared protection
 
 ```text
-prepared operation exists
-→ run GC delete mode
-→ prepared target commit/tree/blobs survive
+prepared target graph survives GC
+true orphan can be deleted under maintenance writer
 ```
-
-### Path portability
-
-Windows/Linux 对 NFC、case collision、reserved names、portable chars 结果一致。
 
 ### Legacy exit
 
-modern runtime 不再依赖 V1 canon/day/archive canonical schema。
-
----
-
-## 35. CI gate
-
-Phase 1B 至少运行：
-
 ```text
-@dayloom/archive-protocol build/test
-@dayloom/core build/test
-Core ↔ protocol conformance
-Archive V2 staging/prepare/publication fault tests
-Session restart/recovery tests
-GC prepared-root tests
-TUI compatibility build/test
+modern V2 read path
+→ no schemas/archive DayRevision reconstruction
+→ no fake V1 revision/operation identity
 ```
 
-跨平台至少覆盖当前 Dayloom 声明的平台。
+### Platform / package
 
-Phase 1B 不偷偷提升 Node floor；若后续 Promptpile integration 要求更高 Node 版本，应在相应阶段显式修改 package theorem/CI。
+```text
+@dayloom/archive-protocol
+@dayloom/core
+@dayloom/tui
+```
+
+在仓库声明的 Node/platform matrix 全绿。
 
 ---
 
-## 36. Final acceptance checklist
+## 28. 不再作为 Phase 1B gate 的测试
+
+以下可以留作 future hardening，但不能继续驱动 Core 架构膨胀：
+
+```text
+multiple independent writers prepare concurrently
+online GC races a live prepare
+abort races publish in another writer
+three independent lock domains stale-reclaim interleavings
+automatic continuation of model conversation after process crash
+network filesystem ownership recovery
+power failure at every directory metadata persistence boundary
+```
+
+若测试要求一个系统能力，而该能力已经明确是 non-goal，则应该删除/降级测试，不应为了让测试 green 再增加 runtime complexity。
+
+---
+
+## 29. Final acceptance checklist
 
 - [ ] Core 直接依赖 `@dayloom/archive-protocol` public exports。
-- [ ] 本阶段没有 `@dayloom/archive` package。
-- [ ] Archive filesystem runtime 仍由 Core 拥有。
-- [ ] V2 types/parser/hash/path/tree/relations 不在 Core 重复实现。
-- [ ] `RuntimeCommandOperationId` 与 durable `WorldOperationId` 概念分离。
-- [ ] one Session → exactly one ArchiveOperationV2。
-- [ ] CoreSessionRecord 是唯一 durable active Session authority。
-- [ ] restart 可以从 Session record + operation + Archive 恢复 Runtime presentation phase。
-- [ ] `PublishedWorldPhase` 与 Runtime/Session phase 分离。
-- [ ] start/cancel Session 不发布 World commit。
-- [ ] `staging/index.json` 是唯一 staged visibility switch。
-- [ ] `operation.json` prepared switch 是唯一 candidate visibility switch。
-- [ ] `current.json` 是唯一 Published World visibility switch。
-- [ ] staging/index、operation、current 使用 atomic replace + parent sync。
-- [ ] manifest create-once，不能被并发初始化覆盖。
-- [ ] World Profile v1 的 canonical path family 与 required-by-operation convention 已冻结。
-- [ ] mutation policy 已映射到 path families。
-- [ ] staging 只有 PUT/DELETE final-state overlay。
-- [ ] prepare 调用 `validateOperationStagingRelationV2` + `buildCandidateTreeV1`。
-- [ ] prepared target 调用 `validatePreparedTargetRelationV2`。
-- [ ] current/commit 使用 `validateCurrentCommitRelationV2`。
-- [ ] prepared candidate immutable。
-- [ ] immutable object retry idempotent-by-identity，不 blind overwrite。
-- [ ] publish lock + expected-base OCC 同时成立。
-- [ ] conflict preserve staging/candidate。
-- [ ] crash/recovery 只根据 durable facts 分类。
-- [ ] GC roots 包含 Published graph + every prepared target graph。
-- [ ] inspect 能区分 prepared-retained 与 true orphan。
-- [ ] V1 canon/day/submission 不再是 modern canonical Archive write schema。
-- [ ] 无 V1/V2 长期 dual-write。
-- [ ] restart/fault/concurrency tests green。
-- [ ] Windows/Linux evidence green。
-- [ ] TUI 不理解 object store/staging internals。
-- [ ] Phase 2 可以只依赖稳定 World/Session boundary，不修改 Archive V2。
+- [ ] 不创建 `@dayloom/archive` package。
+- [ ] `current → commit → tree → blobs` 是唯一 Published World authority。
+- [ ] 一个 World 同时最多一个 mutation owner。
+- [ ] V2 modern path 不再有 session/operation/publish 三套跨进程 lock domain。
+- [ ] 所有 mutation 通过一个 `ArchiveV2Writer` / `WorldMutationGate` 串行。
+- [ ] 只读 reader 不需要 writer ownership。
+- [ ] `staging/index.json` 是唯一 staged truth。
+- [ ] `operation.json=prepared` 表示完整 candidate graph 已存在。
+- [ ] `current.json` 是唯一 publication switch。
+- [ ] process-crash 后 Published truth 可唯一读取。
+- [ ] ambiguous current write 通过 re-read current 分类，而不是猜测。
+- [ ] manifest create-once。
+- [ ] one Session → one sessionId → one ArchiveOperation。
+- [ ] restart 不伪装 Session continuation；unfinished Session → interrupted/preserved。
+- [ ] post-publication unfinished Session → completed reconciliation。
+- [ ] Runtime phase 只由 Published phase + current-process active Session 投影。
+- [ ] Session/document read 使用 pinned snapshot/effective view，不重复读取 live current。
+- [ ] V2 read model 不制造 V1 revision/operation identity。
+- [ ] domain state machine 拥有 day/phase/lastSettledDay transition。
+- [ ] Archive adapter 只持久化 domain target，不改写 gameplay control。
+- [ ] plan/play 使用 `.json + application/json`；summary/settlement/abandoned 使用 Markdown convention。
+- [ ] GC dry-run 可只读；GC delete 只能在 mutation ownership 下运行。
+- [ ] canonical object namespace 不含 crash temp 文件。
+- [ ] V1 不再是 modern canonical read/write path。
+- [ ] CI 与声明 Node/platform floor 一致且全绿。
+- [ ] Phase 2 可以增加 persistent Conversation，而无需修改 Archive V2 truth model。
 
 ---
 
-## 37. Phase 1B Freeze theorem
+## 30. Phase 1B Freeze theorem
 
-最终 Core 必须证明：
+最终只证明下面这组 theorem。
+
+### Ownership
+
+```text
+one World
+→ at most one mutation owner
+```
+
+### Published truth
 
 ```text
 Dayloom Published World
 = Protocol-valid current referenced immutable graph
 ```
 
-Publication：
+### Working truth
 
 ```text
-Core successful publication
-⇒ Protocol-valid target graph
-⇒ pinned base still current at visibility switch
-⇒ FINAL current replacement occurred once
-⇒ no partial World was visible
+Session Working World
+= pinned base tree
++ StagingManifest referenced staged files
 ```
 
-Staging：
-
-```text
-Staged World
-= StagingManifestV1 referenced durable files
-```
-
-Prepare：
+### Prepare
 
 ```text
 ArchiveOperation.status == prepared
-⇒ exactly one complete immutable target graph exists
+⇒ one complete Protocol-valid target graph exists
 ```
 
-Session：
+### Publication
 
 ```text
-one active Session
-⇒ exactly one CoreSessionRecord
-⇒ exactly one referenced ArchiveOperation
+current == target
+⇒ target is Published World
 ```
 
-并且：
+### Session
 
 ```text
-Session lifecycle
-≠ Published World lifecycle
+one current-process active RuntimeSession
+⇒ same CoreSessionRecord.sessionId
+⇒ same ArchiveOperation
 ```
 
-Manifest：
+### Restart
 
 ```text
-manifest identity is create-once
+unfinished Session after writer loss
+→ interrupted + preserved
+≠ automatically resumed
 ```
 
-GC：
+### Maintenance
 
 ```text
-GC may delete only objects unreachable from
-Published roots ∪ prepared-operation roots
+mutating maintenance
+≠ concurrent gameplay writer
 ```
 
-Semantic extensibility：
+### Extensibility
 
 ```text
-new ordinary semantic document path
+new ordinary World document
 ⇒ no Archive Protocol object-model change
-⇒ no Core Archive transaction-schema change
+⇒ no new Core transaction schema
 ```
 
-Package boundary：
+这就是 Phase 1B 的“优雅闭环”：
 
-```text
-@dayloom/archive-protocol
-= Archive meaning
-
-@dayloom/core
-= Archive side effects
-+ Core Session authority
-+ Dayloom World Profile/policy
-+ game/runtime semantics
-```
-
-这就是 Phase 1B 的实现闭环。
+> **通过缩小并发和恢复承诺，让 World truth、working truth、mutation ownership、process restart 和未来 Phase 2/3 handoff 各自只有一个清晰解释。**
 
 ---
 
-## 38. 实施顺序
+## 31. Phase 2 / Phase 3 handoff
 
-不要一次性同时迁移 Archive、Session、全部 gameplay operations。
-
-推荐顺序：
+Phase 2 可以直接建立在：
 
 ```text
-1B-1
-Protocol dependency
-+ V2 read repository
-+ manifest/current/commit/tree/blob validation
-
-1B-2
-CoreSessionRecord
-+ Session ↔ WorldOperation identity
-+ Runtime phase projection
-
-1B-3
-staging storage
-+ atomic index
-+ effective read
-
-1B-4
-prepare state machine
-+ immutable object idempotency
-+ atomic prepared switch
-
-1B-5
-publication/OCC
-+ recovery classification
-
-1B-6
-inspect/GC
-+ prepared target roots
-
-1B-7
-World Profile/mutation policy
-+ legacy Submission → document adapter
-
-1B-8
-init/planning/play/settle/abandon/revise cutover
-+ remove start/cancel World commits
-
-1B-9
-remove V1 canonical write/read path
-+ adversarial evidence
-+ CI
-
-→ Phase 1B Freeze
+single World writer
+stable Published World
+interrupted Session preservation
+one Session ↔ one ArchiveOperation
+pinned effective World
 ```
 
-每个子阶段必须保持仓库可 build/test，禁止长期维持两个 canonical World authorities。
+之上增加：
+
+```text
+persistent Promptpile Conversation
+compression/archive/restore
+```
+
+然后才把：
+
+```text
+interrupted
+→ resumable
+```
+
+升级为正式能力。
+
+Phase 3：
+
+```text
+React / MCP
+→ current Runtime Session
+→ SAME WorldOperation staging
+→ Core mutation policy
+```
+
+Agent/MCP 不成为独立 Archive writer。
 
 ---
 
-## 39. Phase 2 / Phase 3 handoff
+## 32. 文档治理
 
-Phase 1B Freeze 后，Phase 2 可以假设：
+修复完成前：
 
 ```text
-Published World stable
-CoreSessionRecord stable
-one Session ↔ one WorldOperation stable
-staging/effective read stable
+DAYLOOM_ARCHIVE_PROTOCOL_ADAPTATION_DRAFT.md
+= Phase 1B 修复 authority
 ```
 
-然后只引入 persistent Promptpile Conversation + compression。
+`doc/reference/ARCHIVE_FORMAT.md` 当前 `implemented` 描述必须视为实现快照，而不是高于本文的 normative runtime contract。
 
-Phase 3 可以假设：
+修复完成并 CI green 后：
 
-```text
-MCP tools
-→ Core World/Profile mutation capabilities
-→ SAME Session WorldOperation staging
-```
+1. 把本文稳定事实迁入 `doc/reference/ARCHIVE_FORMAT.md`；
+2. canonical reference 明确写入 `single-writer local runtime`；
+3. 删除旧 multi-lock / auto-resume / online-mutation concurrency 描述；
+4. 将本文改成完成记录或删除；
+5. Phase 2/3 只引用 canonical reference。
 
-而不是：
-
-```text
-MCP
-→ directly edit archive object store
-```
-
-普通 Agent gameplay path 永远经过 Core mutation policy。
-
----
-
-## 40. Freeze 后文档治理
-
-完成后：
-
-1. Archive Protocol 当前事实进入 canonical protocol docs/package README；
-2. Core World/Profile/Session/transaction ownership 进入 canonical Core architecture docs；
-3. 删除 `ARCHIVE_PROTOCOL_PACKAGE_DRAFT.md` 与本适配草案；
-4. tests/fixtures/CI 成为 executable evidence；
-5. Git history 保存 V1 → V2 transformation history。
-
-目标：
+原则：
 
 ```text
-protocol docs + package
-= Archive disk/data truth
-
-core architecture docs
-= runtime/session/game ownership truth
-
-plans
-= temporary implementation authority only
+one architecture
++ one implementation model
++ one executable evidence set
+= one truth
 ```
