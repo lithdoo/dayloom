@@ -1,0 +1,25 @@
+{
+  "name": "@dayloom/archive-protocol",
+  "version": "0.0.0",
+  "description": "Pure executable definition of the Dayloom Archive V2 protocol.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "commonjs",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" },
+    "./path": { "types": "./dist/path.d.ts", "require": "./dist/path.js", "default": "./dist/path.js" },
+    "./tree": { "types": "./dist/tree.d.ts", "require": "./dist/tree.js", "default": "./dist/tree.js" },
+    "./staging": { "types": "./dist/staging.d.ts", "require": "./dist/staging.js", "default": "./dist/staging.js" }
+  },
+  "files": ["dist", "README.md", "package.json"],
+  "scripts": {
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && tsc",
+    "guard": "node scripts/check-architecture.mjs",
+    "test": "npm run build && npm run guard && node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "ISC",
+  "dependencies": { "yaml": "^2.8.1" },
+  "devDependencies": { "@types/node": "^25.5.2", "typescript": "~5.9.3" }
+}
