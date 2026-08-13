@@ -5,6 +5,7 @@ dayloom 是一个以“天”为推进单位的 AI 生活模拟与日记生成�
 这个仓库采用 monorepo 布局：
 
 - [`packages/core`](packages/core/)：正式状态机、Runtime 与 Session 引擎（`@dayloom/core`）
+- [`packages/core2`](packages/core2/)：Archive V2-only Play Session MVP（`@dayloom/core2`）；独立于现有 TUI，按 [`CORE2_IMPLEMENTATION_DRAFT.md`](CORE2_IMPLEMENTATION_DRAFT.md) 的冻结契约实现
 - [`packages/tui`](packages/tui/)：正式全屏 TUI（`@dayloom/tui`，`dayloom-tui`）
 - [`packages/cli`](packages/cli/)：**已废弃**的旧 `dayloom` CLI；仍依赖 `@dayloom/core-old`，不再承接新功能
 - [`packages/core-old`](packages/core-old/)：旧引擎，仅为 CLI 和迁移验证保留，准备弃用
