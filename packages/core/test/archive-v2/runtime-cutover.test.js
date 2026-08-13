@@ -11,3 +11,11 @@ test('default Runtime uses one durable V2 operation from Session start through s
 test('default Runtime cancel aborts the same operation without publishing current',async(t)=>{
  const worldRoot=root();t.after(()=>fs.rmSync(worldRoot,{recursive:true,force:true}));const archive=createArchiveV2Repository({worldRoot});const runtime=await createDayloomRuntime({worldRoot,archiveV2Repository:archive,sessionFactory:createFakeSessionFactory()});await runtime.executeCommand({command:'init'});const session=await archive.readActiveSession();const result=await runtime.executeCommand({command:'cancel'});assert.equal(result.ok,true);assert.equal((await archive.readOperation(session.archiveOperationId)).status,'aborted');assert.equal((await archive.readCurrent()).status,'uninitialized');assert.equal(runtime.getSnapshot().world.revision,0);
 });
+
+test('settle and abandon publish semantic history documents with coherent control state',async(t)=>{
+ const worldRoot=root();t.after(()=>fs.rmSync(worldRoot,{recursive:true,force:true}));const archive=createArchiveV2Repository({worldRoot});const runtime=await createDayloomRuntime({worldRoot,archiveV2Repository:archive,sessionFactory:createFakeSessionFactory()});
+ for(const command of ['init','submit','daily','submit','play','submit','settle'])assert.equal((await runtime.executeCommand({command})).ok,true,command);
+ let current=await archive.readCurrent();assert.equal(current.status,'ready');assert.equal(current.commit.control.day,'day_0002');assert.equal(current.commit.control.lastSettledDay,'day_0001');assert.match(new TextDecoder().decode(await archive.readPublishedDocument('days/day_0001/settlement.md')),/Settled day_0001/);
+ for(const command of ['daily','submit','abandon-day'])assert.equal((await runtime.executeCommand({command})).ok,true,command);
+ current=await archive.readCurrent();assert.equal(current.commit.control.day,'day_0001');assert.equal(current.commit.control.lastSettledDay,'day_0001');assert.match(new TextDecoder().decode(await archive.readPublishedDocument('days/day_0002/abandoned.md')),/Abandoned day_0002/);
+});

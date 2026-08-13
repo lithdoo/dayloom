@@ -35,6 +35,8 @@ export class ArchiveV2Paths {
   stagedManifest(id: string): string { return path.join(this.workspace(id), 'manifest.json'); }
   session(id: string): string { return path.join(this.workspace(id), 'session.json'); }
   publishLock(): string { return this.resolve('.locks/publish.lock'); }
+  sessionLock(): string { return this.resolve('.locks/session-claim.lock'); }
+  operationLock(id: string): string { return path.join(this.operation(id), 'operation.lock'); }
   document(pathValue: string): string { return this.resolve(parseWorldDocumentPathV1(pathValue)); }
 }
 function safeId(value: string): string { if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value)) throw new Error('Unsafe opaque id.'); return value; }

@@ -46,8 +46,9 @@ export interface DayloomRuntimeOptions {
   worldRoot: string;
   sessionFactory: SessionFactory;
   operations?: RuntimeOperations;
+  /** @deprecated Explicit V1 compatibility escape hatch. The default runtime always uses Archive V2. */
   archiveRepository?: ArchiveRepository;
-  /** Archive Protocol V2 repository. Providing the legacy repository keeps the compatibility runtime. */
+  /** Archive Protocol V2 repository override; omitted uses the filesystem V2 implementation. */
   archiveV2Repository?: ArchiveV2Repository;
   stateMachine?: StateMachine;
   clock?: RuntimeClock;

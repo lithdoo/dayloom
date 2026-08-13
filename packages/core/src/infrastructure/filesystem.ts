@@ -16,6 +16,9 @@ export interface CoreFileSystem {
   makeDirectory(path: string): Promise<void>;
   listDirectory(path: string): Promise<string[]>;
   rename(source: string, target: string): Promise<void>;
+  /** Atomically creates target as a hard link; fails with EEXIST when claimed. */
+  link(source: string, target: string): Promise<void>;
+  realPath(path: string): Promise<string>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   syncDirectory(path: string): Promise<void>;
 }

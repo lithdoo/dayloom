@@ -1,11 +1,13 @@
 # Dayloom Core → Archive Protocol 适配实施冻结草案
 
-> 状态：Implementation Freeze / 待实施  
+> 状态：Implemented / Freeze candidate（待 CI 跨平台证据）
 > 日期：2026-08-13  
 > 实施顺序：**Phase 1B / 3**  
 > 前置：`ARCHIVE_PROTOCOL_PACKAGE_DRAFT.md`  
 > 后续：`PERSISTENT_CONVERSATION_COMPRESSION_DRAFT.md`、`PROMPTPILE_AGENT_RUNTIME_DRAFT.md`  
 > 原则：`@dayloom/core` 直接依赖 `@dayloom/archive-protocol`；本阶段不创建 `@dayloom/archive` runtime package。
+
+> 实施证据：默认 Runtime 已切换 Archive V2；Session/WorldOperation 一一绑定；prepare/publish/GC/restart/fault/concurrency 测试位于 `packages/core/test/archive-v2/`；Linux/Windows、Node 18/22 的 Protocol/Core/TUI 门禁位于 `.github/workflows/archive-protocol.yml`。旧 V1 仅保留为显式注入的 deprecated compatibility path，不参与默认运行时。
 
 ## 1. 一句话结论
 

@@ -59,9 +59,9 @@ async function createV2Runtime(
 ): Promise<DayloomRuntime> {
   const archive=options.archiveV2Repository??createArchiveV2Repository({worldRoot:options.worldRoot,clock,ids,logger});
   const sessionManager=new SessionManager({sessionFactory:options.sessionFactory,logger});
-  const operations=options.operations??createArchiveV2RuntimeOperations({archive});const read=await archive.readCurrent();let world: import('../types').WorldSnapshot;
+  const operations=options.operations??createArchiveV2RuntimeOperations({archive});await archive.reconcileSessions();const read=await archive.readCurrent();let world: import('../types').WorldSnapshot;
   if(read.status==='uninitialized')world=worldSnapshotFromArchive(options.worldRoot,{status:'uninitialized'});
   else if(read.status==='invalid')world=invalidWorldSnapshot(options.worldRoot,{code:'WORLD_INVALID',message:read.error.message});
-  else {const active=await archive.readActiveSession();const stable:import('../types').WorldSnapshot={phase:read.commit.control.phase,worldRoot:options.worldRoot,worldId:read.manifest.worldId,revision:read.pointer.revision,commitId:read.pointer.commitId,day:read.commit.control.day,lastSettledDay:read.commit.control.lastSettledDay,initialized:true,invalid:null,invalidReason:null};world=active?{...stable,phase:active.kind==='planning'?'planning':active.kind==='play'?'playing':active.kind==='revise'?'revising':'initializing'}:stable;}
+  else {world={phase:read.commit.control.phase,worldRoot:options.worldRoot,worldId:read.manifest.worldId,revision:read.pointer.revision,commitId:read.pointer.commitId,day:read.commit.control.day,lastSettledDay:read.commit.control.lastSettledDay,initialized:true,invalid:null,invalidReason:null};}
   return new RuntimeController({world,stateMachine:options.stateMachine??coreStateMachine,sessionManager,operations,ids,logger});
 }

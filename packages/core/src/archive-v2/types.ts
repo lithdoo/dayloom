@@ -12,6 +12,7 @@ import type { CoreFileSystem } from '../infrastructure/filesystem';
 import type { RuntimeClock } from '../infrastructure/clock';
 import type { IdGenerator } from '../infrastructure/ids';
 import type { CoreLogger } from '../infrastructure/logger';
+import type { SessionWorkspace } from '../sessions/types';
 
 export type CoreSessionKindV1 = 'init' | 'planning' | 'play' | 'revise';
 export type CoreSessionStatusV1 = 'active' | 'submitting' | 'completed' | 'cancelled' | 'interrupted';
@@ -75,6 +76,8 @@ export interface ArchiveV2Repository {
   createSession(input: { sessionId?: string; kind: CoreSessionKindV1; operationType?: string }): Promise<Readonly<CoreSessionRecordV1>>;
   readActiveSession(): Promise<Readonly<CoreSessionRecordV1> | null>;
   updateSessionStatus(id: string, status: CoreSessionStatusV1): Promise<Readonly<CoreSessionRecordV1>>;
+  sessionWorkspace(id: string): SessionWorkspace;
+  reconcileSessions(): Promise<void>;
   inspect(): Promise<ArchiveV2Inspection>;
   collectGarbage(options?: { delete?: boolean }): Promise<ArchiveV2GarbageCollectionResult>;
 }

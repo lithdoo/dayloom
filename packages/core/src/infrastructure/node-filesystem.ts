@@ -61,6 +61,15 @@ export class NodeCoreFileSystem implements CoreFileSystem {
     await fs.rename(source, target);
   }
 
+  async link(source: string, target: string): Promise<void> {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.link(source, target);
+  }
+
+  async realPath(target: string): Promise<string> {
+    return fs.realpath(target);
+  }
+
   async remove(target: string, options: { recursive?: boolean } = {}): Promise<void> {
     await fs.rm(target, { recursive: options.recursive ?? false, force: true });
   }
