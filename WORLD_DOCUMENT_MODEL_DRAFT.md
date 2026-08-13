@@ -2,15 +2,17 @@
 
 > 状态：Implementation Freeze / 待实施  
 > 日期：2026-08-13  
-> 目标：把 Dayloom 的 AI 语义内容从过度强类型结构迁移为文档原生 World，同时保留严格、最小、可验证的控制平面。  
+> 目标：把 Dayloom 的 AI 语义内容从过度强类型结构迁移为文档原生 World，同时保留最小、严格、可恢复的控制平面。  
 > 实施顺序：**Phase 1 / 3**  
 > 后续依赖：`PERSISTENT_CONVERSATION_COMPRESSION_DRAFT.md`、`PROMPTPILE_AGENT_RUNTIME_DRAFT.md`
 
 ## 1. 一句话结论
 
-Dayloom V2 第一阶段只解决一个问题：**Dayloom 如何安全、确定性地版本化一个主要由 AI / 人理解和维护的文档世界。**
+Dayloom V2 第一阶段只解决一个问题：
 
-冻结后的职责边界：
+> **如何安全、确定性地版本化一个主要由 AI / 人理解和维护的文档世界。**
+
+冻结后的总原则：
 
 ```text
 AI / 人主要理解的世界语义
@@ -31,50 +33,66 @@ prepare immutable state
 → FINAL ATOMIC current replacement
 ```
 
-但替换其内容模型：
+但替换 Archive V1 过度领域化的内容模型：
 
 ```text
-旧：canon/day/submission/domain-specific revisions
+旧：canon revision / day revision / submission-specific schema
 
-新：blob → canonical root tree → commit
+新：logical document tree
+   → immutable blob
+   → canonical root tree
+   → commit
 ```
 
-核心目标不是“把 JSON 换成 Markdown”，而是消除 archive 对 AI 语义 schema 的 ownership。
+核心目标不是“把 JSON 换成 Markdown”，而是：
+
+```text
+Archive owns transaction semantics
+Archive does NOT own narrative ontology
+```
 
 ---
 
-## 2. Phase 1 的唯一架构目标
+## 2. 从现有实现继承什么、删除什么
 
-完成后，Published World 必须可以被精确定义为：
+Phase 1 不是从零重写 Archive。
 
-```text
-Published World
-= CurrentPointer
-→ Commit
-→ RootTree
-→ immutable Blob(s)
-```
+从当前 `dev` Archive V1 保留：
 
-其中：
+- `manifest` 稳定 World 身份；
+- `current` 作为唯一已发布入口；
+- immutable object first / current last；
+- operation workspace；
+- publish lock；
+- optimistic base conflict；
+- crash 后允许 orphan immutable objects；
+- inspect / GC 基于引用图；
+- 失败不能污染当前有效 World。
 
-- `CurrentPointer` 是唯一 publication authority；
-- `Commit` 只引用一个完整 root tree，并保存最小 published control state；
-- `RootTree` 是逻辑 World document path 到 immutable blob 的规范映射；
-- `Blob` 保存原始文档 bytes；
-- Session staging 与 Published World 严格隔离；
-- Conversation 不属于 Published World。
+从 Archive V1 删除：
 
-成功的 World reader 不再需要理解：
-
+- `canonRevision`；
+- `dayHeads`；
 - `CanonDocuments`；
 - `PlanDocument`；
 - `PlayDocument`；
 - `PlayEventDocument`；
 - `SettlementDocument`；
-- `InitSubmission` / `PlanningSubmission` / `PlaySubmission` / `ReviseSubmission`；
-- canon revision / day revision 的固定内容布局。
+- `AbandonedDocument`；
+- init/planning/play/revise submission 作为 Archive canonical write schema；
+- Session lifecycle 通过 Published World commit 表达的设计。
 
-新增普通语义文档不应要求修改 archive core schema。
+因此 V2 的演化定义是：
+
+```text
+Archive V1 transaction theorem
++
+generic document graph
+-
+domain-specific archive schema
+=
+Archive V2
+```
 
 ---
 
@@ -93,7 +111,7 @@ Phase 1 冻结三个不可混淆的 truth domain：
    = 对话、工具、历史与未来压缩上下文
 ```
 
-Phase 1 只实现和冻结前两个的 World 侧语义；第三个由 Phase 2 / Phase 3 消费。
+Phase 1 只实现前两个的 World 侧语义；第三个由 Phase 2 / Phase 3 消费。
 
 必须成立：
 
@@ -118,7 +136,7 @@ current pointer
 = sole publication authority
 ```
 
-不得引入第二个可以让未提交内容变成正式 World 的旁路。
+不得存在第二条可以让未提交内容变成正式 World 的写入旁路。
 
 ---
 
@@ -129,31 +147,34 @@ current pointer
 主要由 AI / 人理解的内容采用文档原生模型，例如：
 
 ```text
-world.md
-rules.md
-style.md
+canon/**
 characters/**
-locations/**
-timeline/**
+scenes/**
+arcs/**
 memory/**
 days/**
 custom/**
 ```
 
-这些路径是产品/profile 约定，不是 archive core 的硬编码领域 schema。
+这些是 **Dayloom World Profile** 的产品约定，不是 Archive core 的领域 schema。
 
-Dayloom core 不应为了新增：
+新增：
 
 ```text
 characters/faction-a/leader.md
 custom/economy/trade-routes.md
 ```
 
-而新增对应 TypeScript domain type、validator、revision type 或 projector。
+不应要求新增：
+
+- Archive revision type；
+- Archive domain interface；
+- Archive-specific validator；
+- Archive-specific projector。
 
 ### 4.2 Control plane
 
-程序必须确定性理解的内容保持严格结构化，包括：
+程序必须确定性理解的内容保持严格结构化：
 
 - archive format/schema version；
 - world identity；
@@ -161,11 +182,11 @@ custom/economy/trade-routes.md
 - commit parent relation；
 - root tree identity；
 - blob hash / size / media type；
+- Published World 的最小业务控制状态；
 - operation identity / state；
 - pinned base identity；
 - staging manifest；
 - publish lock / conflict state；
-- published business control state；
 - integrity / recovery metadata。
 
 原则：
@@ -178,15 +199,51 @@ custom/economy/trade-routes.md
 → document
 ```
 
-“文档原生”不意味着 control plane 降低严格性；相反，语义越自由，控制面越必须严格。
+“文档原生”不意味着 control plane 变松；相反，语义越自由，控制平面越必须严格。
 
 ---
 
-## 5. Archive V2 物理布局
+## 5. Archive V2 总体模型
 
-第一版冻结为一个扁平 canonical root tree + content-addressed blob store，不实现递归 Git-style Merkle tree。
+Published World 精确定义为：
 
-推荐布局：
+```text
+Published World
+= CurrentPointer
+→ Commit
+→ Canonical RootTree
+→ immutable Blob(s)
+```
+
+工作态定义为：
+
+```text
+Operation
+→ pinned base
+→ Staging Manifest
+→ PUT / DELETE overlay
+```
+
+有效工作视图：
+
+```text
+Effective World
+= overlay(Published RootTree, Staging Manifest)
+```
+
+这里不存在：
+
+```text
+latest file wins
+scan directory to infer current state
+replay log to rebuild current state
+```
+
+---
+
+## 6. 物理布局
+
+第一版冻结为：
 
 ```text
 <world-root>/
@@ -206,73 +263,194 @@ custom/economy/trade-routes.md
 │           └── staging/
 │               ├── index.json
 │               └── files/
-│                   └── <opaque-staging-file-id>
+│                   └── <opaque-file-id>
 ├── .locks/
 │   └── publish.lock
 └── logs/
     └── operations.jsonl
 ```
 
+第一版不实现递归 Git-style Merkle tree。
+
 逻辑 World path 不直接决定物理 object-store path。
 
-这一点用于避免：
+因此：
+
+```text
+logical filesystem
+= product/domain interface
+
+physical object store
+= archive implementation detail
+```
+
+这用于隔离：
 
 - Windows / POSIX path 差异；
 - case folding；
+- path traversal；
 - device path；
-- traversal；
 - user-controlled path 直接进入内部存储布局。
 
 ---
 
-## 6. Archive manifest
+## 7. “文件原生”的精确定义
 
-`manifest.json` 只描述 archive 身份与格式，不描述 Published World 内容。
+Dayloom 的“文件原生”冻结为：
 
-概念形状：
+```text
+World semantic identity
+= logical path + bytes + media type
+```
+
+不是：
+
+```text
+用户可直接修改 object store 内某个物理文件
+= 修改 Published World
+```
+
+Published World 只能通过 repository / staging / publication transaction 修改。
+
+Phase 1 不把一个可编辑的物理 checkout 作为第二 authority。
+
+如果以后需要：
+
+```text
+materialize / export / checkout
+```
+
+它只能是可重建 projection：
+
+```text
+current → commit → tree → blobs
+→ materialized view
+```
+
+并必须满足：
+
+```text
+materialized view
+≠ publication authority
+```
+
+用户/工具对 projection 的编辑若要进入 World，必须重新经过 staging transaction。
+
+这既保留原项目“文件层级对人/AI 友好”的价值，也不牺牲事务一致性。
+
+---
+
+## 8. Archive Manifest V2
+
+`manifest.json` 只保存稳定 Archive 身份和展示标签，不保存 World semantic state。
 
 ```ts
 interface ArchiveManifestV2 {
   schemaVersion: 2;
   worldId: string;
+  title: string;
   createdAt: string;
 }
 ```
 
-World title、人物、世界介绍等语义内容应进入文档树，而不是不断扩张 manifest。
+其中：
 
-`current.json` 不存在时，archive 视为 `uninitialized`；即使 crash 留下尚未被 current 引用的 manifest / immutable objects，也不能视为 Published World。
+- `worldId`：稳定机器身份；
+- `title`：Hub / CLI 可直接读取的稳定展示标签；
+- 故事标题、世界简介等可变化语义仍属于 World documents；
+- `createdAt`：Archive 创建时间。
+
+`current.json` 不存在时，Archive 仍视为 `uninitialized`。
+
+因此 init crash 可以留下 provisional manifest / immutable objects，但不能形成 Published World。
+
+一旦 `current.json` 存在，manifest 默认不可由普通 World mutation 修改；后续如需要 rename / schema upgrade，应通过独立显式 metadata operation 处理，而不是普通 document staging。
 
 ---
 
-## 7. WorldDocumentPath v1
+## 9. Current Pointer V2
 
-文档路径本身是 V2 的稳定领域 vocabulary，必须在 Phase 1 冻结。
+```ts
+interface CurrentPointerV2 {
+  schemaVersion: 2;
+  revision: number;
+  commitId: string;
+  updatedAt: string;
+}
+```
 
-### 7.1 Identity
+规则：
+
+- 首次发布 `revision = 1`；
+- 后续成功发布严格 `+1`；
+- `commitId` 指向完整、已校验、immutable commit；
+- pointer 不重复保存 phase/day/tree hash；
+- 更新使用同目录 temp + flush/sync + atomic replace；
+- pointer 或 target commit 损坏时 fail-closed，不猜测其它 commit。
+
+`current.json` 是唯一需要原子替换的 mutable publication object。
+
+---
+
+## 10. WorldDocumentPath v1
+
+文档路径本身是 V2 的稳定 vocabulary。
+
+### 10.1 Canonicalization
+
+所有外部输入先执行：
+
+```text
+Unicode NFC normalization
+→ validate
+→ canonical path
+```
+
+RootTree 内保存的 path 必须已经是 NFC canonical form。
 
 逻辑 path：
 
 ```text
-- UTF-8 string
-- relative
-- `/` 作为唯一分隔符
-- case-sensitive
-- identity 不依赖宿主文件系统
+UTF-8
+relative
+`/` 为唯一 separator
+case-sensitive identity
+host-independent
 ```
 
-例如：
+### 10.2 Portable collision rule
+
+虽然 logical identity case-sensitive，但 Dayloom World v1 要求可跨 Windows/Linux 安全 materialize。
+
+因此同一个 tree 中不得存在 portable-collision path。
+
+第一版定义：
+
+```text
+portableCollisionKey(path)
+= NFC(path).toLowerCase()
+```
+
+同一 tree 内：
+
+```text
+path unique
+AND
+portableCollisionKey unique
+```
+
+因此：
 
 ```text
 characters/Alice.md
 characters/alice.md
 ```
 
-在逻辑模型中是两个不同 path。
+不能同时存在。
 
-实现必须在写入物理对象前检测宿主平台无法安全表示的 collision；不得让 Windows case folding 改变逻辑身份。
+该限制牺牲极少量理论 case-sensitive namespace，换取稳定的跨平台文件语义。
 
-### 7.2 必须拒绝
+### 10.3 必须拒绝
 
 至少拒绝：
 
@@ -287,48 +465,31 @@ empty segment (`a//b`)
 backslash `\`
 NUL
 ASCII control characters
-Windows drive / UNC / device forms
+Windows drive / UNC forms
+Windows reserved device names
+segments ending with dot or space
+characters invalid for portable Windows materialization
 reserved Dayloom internal namespace
+non-canonical stored Unicode path
 ```
 
-示例：
+### 10.4 Reserved namespace
 
-```text
-valid:
-world.md
-characters/alice.md
-days/day_0001/plan.md
-
-invalid:
-../world.md
-/world.md
-./world.md
-characters\\alice.md
-characters//alice.md
-CON
-```
-
-### 7.3 Reserved namespace
-
-World document tree 不得伪装 archive control plane。
-
-至少保留一个明确内部 namespace，例如：
+至少保留：
 
 ```text
 .dayloom/**
 ```
 
-第一版不得允许普通 World document 使用该 namespace。
+普通 World document 不得使用该 namespace。
 
-内部 control files 仍保存在 archive object/control layout，不属于 root tree。
+Archive control files、object store、operation metadata 都不属于 RootTree。
 
 ---
 
-## 8. Media/content contract
+## 11. Media/content contract
 
-第一版使用受控媒体类型集合，不接受任意隐式类型。
-
-最低支持集合：
+第一版受控媒体类型：
 
 ```text
 text/markdown
@@ -339,12 +500,12 @@ application/yaml
 
 规则：
 
-- 文本类文档必须是有效 UTF-8；
-- `application/json` 必须语法合法；
-- YAML 第一版可以只做 UTF-8 + 基础语法校验，不建立业务语义 schema；
-- bytes 长度必须与记录值一致；
-- 单文件和单 World 大小上限由配置/policy 控制；
-- media type 必须显式保存到 tree entry，不只通过扩展名猜测。
+- 文本类必须是有效 UTF-8；
+- JSON 必须语法合法；
+- YAML 必须通过基础语法解析，但 Archive core 不验证业务字段；
+- bytes 长度必须与记录一致；
+- 单文件 / 单 World quota 由 policy 控制；
+- media type 显式保存在 tree entry，不只由扩展名推断。
 
 必须坚持：
 
@@ -353,47 +514,56 @@ syntax validation
 ≠ semantic validation
 ```
 
-例如 `characters/alice.json` 可以验证为合法 JSON，但 archive core 不拥有 `name/age/relationships` 等业务字段 schema。
+例如：
+
+```text
+characters/alice.json
+```
+
+Archive 可以证明它是合法 JSON，但不拥有：
+
+```text
+name
+age
+relationships
+```
+
+等叙事 schema。
 
 ---
 
-## 9. Blob identity
+## 12. Blob identity
 
 Blob 是 immutable raw bytes。
 
-冻结：
-
 ```text
-blobHash = lowercase hex SHA-256(raw bytes)
+blobHash
+= lowercase hex SHA-256(raw bytes)
 ```
 
-同一 bytes 必须得到同一 blob identity。
-
-Blob object 必须满足：
+必须满足：
 
 ```text
-path hash
+object path hash
 == SHA-256(actual bytes)
 ```
 
-否则 archive integrity invalid。
-
-Blob store 允许自然去重：
+同一 bytes：
 
 ```text
-same bytes
-⇒ same blob
+⇒ same blob identity
+⇒ natural dedup
 ```
 
-已存在同 hash blob 时不得覆盖为不同 bytes；若检测到 hash/path 与实际 bytes 不一致，必须 fail-closed。
+已存在同 hash object 时不得覆盖不同 bytes。
+
+检测到 hash/path 与实际 bytes 不一致时 fail-closed。
 
 ---
 
-## 10. Canonical RootTree v1
+## 13. Canonical RootTree v1
 
-第一版 root tree 是一个扁平排序表。
-
-概念类型：
+第一版 RootTree 是扁平排序表：
 
 ```ts
 interface DocumentTreeEntryV1 {
@@ -409,23 +579,25 @@ interface RootTreeV1 {
 }
 ```
 
-### 10.1 Canonical order
+### 13.1 Canonical order
 
-`entries` 按规范 `path` 的 unsigned UTF-8 byte order 升序排列。
+`entries` 按 canonical path 的 unsigned UTF-8 byte order 升序排列。
 
 必须满足：
 
 ```text
+canonical NFC path
 unique path
-+ canonical sorted order
-+ valid media type
-+ valid blob hash
-+ bytes >= 0
+unique portableCollisionKey
+canonical sort
+valid media type
+valid blob hash
+bytes >= 0
 ```
 
-### 10.2 Canonical encoding
+### 13.2 Canonical encoding
 
-Tree hash 必须由确定性编码得到。
+Tree hash 由专用 deterministic encoder 产生。
 
 第一版固定：
 
@@ -433,37 +605,107 @@ Tree hash 必须由确定性编码得到。
 - 无 BOM；
 - 固定字段顺序；
 - 无无意义 whitespace；
-- `entries` 已按 path canonical order 排序；
-- newline policy 固定且由编码器统一实现。
-
-定义：
+- entries 已 canonical sort；
+- newline policy 固定。
 
 ```text
-treeHash = lowercase hex SHA-256(canonicalTreeBytes)
+treeHash
+= lowercase hex SHA-256(canonicalTreeBytes)
 ```
 
-不得直接依赖普通 `JSON.stringify` 对任意 object key insertion order 的偶然行为；应有专用 canonical tree encoder。
+不得依赖任意 object insertion order 的偶然行为。
 
-### 10.3 Integrity
+### 13.3 Integrity
 
-一个有效 tree 必须满足：
+有效 tree 必须满足：
 
 ```text
 for every entry:
   referenced blob exists
   blob hash matches
-  blob bytes matches
+  byte count matches
 ```
 
-Tree 不保存 AI 语义类型。
+Tree 不保存 AI semantic type。
 
 ---
 
-## 11. Commit V2
+## 14. PublishedWorldPhase
 
-Commit 只拥有 publication history 与最小 published control state。
+V2 必须把 **Published business state** 与 **Session / Runtime state** 分开。
 
-概念形状：
+当前 V1 的 `WorldPhase` 混合了：
+
+```text
+published stable state
++
+active Session state
++
+read failure state
++
+uninitialized state
+```
+
+V2 Commit 禁止继续复用该混合类型。
+
+冻结：
+
+```ts
+type PublishedWorldPhase =
+  | 'idle'
+  | 'planned'
+  | 'awaiting-settle';
+```
+
+以下状态不得写入 Commit：
+
+```text
+uninitialized
+initializing
+planning
+playing
+revising
+invalid
+```
+
+它们分别由：
+
+```text
+uninitialized
+= current absent
+
+initializing / planning / playing / revising
+= Session/Runtime projection
+
+invalid
+= read/validation result
+```
+
+表达。
+
+因此：
+
+```text
+Published World control
+≠ Runtime presentation state
+```
+
+Runtime 后续可以通过：
+
+```text
+PublishedWorldPhase
++ active Session kind/status
++ archive read status
+→ Runtime phase projection
+```
+
+得到 UI/command 所需状态，而不污染 immutable World history。
+
+---
+
+## 15. Commit V2
+
+Commit 只拥有 publication history 与最小 Published control。
 
 ```ts
 interface ArchiveCommitV2 {
@@ -475,20 +717,54 @@ interface ArchiveCommitV2 {
   createdAt: string;
   rootTreeHash: string;
   control: {
-    phase: WorldPhase;
+    phase: PublishedWorldPhase;
     day: string | null;
     lastSettledDay: string | null;
   };
 }
 ```
 
-具体 control 字段可以在实施前根据现有 Runtime 业务约束做最小确认，但 Freeze 原则是：
+### 15.1 Control invariants
+
+至少冻结：
 
 ```text
-commit owns only published business control
+phase == planned
+⇒ day != null
+
+phase == awaiting-settle
+⇒ day != null
+
+phase == idle
+⇒ day may be null or non-null
 ```
 
-不得重新引入：
+`day` 是 Runtime command/state-machine 必须确定性理解的当前业务 Day。
+
+`lastSettledDay` 继续保留，因为它是独立业务事实；删除它将迫使 Runtime 扫描并理解 `days/**` semantic documents，反而重新引入 archive-domain coupling。
+
+### 15.2 Commit 不拥有 Session
+
+以下不进入 Commit：
+
+```text
+sessionId
+session kind/status
+activeSession
+staging state
+conversation location
+recovery cursor
+```
+
+“打开一个 Session”本身不产生 World revision。
+
+Session start/cancel 默认只改变 Session/workspace truth。
+
+只有 `/submit`、settle、abandon 等真正改变 Published World 的操作才推进 `current`。
+
+### 15.3 Commit 不拥有 semantic refs
+
+禁止重新引入：
 
 ```text
 canonRevision
@@ -498,37 +774,94 @@ PlayDocument
 semantic content refs by domain type
 ```
 
-### 11.1 Session 不属于 Published World 默认 truth
-
-Phase 1 冻结：
-
-```text
-session id
-operation id
-staging state
-recovery cursor
-```
-
-属于 Session/operation workspace，不默认写入 Published World commit。
-
-“开启一个 AI Session”本身不自动制造 World revision。
-
-只有真正属于 Published World 的业务控制变化才进入 commit control。
-
-这样避免：
-
-```text
-runtime lifecycle noise
-→ pollute immutable World history
-```
-
-如果未来业务明确要求“active session”本身成为 Published World 事实，必须作为新的显式 contract 讨论，而不能由 Phase 1 implementation 临时加入。
+World semantic content 只通过 `rootTreeHash` 进入 Commit。
 
 ---
 
-## 12. Staging overlay v1
+## 16. Dayloom World Profile v1
 
-Staging 是针对某个固定 base commit 的 overlay，而不是另一份完整 World copy。
+Archive core 是 generic document archive，但 Dayloom 产品不能变成“完全无约定的文件袋”。
+
+因此在 Archive core 之上冻结一个独立 **Dayloom World Profile v1**。
+
+第一版稳定顶层语义 namespace：
+
+```text
+canon/**
+characters/**
+scenes/**
+arcs/**
+memory/**
+days/**
+custom/**
+```
+
+这些 namespace 用于：
+
+- AI prompt / read-model 约定；
+- TUI / inspector 展示；
+- Phase 3 Dayloom MCP tools 的默认语义边界；
+- migration / export 的稳定组织方式。
+
+但 Archive core 不验证：
+
+```text
+character 必须有什么字段
+scene 必须有什么字段
+arc 必须有什么字段
+```
+
+所以 ownership 是：
+
+```text
+Archive core
+= document identity + transaction
+
+Dayloom World Profile
+= product path conventions + mutation policy
+```
+
+未来增加：
+
+```text
+custom/economy/**
+characters/factions/**
+```
+
+可以只扩展 profile/content，不修改 Archive object model。
+
+---
+
+## 17. Dayloom mutation policy
+
+Generic Archive 允许 PUT/DELETE，但 Dayloom 产品必须保留原设计中的来源保护语义。
+
+Profile 可以把 logical paths 分类为：
+
+```text
+replaceable semantic document
+immutable-once-published source document
+append-by-new-path history document
+```
+
+例如用户原始输入、已发生历史事实等可以被 profile 标记为 immutable-once-published；AI 记忆、人物描述、世界说明等可以是 replaceable semantic documents。
+
+重要原则：
+
+```text
+Archive core validates whether mutation is structurally safe
+Dayloom policy validates whether mutation is semantically permitted
+```
+
+Phase 3 MCP 的 `staging.put/delete` 只能调用该 policy 后的 domain capability，不能绕过 policy 直接写 Archive。
+
+`index.yaml`、derived summary、export 等可以存在，但如果它们可从 tree/path 推导，就不得成为第二个 existence authority。
+
+---
+
+## 18. Staging overlay v1
+
+Staging 是针对固定 base commit 的 overlay，不是另一份完整 World copy。
 
 第一版 mutation algebra 只有：
 
@@ -547,7 +880,7 @@ RENAME
 APPEND
 ```
 
-这些行为第一版都归约为 `PUT` / `DELETE`。
+这些行为都归约为 PUT/DELETE。
 
 例如 rename：
 
@@ -556,27 +889,23 @@ DELETE old/path.md
 PUT new/path.md
 ```
 
-### 12.1 Final-state manifest
+### 18.1 Final-state manifest
 
-Staging manifest 保存每个 logical path 的**最终 staged mutation**，而不是完整操作日志。
-
-同一路径重复修改：
+Staging manifest 保存每个 logical path 的**最终 staged mutation**，不是完整 edit log。
 
 ```text
 PUT A
 PUT B
-→ manifest only keeps PUT B
+→ keep PUT B
 ```
 
 ```text
 PUT A
 DELETE A
-→ manifest only keeps DELETE A
+→ keep DELETE A
 ```
 
-因此同一个 base + 同一个最终 manifest 必须产生同一个 candidate tree。
-
-概念形状：
+概念类型：
 
 ```ts
 type StagedChangeV1 =
@@ -595,74 +924,76 @@ type StagedChangeV1 =
 
 interface StagingManifestV1 {
   schemaVersion: 1;
+  baseRevision: number;
   baseCommitId: string | null;
-  baseRevision: number | null;
   baseRootTreeHash: string | null;
   changes: StagedChangeV1[];
 }
 ```
 
-`changes` 必须按 path canonical order 保存并保证 unique path。
+初始化 operation：
 
-### 12.2 Staging files
+```text
+baseRevision = 0
+baseCommitId = null
+baseRootTreeHash = null
+```
 
-PUT 的 raw bytes 保存在：
+`changes` 必须 canonical sort 且 path unique。
+
+### 18.2 Staging physical files
+
+PUT raw bytes 保存于：
 
 ```text
 workspace/staging/files/<opaque-file-id>
 ```
 
-不得使用 AI 提供的 logical path 直接构造 staging physical path。
+禁止使用 logical World path 直接构造 staging physical path。
 
-manifest 中的 `sha256/bytes` 必须与 staging file 实际内容一致。
+manifest 的：
+
+```text
+sha256
+bytes
+```
+
+必须与实际 staging file 一致。
 
 ---
 
-## 13. Pinned base / optimistic conflict contract
+## 19. Staging lifecycle
 
-Operation 开始时必须 pin：
+Operation `open` 时允许修改 staging。
 
-```text
-baseRevision
-baseCommitId
-baseRootTreeHash
-```
-
-初始化操作则三者为 `null`。
-
-Staging 全部基于该 base 解释。
-
-Publication 前必须重新读取 current，并满足：
+一旦进入 `prepared`：
 
 ```text
-current.revision == baseRevision
-AND
-current.commitId == baseCommitId
+staging manifest becomes immutable for this operation
 ```
 
-必要时同时验证 base commit 的 `rootTreeHash` 与 pinned value 一致。
+`prepared` 后不得继续 PUT/DELETE。
 
-如果 current 已改变：
+如果用户/上层需要修改 candidate：
 
 ```text
-→ ARCHIVE_CONFLICT
-→ no publication
-→ staging preserved
+abort old operation
+→ begin new operation from current/base as appropriate
 ```
 
-第一版明确不做：
+这样可以保证：
 
 ```text
-automatic rebase
-automatic merge
-semantic conflict resolution
+prepared operation
+→ exactly one candidate tree
+→ exactly one target commit
 ```
 
-冲突后的处理由更高层显式决定。
+避免 retry 时 candidate identity 漂移。
 
 ---
 
-## 14. Candidate tree
+## 20. Candidate tree
 
 Candidate tree 是纯函数：
 
@@ -671,41 +1002,46 @@ candidateTree
 = overlay(baseTree, stagingManifest)
 ```
 
-语义：
+规则：
 
-- `PUT`：新增或替换 path；
-- `DELETE`：从结果中移除 path；不存在 path 的 DELETE 是否允许必须固定为一种行为，第一版推荐 idempotent no-op；
-- 未被 staging 提及的 path 原样继承 base；
+- PUT：新增或替换 path；
+- DELETE existing：移除 path；
+- DELETE missing：第一版定义为 idempotent no-op；
+- 未提及 path：继承 base；
 - 输出重新 canonical sort；
-- 输出必须通过完整 tree validation。
+- 输出必须通过 path/media/tree validation。
 
 必须成立：
 
 ```text
 same base tree
-+ same staging manifest
++ same final staging manifest
 ⇒ same candidate tree bytes
 ⇒ same tree hash
 ```
 
-Candidate tree 构建过程不调用 AI，不依赖 Conversation，不依赖当前 wall-clock time。
+Candidate tree 构建不调用 AI，不依赖 Conversation，不依赖 wall-clock time。
 
 ---
 
-## 15. Effective read model
+## 21. Effective read model
 
-Phase 1 统一读模型：
-
-### 15.1 Published read
+### 21.1 Published read
 
 ```text
 readPublished(path)
 listPublishedPaths()
 ```
 
-只从 current → commit → tree → blob 读取。
+只从：
 
-### 15.2 Session effective read
+```text
+current → commit → tree → blob
+```
+
+读取。
+
+### 21.2 Effective read
 
 ```text
 readEffective(path)
@@ -719,55 +1055,169 @@ listEffectivePaths()
 = overlay(published tree, staging manifest)
 ```
 
-未来 MCP / TUI / Session read model 只能包装这些稳定能力，不应绕过 repository 直接扫描 object store。
+未来 Session/MCP/TUI 只能包装这些稳定能力，不应绕过 repository 直接扫描 object store。
 
-Content search 不属于 archive core 的 Phase 1 contract；后续可以建立在 `list/read` 之上。
-
----
-
-## 16. Public core capability boundary
-
-Phase 1 实现完成后，核心业务能力至少应概念上包含：
-
-```text
-readCurrentWorld()
-readPublishedDocument(path)
-listPublishedDocuments()
-
-beginDocumentOperation(...)
-inspectStaging()
-stagePut(path, bytes, mediaType)
-stageDelete(path)
-readEffectiveDocument(path)
-listEffectiveDocuments()
-validateStaging()
-publish()
-discard()/abort()
-
-inspectArchive()
-collectGarbage()
-classifyRecovery()
-```
-
-具体 TypeScript API 名称可以在实施时优化，但 ownership 不得改变。
-
-不得继续把 canonical write API 定义成：
-
-```text
-stageCanon()
-stageDay()
-stageSubmission()
-```
-
-MCP shape 也不得进入此领域 API。
+Content search 不属于 Archive core Phase 1 contract；它可以建立在 list/read 之上。
 
 ---
 
-## 17. Publication state machine
+## 22. ArchiveOperationV2
 
-现有 Archive V1 “immutable objects first, current last”的事务思想保留并正式冻结。
+Operation metadata 是 crash/recovery 所需的 durable diagnostic state，但不是 publication authority。
 
-推荐 V2 state machine：
+冻结状态机：
+
+```text
+open
+  ↓ prepare
+prepared
+  ↓ successful current replacement
+published
+
+open/prepared
+  ↓ explicit discard
+aborted
+```
+
+第一版**不使用含义模糊的 terminal `failed` status**。
+
+Publication attempt 失败但 current 未变化时：
+
+```text
+operation remains open or prepared
++ lastError records latest failure
+```
+
+- 尚未 prepare 的 validation/staging error：保持 `open`；
+- target graph 已 prepare、publication attempt 失败：保持 `prepared`；
+- `published` / `aborted` 为终态。
+
+概念类型：
+
+```ts
+interface ArchiveOperationV2 {
+  schemaVersion: 2;
+  id: string;
+  type: string;
+  status: 'open' | 'prepared' | 'published' | 'aborted';
+
+  baseRevision: number;
+  baseCommitId: string | null;
+  baseRootTreeHash: string | null;
+
+  targetCommitId: string | null;
+  targetRootTreeHash: string | null;
+
+  createdAt: string;
+  updatedAt: string;
+  lastError: RuntimeError | null;
+}
+```
+
+### 22.1 Prepared invariants
+
+```text
+status == prepared
+⇒ targetCommitId != null
+⇒ targetRootTreeHash != null
+⇒ staging immutable
+⇒ target tree == overlay(pinned base, staging)
+```
+
+### 22.2 Retry semantics
+
+`prepared` operation 可以显式 retry publication，但必须：
+
+```text
+same operation
+same pinned base
+same staging
+same targetRootTreeHash
+same targetCommitId
+```
+
+retry 不重新执行 AI，也不重新解释 semantic intent。
+
+如果 current 已漂移：
+
+```text
+ARCHIVE_CONFLICT
+→ remain prepared
+→ staging preserved
+→ automatic rebase forbidden
+```
+
+调用方可选择 abort，再在新 base 上创建新 operation。
+
+### 22.3 Publication fact
+
+即使 `operation.json` 因 crash 仍是 `prepared`：
+
+```text
+current.commitId == targetCommitId
+```
+
+也证明 publication 已发生。
+
+因此：
+
+```text
+operation.status
+= diagnostic
+
+current pointer
+= publication truth
+```
+
+---
+
+## 23. Pinned base / optimistic conflict
+
+Operation 创建时 pin：
+
+```text
+baseRevision
+baseCommitId
+baseRootTreeHash
+```
+
+Publication critical section 内必须重新读取 current。
+
+已初始化 World：
+
+```text
+current.revision == baseRevision
+AND
+current.commitId == baseCommitId
+```
+
+初始化：
+
+```text
+current must still be absent
+```
+
+不满足时：
+
+```text
+→ ARCHIVE_CONFLICT
+→ no current change
+→ prepared staging preserved
+```
+
+第一版明确不实现：
+
+```text
+automatic merge
+automatic rebase
+semantic conflict resolution
+```
+
+---
+
+## 24. Publication state machine
+
+V2 继承 V1 “immutable objects first, current last”。
 
 ```text
 resolve pinned base
@@ -780,9 +1230,9 @@ materialize/deduplicate immutable blobs
 ↓
 write immutable root tree
 ↓
-write immutable commit candidate
+write immutable target commit
 ↓
-mark operation prepared
+freeze operation as prepared
 ↓
 acquire publish lock
 ↓
@@ -790,7 +1240,7 @@ re-read current
 ↓
 require current == pinned base
 ↓
-re-validate target commit/tree/blob graph
+re-validate complete target graph
 ↓
 FINAL ATOMIC current.json REPLACE
 ↓
@@ -801,29 +1251,29 @@ best-effort operation/log finalization
 release publish lock
 ```
 
-实现可以在不改变 theorem 的前提下调整“预写 immutable object”与“锁获取”的具体位置，但最终必须满足：
+具体实现可以调整“预写 object”与“拿锁”的位置，但 theorem 不得改变：
 
 ```text
 current replacement
 = only visibility boundary
 ```
 
-锁应尽可能只覆盖 publication critical section，不应覆盖长时间 document staging。
+锁尽可能只覆盖 publication critical section，不覆盖长时间 staging/editing。
 
 ---
 
-## 18. Publication theorem
+## 25. Publication theorem
 
 成功必须证明：
 
 ```text
 publish success
 ⇒ current references target commit
-⇒ target commit exists and is immutable
+⇒ target commit immutable and valid
 ⇒ target commit references complete valid root tree
 ⇒ root tree references only existing hash-valid blobs
 ⇒ target tree == overlay(pinned base tree, staged manifest)
-⇒ published control state is valid
+⇒ Published control valid
 ```
 
 失败必须证明：
@@ -833,119 +1283,59 @@ failure before final current replacement
 ⇒ previous Published World remains current
 ```
 
-明确允许：
+允许：
 
 ```text
-failure may leave unreachable immutable blobs/tree/commit
+unreachable immutable blob/tree/commit
 ```
 
-但禁止：
+禁止：
 
 ```text
-failure exposes incomplete World
+incomplete World becomes current
 ```
 
-因此：
+核心原则：
 
 > **garbage is allowed; corrupt visible state is not.**
 
-这条原则是 V2 crash safety 的核心。
-
 ---
 
-## 19. Atomic current publication
+## 26. Crash / recovery semantics
 
-`current.json` 是唯一需要原子替换的 mutable publication pointer。
+Recovery 不猜测、不自动 replay publication，而是分类 durable facts。
 
-概念形状：
-
-```ts
-interface CurrentPointerV2 {
-  schemaVersion: 2;
-  revision: number;
-  commitId: string;
-  updatedAt: string;
-}
-```
-
-发布必须采用现有可移植 atomic-file 策略或等价机制：
+### 26.1 `current == base`
 
 ```text
-write temp
-→ flush/sync as required
-→ atomic rename/replace
-→ sync parent directory where required
+prepared operation
++ current still pinned base
+→ target not published
 ```
 
-平台差异必须由 infrastructure 层吸收，不得改变 World-level success semantics。
+可以显式 retry 或 abort。
 
----
-
-## 20. Operation state machine
-
-Operation metadata 至少需要能够区分：
-
-```text
-open
-prepared
-published
-failed
-aborted
-```
-
-重要语义：
-
-```text
-prepared
-≠ published
-```
-
-`prepared` 仅表示 candidate immutable graph 已经足够完整，可以尝试 publication。
-
-`published` 只能由 durable current pointer 事实证明。
-
-Operation metadata 写失败不能反向否定已经完成的 current publication；current 仍是 publication truth。
-
----
-
-## 21. Crash / recovery semantics
-
-Recovery 不自动猜测或重放 publication 副作用，而是根据 durable facts 分类。
-
-对于一个 prepared operation：
-
-### 21.1 current 仍等于 base
-
-```text
-current == pinned base
-→ target was not published
-```
-
-可以保留 staging / prepared objects，等待显式 retry 或 discard。
-
-### 21.2 current 指向 target commit
+### 26.2 `current == target`
 
 ```text
 current.commitId == targetCommitId
 → publication succeeded
 ```
 
-即使 operation metadata 仍写着 `prepared`，recovery 也应把它分类为 already-published，并可修复 diagnostics metadata。
+即使 metadata 仍是 `prepared`，也应分类为 already-published，并可 best-effort 修复 operation diagnostics。
 
-### 21.3 current 已指向其它 commit
+### 26.3 `current == other`
 
 ```text
 current != base
 AND
 current != target
-→ operation superseded/conflicted
+→ superseded/conflicted
 ```
 
-不得自动 replay。
+不得自动 replay/rebase。
 
-### 21.4 Recovery theorem
-
-必须成立：
+### 26.4 Recovery theorem
 
 ```text
 recovery classification
@@ -955,168 +1345,119 @@ recovery classification
 而不是：
 
 ```text
-recovery
-= guess + replay side effects
+guess
++ replay side effects
 ```
 
 ---
 
-## 22. Cancel / discard semantics
+## 27. Session 与 Published World
 
-Phase 1 默认冻结：
+Phase 1 明确改变当前 V1 的 Session boundary 设计。
+
+默认：
 
 ```text
-cancel/discard staging
-→ closes/discards operation workspace
-→ Published World unchanged
+start Session
+→ Session/workspace state only
+→ no World commit
+
+cancel Session
+→ discard/close Session staging
+→ no World commit
+
+submit Session
+→ validate staged World state
+→ publish World commit
 ```
 
-Session start/cancel 不因为 runtime lifecycle 本身生成 World commit。
+因此 immutable World history 不再记录：
 
-如果上层业务状态确实需要发布 phase/day 等 control change，则通过显式 World publication 表达，不依赖“Session 存在”这一事实隐式修改 World。
+```text
+planning started
+play Session opened
+revise Session cancelled
+```
+
+这类 runtime lifecycle noise。
+
+后续 Runtime 的 `planning/playing/revising` 等状态由 Published control + Session state 投影得到。
 
 ---
 
-## 23. Integrity inspection
-
-`inspectArchive()` 至少应验证：
-
-```text
-manifest valid
-current valid
-current commit exists
-commit parent relation sane
-commit rootTree exists
-tree canonical encoding/hash valid
-tree paths valid/unique/sorted
-all blobs exist
-all blob hashes match
-all byte counts match
-published control valid
-```
-
-并报告：
-
-```text
-reachable commits
-a reachable trees/blobs set
-unreachable immutable objects
-interrupted/prepared operations
-invalid/corrupt references
-```
-
-Inspection 必须是只读的。
-
----
-
-## 24. Garbage collection
-
-GC 只能删除**不可达 immutable objects**与满足 retention policy 的已关闭 operation workspace。
-
-Reachability 从：
-
-```text
-current
-→ commit parent chain
-→ root trees
-→ blobs
-```
-
-计算。
-
-第一版允许 orphan immutable objects，因为它们是 crash-safe publication 的正常副产品。
-
-GC 必须默认 dry-run / report-first；实际删除需显式开启。
-
-GC 不得删除：
-
-- current 可达 commit/tree/blob；
-- 尚未关闭且可能继续 retry 的 operation staging；
-- 无法确定 ownership 的对象。
-
----
-
-## 25. Validation stack
-
-Phase 1 validation 分四层，避免重新把 AI 语义塞回 archive schema。
+## 28. Validation stack
 
 ### Layer 1 — Path
 
-验证：
-
 ```text
-canonical relative path
+NFC canonicalization
+relative/path grammar
 reserved namespace
+portable collision
 platform-safe identity
-collision
 ```
 
-### Layer 2 — Content / media
-
-验证：
+### Layer 2 — Content/media
 
 ```text
 allowed media type
-UTF-8 where required
-JSON/YAML syntax where required
-bytes quota
+UTF-8
+JSON/YAML syntax
+quota
 hash
 ```
 
-### Layer 3 — Tree graph
-
-验证：
+### Layer 3 — Tree/object graph
 
 ```text
 unique/sorted path
+portable collision uniqueness
 blob exists
 hash matches
 size matches
 tree canonical hash matches
 ```
 
-### Layer 4 — Control / publication
-
-验证：
+### Layer 4 — Published control / transaction
 
 ```text
-commit parent
-revision relation
-published control
+PublishedWorldPhase invariants
+commit parent/revision relation
 expected base
-current conflict
 operation state
+current conflict
 ```
 
-明确不属于 archive core validation：
+明确不属于 Archive core：
 
 ```text
 character semantic fields
 story semantics
 plan semantic correctness
-narrative event schema
-AI-generated domain ontology
+event ontology
+AI-generated domain schema
 ```
 
 ---
 
-## 26. Security constraints
+## 29. Security constraints
 
-World document path 与 content 必须按 untrusted input 处理，尤其未来来自 AI / MCP 时。
+World path/content 必须按 untrusted input 处理，尤其未来来自 AI/MCP 时。
 
-必须覆盖：
+至少覆盖：
 
 ```text
 path traversal
 absolute path
-Windows drive / UNC / device names
+Windows drive / UNC / device paths
+reserved internal namespace
+Unicode non-canonical forms
+case-fold collision
+NUL/control chars
 symlink escape
-case collision
-NUL / control chars
-reserved namespace injection
 oversized file
 oversized World
-duplicate logical path
+duplicate path
 hash mismatch
 malformed tree
 malformed control JSON
@@ -1128,17 +1469,91 @@ AI-provided path 永远不能直接：
 path.join(worldRoot, aiPath)
 ```
 
-必须经过 logical path parser / validator，并通过 repository/object-store abstraction 操作。
+必须经过：
 
-物理 blob/tree/object store 不允许通过 World document API 访问。
+```text
+logical path parser
+→ Dayloom mutation policy
+→ repository staging
+```
+
+物理 object store 不允许通过 World document API 直接访问。
 
 ---
 
-## 27. V1 → V2 breaking cutover
+## 30. Inspect
 
-Phase 1 是明确 breaking migration。
+`inspectArchive()` 至少验证：
 
-默认 Freeze 决策：
+```text
+manifest valid
+current valid
+current commit exists
+commit revision/parent/control valid
+commit root tree exists
+tree canonical encoding/hash valid
+tree paths NFC/unique/sorted/portable
+every blob exists
+every blob hash matches
+every byte count matches
+prepared operation base/target sane
+```
+
+并报告：
+
+```text
+reachable commits
+a reachable tree/blob set
+unreachable immutable objects
+open/prepared operations
+invalid/corrupt references
+```
+
+Inspect 必须只读。
+
+---
+
+## 31. Garbage collection
+
+Reachability 从：
+
+```text
+current
+→ parent commit chain
+→ root trees
+→ blobs
+```
+
+计算。
+
+GC 可以清理：
+
+- unreachable immutable blobs/trees/commits；
+- terminal operation 超过 retention 的 workspace；
+- stale temp files。
+
+不得删除：
+
+- current 可达 graph；
+- `open/prepared` operation staging；
+- 无法确定 ownership 的 object。
+
+GC 默认 dry-run/report-first。
+
+`delete: true` 时才执行物理删除，并必须与 publication 协调，避免竞态。
+
+GC 不是 correctness 前置条件：
+
+```text
+never run GC
+⇒ Archive still correct
+```
+
+---
+
+## 32. V1 → V2 breaking cutover
+
+冻结：
 
 ```text
 Archive V1
@@ -1148,146 +1563,174 @@ Archive V1
 V2 runtime 不做：
 
 ```text
-implicit V1/V2 dual-read
+implicit dual-read
 implicit V1→V2 projection
 V1/V2 dual-write
 ```
 
-如果 dev 环境确认没有必须保留的外部 V1 World，可以直接切换 schema version 并废弃 V1 runtime write path。
+如果没有必须保留的外部 V1 World：
 
-如果后续确认存在必须保留的 V1 用户数据，应新增**显式、离线、一次性 migrator**：
+```text
+direct breaking cutover
+```
+
+如果后续确认需要迁移存量：
 
 ```text
 V1 archive
-→ explicit migration
-→ new V2 archive
+→ explicit offline one-shot migrator
+→ V2 archive
 ```
 
-Migrator 不得成为 V2 runtime 的长期 compatibility layer。
+Migrator 不得成为 V2 runtime 长期 compatibility layer。
 
 ---
 
-## 28. 旧强类型模型的退出条件
+## 33. 旧模型退出条件
 
-Phase 1 完成必须意味着：
+Phase 1 完成必须意味着 V2 canonical World write path 不再依赖：
 
 ```text
 CanonDraft
 DayDraft
-canonRevision/dayRevision write path
+canonRevision
+dayRevision
+dayHeads
 strongly typed SessionSubmission publication
+stageCanon()
+stageDay()
 ```
 
-不再是 V2 canonical World write path。
-
-允许短期 adapter：
+允许实施期单向 adapter：
 
 ```text
-legacy semantic result
-→ V2 stage PUT/DELETE
+legacy AI/session output
+→ Dayloom World Profile mutation
+→ V2 staging PUT/DELETE
 ```
 
-但只允许单向兼容：
+禁止：
 
 ```text
-old model
-→ new documents
+old model ↔ V2 documents
 ```
 
-禁止长期：
+双向同步。
 
-```text
-old model ↔ new model dual synchronization
-```
+### 33.1 明确不迁移成第二 truth 的旧文件
 
-否则会重新产生双 truth。
+以下旧概念如果可从 V2 truth 推导，不应继续作为 canonical authority：
 
-当 Phase 1 Freeze 完成后：
-
-- `ArchiveRepository` canonical API 不再暴露 `stageCanon()` / `stageDay()`；
-- `CommitDraft` 不再包含 `canonRevision` / `dayHeads`；
-- V2 reader 不再以旧 submission/schema 重建 Published World；
-- 新增普通 World 文档不要求 core schema 修改。
+- `state/calendar.yaml.current_day`：由 Commit `control.day` 取代；
+- `state_patch.yaml`：未提交 diff 由 staging manifest 表达，已提交 diff 可由 parent/child tree 派生；
+- 仅用于列举目录成员的 `index.yaml`：可作为 curated semantic document，但不得成为 existence truth；
+- `logs/**`：只用于诊断；
+- `exports/**`：只作为 derived output。
 
 ---
 
-## 29. 与当前 AI 调用的临时兼容边界
+## 34. Phase 1 public capability boundary
 
-Phase 1 刻意不要求同步完成 Phase 2 / Phase 3。
-
-允许当前 direct Promptpile adapter 暂时存在。
-
-如果旧 `NaturalLanguageSession` 仍输出强类型 submission，为了独立完成 Phase 1，可以临时通过 adapter 将其转换为 V2 document staging。
-
-但必须满足：
+概念上至少提供：
 
 ```text
-AI/runtime compatibility adapter
-≠ V2 World authority
+readCurrentWorld()
+readPublishedDocument(path)
+listPublishedDocuments()
+
+beginDocumentOperation(...)
+inspectStaging()
+stagePut(path, bytes, mediaType)
+stageDelete(path)
+readEffectiveDocument(path)
+listEffectiveDocuments()
+prepare()
+publish()
+abort()
+
+inspectArchive()
+collectGarbage()
+classifyRecovery()
 ```
 
-Phase 1 correctness tests不得依赖：
+具体 TypeScript 名称可在实现时优化，但 ownership 不得改变。
 
-- Promptpile；
-- LLM 网络请求；
-- promptpile-react；
-- promptpile-mcp；
-- promptpile-compress。
+Archive domain API 不接受：
+
+```text
+MCP tool shape
+Promptpile Conversation object
+React event
+```
+
+这些只能是上层 adapter。
 
 ---
 
-## 30. Phase 1 不做什么
+## 35. Phase 1 不做什么
 
-Implementation Freeze 后明确停止扩大范围。
+Implementation Freeze 后停止扩大范围。
 
 不做：
 
 - persistent Promptpile Conversation；
-- conversation compression / archive retrieval；
+- conversation compression / restore；
 - promptpile-react；
 - Agent Event Protocol；
 - generic MCP executor；
 - Dayloom MCP server；
 - recursive Merkle tree；
-- semantic diff / fuzzy patch；
-- automatic merge / rebase；
+- semantic patch/fuzzy merge；
+- automatic merge/rebase；
 - semantic schema registry；
 - arbitrary binary media ecosystem；
 - vector search；
-- World content search engine；
+- World search engine；
+- editable authoritative physical checkout；
 - Conversation archive 与 World archive 合并。
 
-这些都不能作为 Phase 1 Freeze blocker。
+这些不能成为 Phase 1 Freeze blocker。
 
 ---
 
-## 31. Executable evidence
+## 36. Executable evidence
 
-Phase 1 Freeze 不以“代码看起来符合文档”为验收，而要求 architecture theorem 有 executable witness。
+Phase 1 Freeze 必须用 executable witness 证明 theorem。
 
-### 31.1 Path/media conformance
+### 36.1 Path conformance
 
 覆盖：
 
+- NFC normalization；
 - valid POSIX logical paths；
-- traversal / absolute / backslash / control chars；
-- Windows reserved/case collisions；
+- traversal/absolute/backslash/control chars；
+- Windows reserved names；
+- trailing dot/space；
+- case-fold collisions；
 - reserved namespace；
-- UTF-8 / JSON / YAML validation；
-- media allowlist；
-- file/world quota。
+- Windows/Linux 得到相同 canonical path identity。
 
-### 31.2 Object identity
+### 36.2 Media/content
+
+覆盖：
+
+- Markdown/text UTF-8；
+- JSON syntax；
+- YAML syntax；
+- unsupported media；
+- per-file / per-World quota。
+
+### 36.3 Object identity
 
 覆盖：
 
 - blob hash deterministic；
 - same bytes deduplicate；
 - canonical tree order；
-- same logical tree → same canonical bytes/hash；
+- same logical tree → same bytes/hash；
 - corrupt blob/tree fail-closed。
 
-### 31.3 Overlay behavior
+### 36.4 Overlay
 
 覆盖：
 
@@ -1296,46 +1739,62 @@ PUT create
 PUT replace
 DELETE existing
 DELETE missing idempotent no-op
-multiple writes same path collapse to final state
+multiple writes collapse to final state
 readEffective
 listEffective
 ```
 
-### 31.4 Publication / OCC
+### 36.5 Published control
+
+覆盖：
+
+- only `idle/planned/awaiting-settle` can be committed；
+- `planning/playing/revising/invalid/uninitialized` rejected from Commit；
+- planned/awaiting-settle require current day；
+- Session start/cancel does not advance current revision。
+
+### 36.6 Operation lifecycle
+
+覆盖：
+
+```text
+open → prepared → published
+open → aborted
+prepared → aborted
+prepared publication failure → prepared + lastError
+prepared retry same target
+prepared staging mutation rejected
+```
+
+### 36.7 Publication/OCC
 
 覆盖：
 
 - normal publish；
+- initialization publish；
 - stale base conflict；
-- conflict preserves staging；
-- no current change before final publication；
-- current atomically advances only to complete target graph。
+- conflict preserves prepared operation/staging；
+- no current change before final replace；
+- current advances only to complete target graph。
 
-### 31.5 Fault injection
+### 36.8 Fault injection
 
-在 publication mutation boundaries 注入 crash/failure，至少覆盖：
+至少在以下边界注入 failure/crash：
 
 ```text
 after blob materialization
-
 after tree materialization
-
 after commit materialization
-
 after operation prepared
-
 after publish lock
-
 before current replace
-
 after current replace
-
-before operation status finalization
+before operation diagnostic finalization
 ```
 
-每个 fault 后重新打开 archive 并验证 Published World theorem。
+每个 fault 后重新打开 Archive 并验证 Published World theorem。
 
-### 31.6 Recovery
+### 36.9 Recovery
 
 覆盖：
 
@@ -1345,29 +1804,31 @@ prepared + current==target
 prepared + current==other
 ```
 
-并证明不会自动 replay publication。
+证明不会自动 replay/rebase。
 
-### 31.7 Inspect / GC
+### 36.10 Inspect/GC
 
 覆盖：
 
 - reachable graph；
-- orphan blob/tree/commit；
+- orphan objects；
 - dry-run GC；
 - retention；
-- reachable object never deleted。
+- reachable object never deleted；
+- open/prepared staging never guessed away。
 
-### 31.8 Restart witness
+### 36.11 Restart witness
 
-真实文件系统 witness：
+真实 filesystem：
 
 ```text
 initialize V2 World
 → begin operation
 → stage create/replace/delete
 → read effective view
+→ prepare
 → publish
-→ destroy in-memory repository
+→ destroy repository instance
 → reopen from disk
 → read identical Published World
 → inspect integrity green
@@ -1375,11 +1836,9 @@ initialize V2 World
 
 ---
 
-## 32. Platform evidence
+## 37. Platform evidence
 
-World logical identity 必须跨平台稳定。
-
-Phase 1 至少应在：
+至少验证：
 
 ```text
 Node 20 / Ubuntu
@@ -1388,27 +1847,24 @@ Node 20 / Windows
 Node 22 / Windows
 ```
 
-验证核心 filesystem/path/publication tests。
-
-如果项目最终决定统一不同 Node support floor，可以在实施阶段按仓库整体 runtime contract调整，但 Windows/Linux 双平台 evidence 不能省略。
-
-重点不是“所有测试都跑四次”，而是以下 theorem 必须跨平台：
+重点 theorem：
 
 ```text
 logical path identity
+portable collision policy
 canonical tree hash
-atomic publication
+atomic current publication
 restart recovery
 GC reachability
 ```
 
+Windows/Linux 必须得到相同 logical tree identity 和 canonical hash。
+
 ---
 
-## 33. Phase 1 Freeze theorem
+## 38. Phase 1 Freeze theorem
 
-实现完成后必须同时证明以下不变量。
-
-### 33.1 World truth
+### 38.1 World truth
 
 ```text
 PublishedWorld
@@ -1417,22 +1873,32 @@ PublishedWorld
 
 不存在其它 Published World authority。
 
-### 33.2 Staging isolation
+### 38.2 Staging isolation
 
 ```text
 staged mutation
 ⇒ no published reader observes it
 ```
 
-### 33.3 Deterministic candidate
+### 38.3 Deterministic candidate
 
 ```text
-same base tree
-+ same staging manifest
+same pinned base tree
++ same final staging manifest
 ⇒ same candidate tree hash
 ```
 
-### 33.4 Publication
+### 38.4 Published control separation
+
+```text
+Commit control
+⇒ stable PublishedWorldPhase only
+
+Session/runtime state
+⇒ not stored as Published World phase
+```
+
+### 38.5 Publication
 
 ```text
 publish success
@@ -1440,39 +1906,50 @@ publish success
 ⇒ expected base still matched
 ⇒ immutable target graph complete
 ⇒ current atomically references target commit
-⇒ target tree equals overlay(base, staging)
+⇒ target tree == overlay(base, staging)
 ```
 
-### 33.5 Failure
+### 38.6 Failure
 
 ```text
 failure before current replacement
 ⇒ previous Published World remains current
 ```
 
-### 33.6 Conflict
+### 38.7 Conflict
 
 ```text
 current != pinned base
 ⇒ no publication
-⇒ staging preserved
+⇒ prepared staging preserved
+⇒ no automatic rebase
 ```
 
-### 33.7 Recovery
+### 38.8 Recovery
 
 ```text
 recovery classification
-⇒ depends only on durable artifacts
+= function(durable artifacts)
 ```
 
-### 33.8 Extensibility
+### 38.9 Extensibility
 
 ```text
 new semantic World document path
-⇒ no archive core semantic schema change required
+⇒ no Archive core semantic schema change required
 ```
 
-### 33.9 Old-model exit
+### 38.10 File-native semantics
+
+```text
+logical document tree
+= product filesystem truth
+
+physical object store/materialized projection
+≠ second publication authority
+```
+
+### 38.11 Old-model exit
 
 ```text
 V2 World publication
@@ -1481,44 +1958,57 @@ V2 World publication
 
 ---
 
-## 34. Phase 1 Final acceptance checklist
+## 39. Final acceptance checklist
 
 只有以下全部满足，才允许进入 Phase 2：
 
-- [ ] Archive V2 object model implemented；
-- [ ] `WorldDocumentPath` parser/validator frozen；
+- [ ] Archive V2 manifest/current/commit/tree/blob model implemented；
+- [ ] `manifest.title` 明确定义为稳定 display identity；
+- [ ] `PublishedWorldPhase` 与 Session/runtime phase 分离；
+- [ ] Commit 不允许 transient/session/read-failure phase；
+- [ ] Commit control 只保留 phase/day/lastSettledDay；
+- [ ] `WorldDocumentPath` NFC canonicalization implemented；
+- [ ] portable case-fold collision contract implemented；
+- [ ] Windows reserved/path safety implemented；
 - [ ] media/content validation implemented；
 - [ ] SHA-256 blob identity + dedup implemented；
-- [ ] canonical RootTree encoding/hash implemented；
-- [ ] Commit V2 only references root tree + minimal control；
-- [ ] staging manifest is unique staged truth；
-- [ ] staging only exposes PUT/DELETE algebra；
+- [ ] canonical flat RootTree encoding/hash implemented；
+- [ ] Dayloom World Profile v1 路径约定明确；
+- [ ] Dayloom mutation policy 明确区分 replaceable / protected history；
+- [ ] staging manifest 是唯一 staged truth；
+- [ ] staging 只使用 PUT/DELETE algebra；
+- [ ] prepared 后 staging immutable；
+- [ ] candidate tree deterministic；
 - [ ] effective read model implemented；
-- [ ] pinned base conflict semantics implemented；
-- [ ] no auto rebase/merge；
-- [ ] atomic current publication is sole visibility boundary；
-- [ ] orphan immutable objects treated as garbage, not partial publication；
-- [ ] recovery classifies durable state without automatic replay；
+- [ ] `ArchiveOperationV2` durable base/target/status/lastError implemented；
+- [ ] operation retry semantics implemented；
+- [ ] pinned base conflict preserves staging；
+- [ ] no auto merge/rebase；
+- [ ] current atomic replace 是唯一 publication point；
+- [ ] Session start/cancel 不再制造 Published World commit；
+- [ ] orphan immutable objects 视为 garbage，不视为 partial publication；
+- [ ] recovery 只按 durable facts 分类；
 - [ ] inspect validates complete reachable graph；
-- [ ] GC cannot delete reachable graph；
+- [ ] GC cannot delete reachable graph or open/prepared staging；
 - [ ] V1 dual-read/dual-write absent；
 - [ ] old canon/day/submission write path removed from V2 authority；
+- [ ] physical object store 不被当作 logical World API；
 - [ ] restart witness green；
 - [ ] publication fault-injection suite green；
-- [ ] Windows/Linux path/publication evidence green；
+- [ ] Ubuntu/Windows × Node20/22 evidence green；
 - [ ] Phase 1 tests do not require Promptpile/React/MCP/Compress；
 - [ ] current documentation matches implemented V2 contract。
 
 ---
 
-## 35. Phase 2 handoff
+## 40. Phase 2 handoff
 
-Phase 1 向 `PERSISTENT_CONVERSATION_COMPRESSION_DRAFT.md` 只提供稳定 identity 与 repository capabilities：
+Phase 1 向 `PERSISTENT_CONVERSATION_COMPRESSION_DRAFT.md` 只提供：
 
 ```text
 world identity
-session/operation workspace location
-published commit identity
+Published World identity
+Session/operation workspace location
 read published/effective documents
 staging lifecycle
 ```
@@ -1527,18 +2017,19 @@ Phase 2 不得修改：
 
 ```text
 Published World definition
+PublishedWorldPhase separation
 RootTree identity
+staging algebra
 publication theorem
-staging isolation
 ```
 
 Conversation compression 只能改变 AI history context，不能改变 World publication semantics。
 
 ---
 
-## 36. Phase 3 handoff
+## 41. Phase 3 handoff
 
-Phase 3 的 Dayloom-scoped MCP tools 只能包装 Phase 1 已冻结的业务能力，例如：
+Phase 3 的 Dayloom-scoped MCP tools 只能包装：
 
 ```text
 world.read
@@ -1550,13 +2041,17 @@ staging.delete
 staging.inspect
 ```
 
+但实际 mutation 必须先经过 Dayloom World Profile / mutation policy。
+
 MCP 不拥有：
 
 ```text
 World object identity
+path canonicalization
 staging algebra
 publication transaction
 current pointer
+PublishedWorldPhase
 conflict/recovery semantics
 ```
 
@@ -1564,25 +2059,49 @@ conflict/recovery semantics
 
 ---
 
-## 37. 最终边界
+## 42. 最终边界
 
-Phase 1 完成后的架构应保持简单：
+Phase 1 完成后的结构应保持为：
 
 ```text
-                     Dayloom World V2
-                            │
-            ┌───────────────┴───────────────┐
-            │                               │
-            ▼                               ▼
-      Published World                 Session Staging
-            │                               │
-         current                         manifest
-            │                               │
-          commit                         PUT/DELETE
-            │                               │
-       canonical tree ─────── overlay ──────┘
-            │
-           blobs
+Archive Identity
+└─ manifest.json
+   ├─ worldId
+   ├─ title
+   └─ createdAt
+
+Publication Authority
+└─ current.json
+   └─ commitId
+       ↓
+     Commit
+       ├─ parentCommitId
+       ├─ rootTreeHash
+       └─ Published control
+          ├─ phase
+          ├─ day
+          └─ lastSettledDay
+       ↓
+     RootTree
+       └─ logical path → Blob
+```
+
+工作态：
+
+```text
+Operation
+├─ pinned base
+├─ target identity
+└─ Staging Manifest
+   └─ PUT / DELETE
+```
+
+AI/runtime：
+
+```text
+Session / Conversation
+≠ Published World
+≠ Archive control plane
 ```
 
 Publication：
@@ -1595,21 +2114,25 @@ candidate tree
 ↓
 validate
 ↓
-materialize immutable objects
+materialize immutable graph
 ↓
-CAS/re-check current against pinned base
+prepare/freeze operation
+↓
+re-check current == pinned base
 ↓
 FINAL ATOMIC current replace
 ```
 
-Phase 1 的最终定义：
+Phase 1 最终定义：
 
 ```text
 Dayloom
 = safely version a document-native World
++ keep semantic data flexible
++ keep control data minimal
 + isolate staging
 + publish atomically
-+ recover by durable facts
++ recover from durable facts
 ```
 
 当 checklist 与 executable evidence 全部完成后，本文件状态应改为：
@@ -1618,4 +2141,4 @@ Dayloom
 Implemented / Freeze complete
 ```
 
-随后把稳定事实迁入 `doc/` canonical documentation，并删除本阶段实施草案；历史演进由 Git history 保存。
+随后把稳定事实迁入 `doc/` canonical documentation，并删除本实施草案；历史演进由 Git history 保存。
