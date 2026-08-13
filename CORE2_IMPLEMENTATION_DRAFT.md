@@ -1,191 +1,73 @@
 # Dayloom Core2 实现草案
 
-> 状态：Draft / 新实现入口  
+> 状态：Implementation Draft / 实施入口  
 > 日期：2026-08-13  
-> 目标包：`@dayloom/core2`  
-> 目标：停止继续在现有 `@dayloom/core` 上叠加 Archive V2、Promptpile React、Conversation compression 的兼容改造，建立一个直接面向新协议与新 Agent runtime 的独立 Core 实现。
+> 目标包：`@dayloom/core2`
 
-## 1. 决策摘要
+## 1. 目标
 
-Dayloom 后续的新 runtime 不再以“逐步改造现有 core 并维持内部兼容”为主要路线。
+停止继续在现有 `@dayloom/core` 上叠加新 Archive、Promptpile React、Conversation compression 的兼容改造。
 
-新路线是：
+建立一个独立、最小、只有一套语义的新 Core：
 
 ```text
-@dayloom/core / @dayloom/core-old
-= legacy implementation
-= regression / behavior reference
-= 不再作为新架构的内部兼容目标
-
 @dayloom/core2
-= new implementation
 = Archive V2 only
-= Promptpile React first
-= persistent Conversation from day one
-= compression optional / later extension
+= persistent Conversation
+= promptpile-react execution
+= Dayloom Session / World lifecycle
 ```
 
-`core2` 的兼容目标不是旧 `core` API，也不是当前 TUI 的 DTO / event / snapshot 形状。
+旧 `core` / `core-old` 只作为旧行为参考，不是 `core2` 的兼容目标。
 
-`core2` 只要求能够支撑当前 Dayloom 已形成的产品交互语义：
+`core2` 只需要支撑 Dayloom 已有的产品交互语义：
 
 ```text
 Hub
-→ 根据 World 状态选择业务流程
+→ 根据 World 状态选择可开始的 Session
 → 进入 Session
 → 用户与 AI 多轮交互
-→ assistant 可流式显示
+→ Final 流式显示
 → submit 或 cancel
 → Session 结束
-→ 回到 Hub / 得到新的 World 状态
+→ 回到 Hub，读取新的 World 状态
 ```
 
-TUI 是 `core2` 的一个 consumer，不是 `core2` 的设计中心。
+**TUI 是 Core2 的 consumer，不是 Core2 的设计中心。**
 
 ---
 
-## 2. 为什么建立 Core2
+## 2. 四个 ownership
 
-当前重构同时包含三个大变化：
-
-1. Archive / World 持久化协议切换到新的 `@dayloom/archive-protocol`；
-2. AI execution 从 direct Promptpile completion 升级为 `promptpile-react` agent turn；
-3. 长期 Conversation 需要具备 compression / archive 生命周期。
-
-如果继续在现有 `core` 中逐层兼容，会同时存在：
+Core2 只围绕四个明确 ownership 设计：
 
 ```text
-legacy archive semantics
-+ Archive V2 semantics
-+ legacy Session/messages semantics
-+ persistent Conversation semantics
-+ completion streaming semantics
-+ agent event semantics
+@dayloom/archive-protocol
+= persisted data correctness
+
+Promptpile ecosystem
+= Conversation artifact I/O
+= agent orchestration
+
+Core2
+= business legality
+= Session lifecycle
+= World publication
+
+Presentation
+= TUI / future UI projection
 ```
 
-兼容成本会逐步超过真正产品能力的实现成本。
+这四条是实现判断的最终边界。
 
-`core2` 的目的不是重写一遍旧 Core，而是移除这些历史约束，使新实现只需要回答：
+### Archive Protocol owns persisted-data correctness
 
-```text
-Dayloom 的 World 如何读取与提交？
-Session 如何运行？
-一个 agent turn 如何推进 Session？
-如何把 runtime 状态投影给任意 presentation consumer？
-```
+`@dayloom/archive-protocol` 是唯一的 Archive / World 持久化协议来源。
 
----
-
-## 3. Core2 的目标
-
-### 3.1 必须实现
-
-`core2` 第一阶段必须具备：
-
-- 直接依赖新的 `@dayloom/archive-protocol`；
-- 只支持新的 Archive V2 / document-oriented World；
-- 独立的 Session lifecycle；
-- 持久 Promptpile Conversation identity；
-- `promptpile-react` agent execution；
-- Final output streaming；
-- submit / cancel 业务生命周期；
-- World mutation / publication；
-- 与 presentation 无关的 runtime events / state；
-- 能被当前 TUI 通过 adapter 使用。
-
-### 3.2 可以延后
-
-以下能力不应阻塞 `core2` 首个可用版本：
-
-- `promptpile-compress`；
-- archive history retrieval；
-- MCP tools；
-- semantic search；
-- 多 provider UI；
-- legacy archive import；
-- 与旧 Core API 的兼容层。
-
-其中 compression 可以延后，但 **persistent Conversation 不可以延后**。
-
----
-
-## 4. 明确的非目标
-
-`core2` 不负责：
-
-```text
-复刻 @dayloom/core 的 public API
-复刻 RuntimeSnapshot shape
-复刻 RuntimeEvent union
-复刻 RuntimeCommand union
-复刻 MessageStore
-复刻 ConversationClient.streamReply()
-复刻当前 TUI driver 的内部调用方式
-兼容旧 Archive layout
-在 core2 内维护 legacy / v2 双实现
-```
-
-也禁止将 `core2` 设计成所谓 `tui-core`：
-
-```text
-错误：
-TUI 需要什么字段
-→ Core2 就暴露什么字段
-
-正确：
-Core2 暴露稳定的 application/runtime semantics
-→ TUI adapter 投影为 TUI 所需状态
-```
-
----
-
-## 5. 依赖边界
-
-目标依赖图：
-
-```text
-@dayloom/core2
-├── @dayloom/archive-protocol
-├── promptpile-react
-└── Node.js runtime
-
-later:
-@dayloom/core2
-├── @dayloom/archive-protocol
-├── promptpile-react
-├── promptpile-compress
-└── Node.js runtime
-```
-
-禁止依赖：
-
-```text
-@dayloom/core2 → @dayloom/core
-@dayloom/core2 → @dayloom/core-old
-@dayloom/core2 → @dayloom/tui
-@dayloom/core2 → @dayloom/tui-old
-```
-
-建议在 `core2` 中加入 architecture guard，直接检查上述禁止依赖。
-
-因为 `promptpile-react` 当前要求 Node.js 20+，`core2` 的 runtime baseline 应直接设为：
-
-```text
-Node.js >= 20
-```
-
-不要为 Node 18 额外建立兼容分支。
-
----
-
-## 6. Archive Protocol 的 ownership
-
-`@dayloom/archive-protocol` 是 `core2` 唯一的 World / Archive 数据协议来源。
-
-协议包负责：
+它负责：
 
 - strict parsing；
-- portable document path；
+- portable document paths；
 - canonical tree encoding；
 - object identity；
 - staged PUT / DELETE algebra；
@@ -193,564 +75,633 @@ Node.js >= 20
 - recovery classification；
 - archive-relative layout vocabulary。
 
-`core2` 负责协议包刻意不负责的 application/runtime 行为：
+Core2 不重新定义另一套持久化 World DTO 再转成 protocol DTO。
 
-- filesystem I/O；
-- publication ownership；
-- atomic visibility；
-- Session lifecycle；
-- business policy；
-- agent execution；
-- user-visible operation lifecycle。
+可以存在方便业务读取的 derived read model，但持久化边界始终以 protocol object 为准。
 
-重要原则：
+### Promptpile owns Conversation artifacts and agent orchestration
+
+Core2 只拥有 Conversation 的：
 
 ```text
-Core2 不重新定义另一套 World DTO 再转换成 protocol DTO。
+identity
+location
+lifecycle association with Session
 ```
 
-允许存在 application read model，但 protocol object 在持久化边界必须保持 authoritative。
+Core2 **不实现 Promptpile Conversation 文件格式，不直接重写 Conversation artifacts**。
+
+Conversation 的 append、completion artifact、OCC / receipt 等语义由 Promptpile / Promptpile React 自己负责。
+
+Promptpile React 负责 Thought / Observe / Check / Final orchestration；Core2 不重新实现 React FSM。
+
+### Core2 owns business legality and publication
+
+模型可以产生建议或 submission payload，但不能直接决定什么 World mutation 是合法的，也不能绕过 Archive Protocol 发布 World。
+
+Core2 决定：
+
+```text
+当前可以开始哪个 Session
+当前 Session 能否接受输入
+当前 Session 能否 submit / cancel
+submission 是否是合法业务结果
+如何构造 protocol staging / candidate
+何时发布 World
+```
+
+### Presentation owns interaction projection
+
+Core2 不输出 TUI widget state，也不复制旧 `RuntimeSnapshot` / `RuntimeEvent` / `MessageStore`。
+
+TUI adapter 把 Core2 state / events 投影为现有 TUI 所需状态。
 
 ---
 
-## 7. Core2 的建议内部结构
+## 3. 明确非目标
 
-第一版保持最小结构：
+Core2 MVP 不做以下事情：
 
 ```text
-packages/core2/
-├── package.json
-├── src/
-│   ├── index.ts
-│   ├── world/
-│   │   ├── repository.ts
-│   │   ├── read-model.ts
-│   │   └── publication.ts
-│   ├── session/
-│   │   ├── session.ts
-│   │   ├── manager.ts
-│   │   ├── workspace.ts
-│   │   └── types.ts
-│   ├── agent/
-│   │   ├── runtime.ts
-│   │   ├── events.ts
-│   │   └── promptpile-react-runner.ts
-│   ├── runtime/
-│   │   ├── runtime.ts
-│   │   ├── events.ts
-│   │   └── state.ts
-│   └── infrastructure/
-│       ├── filesystem.ts
-│       ├── process.ts
-│       └── ids.ts
-└── test/
+兼容 @dayloom/core public API
+兼容旧 RuntimeSnapshot / RuntimeEvent / RuntimeCommand
+兼容旧 MessageStore / ConversationClient
+兼容旧 Archive layout
+同时支持 Archive V1 / V2
+legacy archive 自动迁移
+并发 Session
+并发 agent turn
+并发 World mutation
+内部任务队列 / scheduler
+自动重试 agent turn
+崩溃中的 agent turn resume
+promptpile-compress
+MCP tools
+semantic search
+多 provider UI
+通用 AgentRuntime 插件系统
+提前设计 ConversationMaintenance 抽象
 ```
 
-这个目录不是冻结设计。
-
-原则是：不要从现有 `core` 复制完整目录结构，也不要预先重建所有旧 abstraction。
+如果以后确实需要其中某项，再基于已工作的 Core2 增加。
 
 ---
 
-## 8. Session 是 Core2 的主要 application unit
+## 4. 依赖边界
 
-Core2 的核心对象是业务 Session，而不是 ConversationClient。
-
-概念上：
+MVP 依赖图：
 
 ```text
-World
-  ↓
-start business Session
-  ↓
-Session owns workspace + Conversation identity
-  ↓
-zero or more user / agent turns
-  ↓
-submit | cancel
-  ↓
-World publication or no-op
-  ↓
-Session terminal state
+@dayloom/core2
+├── @dayloom/archive-protocol
+├── promptpile-react
+└── Node.js >= 20
 ```
 
-Session kind 首期仍可保持现有产品概念：
+禁止：
 
 ```text
-init
-planning
-play
-revise
+@dayloom/core2 → @dayloom/core
+@dayloom/core2 → @dayloom/core-old
+@dayloom/core2 → @dayloom/tui
+@dayloom/core2 → @dayloom/tui-old
+
+@dayloom/archive-protocol/src/*
+@dayloom/archive-protocol/dist/*
+promptpile-react/src/*
+promptpile-react/dist/*
 ```
 
-但这些名称不要求继承旧 Core 的具体类型定义。
+Core2 只使用协议包 public exports，以及 Promptpile React packaged executable / public Agent Event Protocol。
+
+加入一个简单 architecture guard 检查这些边界即可。
 
 ---
 
-## 9. Persistent Conversation 从第一天存在
+## 5. Core2 运行模型
 
-`core2` 不再使用：
+Core2 是一个**单用户、单 Session、单执行流 runtime**。
+
+MVP 明确不支持并发。
+
+任意时刻：
 
 ```text
-in-memory messages[]
-→ 每轮创建临时 Promptpile directory
+最多一个 active Session
+最多一个正在执行的 agent turn
+最多一个正在执行的 World mutation / publication
+```
+
+如果 busy 时收到另一个 `send` / `submit` / `startSession`，直接拒绝。
+
+`cancel` 可以终止当前 agent process，然后结束 Session。
+
+不实现：
+
+```text
+并发队列
+operation scheduler
+多个 Session interleave
+多个 agent turn merge
+自动 conflict resolution
+```
+
+Archive publication 仍必须满足协议要求的 exclusive publication ownership。Core2 的策略是**独占执行，不支持竞争**；如果检测到 pinned base 已变化或无法取得独占 publication ownership，直接 fail closed，而不是尝试并发合并。
+
+---
+
+## 6. 最小状态机
+
+Core2 不需要复杂 runtime FSM。
+
+概念状态只有：
+
+```text
+Hub
+│
+├── startSession
+▼
+Session.ready
+│
+├── send
+▼
+Session.running
+│
+├── agent success
+▼
+Session.ready
+│
+├── send ...
+│
+├── submit ─────→ completed → Hub
+│
+└── cancel ─────→ cancelled → Hub
+```
+
+任何 agent turn 失败：
+
+```text
+Session.running
+→ failed
+→ Session terminal
+→ 回到 Hub
+```
+
+MVP **不自动 retry agent turn**。
+
+这是有意的：Promptpile React 的 user append 可能已经持久化，即使后续模型阶段失败也不会回滚。为了避免重复 append 和复杂恢复，首版把 agent failure 视为当前 Session 的 terminal failure，保留 Conversation / Session workspace 供诊断，未来再单独设计 recovery。
+
+Terminal Session 不再接受任何 mutation。
+
+---
+
+## 7. Session 是主要 application unit
+
+Core2 的主要对象是 Dayloom business Session，而不是 `ConversationClient`。
+
+一个 Session 完整拥有：
+
+```text
+Session id
+Session kind
+pinned World base
+workspace
+persistent Conversation location
+business lifecycle state
+```
+
+流程：
+
+```text
+load current World
+→ validate Session kind is startable
+→ create Session workspace
+→ create/recover persistent Conversation location
+→ zero or more user/agent turns
+→ submit | cancel | failure
+→ terminal
+```
+
+首版只实现一个 Session kind，推荐 `play`。
+
+其它 `init / planning / revise` 在 vertical slice 完成后再增加。
+
+---
+
+## 8. Persistent Conversation
+
+Persistent Conversation 从第一版存在，即使 compression 暂不实现。
+
+禁止旧模式：
+
+```text
+messages[] in memory
+→ 每轮 mkdtemp
 → 重写完整 history
 → completion
-→ 删除 directory
+→ 删除目录
 ```
 
-目标是：
+目标：
 
 ```text
 Dayloom Session
         │
-        └── persistent Promptpile Conversation
+        └── persistent Promptpile Conversation directory
 ```
 
-Conversation 的 identity / location 必须可由 Session workspace 恢复。
+同一个 Session 的所有 user / agent turns 使用同一个 Conversation identity。
 
-因此：
+Conversation 是 AI interaction authority；TUI transcript 只是 presentation projection。
+
+Core2 只保存足以重新找到 Conversation 的 Session metadata，不复制 Conversation 内容作为第二份 authority。
+
+### User input ownership
+
+`send(text)` 的逻辑是：
 
 ```text
-process lifetime != Session lifetime
+Core2 validate Session.ready
+→ Promptpile React 在该 persistent Conversation 上 append user input
+→ React 执行 agent turn
+→ Core2 消费 public Agent Event Protocol
+→ Final delta 投影为 CoreEvent
+→ success 后回到 Session.ready
 ```
 
-Conversation 是 AI interaction authority；TUI transcript 只是 projection / read model。
+如果 React 在 append 后失败，Conversation 保留已写 artifact；Core2 不尝试回滚，也不自动重试，该 Session 进入 terminal failed。
 
-这一步即使暂时没有 compression，也必须成立。
+这样只有一个 Conversation writer 语义，不需要 Core2 自己实现去重或重放协议。
 
 ---
 
-## 10. Promptpile React 是正式执行入口
+## 9. Promptpile React boundary
 
-`core2` 不建立新的 `ConversationClient.streamReply(): AsyncIterable<string>` abstraction。
+Core2 MVP 只有一个 agent implementation：`PromptpileReactRunner`。
 
-一个 AI execution unit 是 **agent turn**，不是一次 completion。
+不提前建立通用 provider / `AgentRuntime` 插件层。
 
-目标关系：
-
-```text
-Core2 Session
-    ↓
-AgentRuntime
-    ↓
-PromptpileReactRunner
-    ↓
-promptpile-react executable
-    ↓
-Agent Event Protocol / stream-json
-    ↓
-Core2 AgentTurnEvent
-```
-
-`promptpile-react` 自己负责：
+`PromptpileReactRunner` 是 Core2 私有 infrastructure，职责只有：
 
 ```text
-Thought
-→ Observe
-→ Check
-→ continue / stop
-→ Final
+prepare CLI args / config
+→ spawn promptpile-react
+→ consume stream-json
+→ validate public Agent Event Protocol
+→ translate into internal turn result / public CoreEvent
+→ handle abort / stderr / process exit
 ```
 
-Core2 不重新实现 React FSM。
+它禁止：
+
+```text
+import promptpile-react internals
+重新实现 Thought / Observe / Check
+解释 Promptpile private receipt / transport
+直接把 Promptpile event shape 暴露给 presentation
+```
+
+Public consumer 只看 Core2 自己的一套 state / events。
 
 ---
 
-## 11. PromptpileReactRunner 必须保持很薄
+## 10. Public Core state / events
 
-`PromptpileReactRunner` 的职责只包括：
-
-1. 根据 Session / Conversation 准备 CLI execution；
-2. 启动 `promptpile-react`；
-3. 消费 machine-readable event stream；
-4. 校验 public events；
-5. 映射为 Core2 agent events；
-6. 管理 abort / process exit / stderr diagnostics。
-
-禁止：
-
-- import `promptpile-react/src/*`；
-- import `promptpile-react/dist/*` 私有模块；
-- 重新实现 Thought / Observe / Check FSM；
-- 解释 Promptpile private transport；
-- 将 Promptpile 内部 event shape 直接暴露成 Core2 public contract。
-
-当前 `promptpile-react` 只承诺 executable / protocol integration surface，因此 Core2 应尊重这个边界。
-
----
-
-## 12. Core2 Agent 事件
-
-Core2 可以定义自己的 presentation-neutral event vocabulary。
+Core2 public surface 围绕 application capability，不围绕旧 Core compatibility。
 
 示意：
 
 ```ts
-type AgentTurnEvent =
-  | { type: 'turn.started'; turnId: string }
-  | { type: 'turn.status'; phase: string }
-  | { type: 'output.started'; messageId: string }
-  | { type: 'output.delta'; messageId: string; text: string }
-  | { type: 'output.completed'; messageId: string }
-  | { type: 'turn.completed'; result: AgentTurnResult }
-  | { type: 'turn.failed'; error: CoreError }
+const core = await createDayloomCore({ worldRoot })
+
+core.getState()
+core.subscribe(listener)
+
+await core.startSession('play')
+await core.send('进入酒馆')
+await core.submit()
+await core.cancel()
+await core.dispose()
 ```
 
-具体字段不在本草案冻结。
+具体函数名不在本草案冻结。
 
-约束只有两个：
+### Core state 必须表达业务 legality
 
-1. event 描述 application / agent semantics；
-2. event 不描述某个具体 UI component。
+Presentation 不应该自己根据 World phase 推导业务规则。
 
-例如：
+Core state 至少需要表达等价语义：
 
 ```text
-output.delta              ✅
-terminal.textbox.append   ❌
+当前在 Hub 还是 Session
+当前 World read model
+哪些 Session kind 当前允许开始
+当前 Session kind / status
+当前是否 busy
+当前是否允许 submit
+当前是否允许 cancel
 ```
+
+Core2 决定“什么操作合法”；TUI 只决定“如何显示这些操作”。
+
+### 只有一套 public event vocabulary
+
+不要同时暴露 `AgentTurnEvent` 和 `RuntimeEvent` 两套 public stream。
+
+Promptpile Agent Events 只在 runner 边界内部存在：
+
+```text
+Promptpile Agent Event
+        ↓ private translation
+Core2 state transition + CoreEvent
+        ↓
+TUI / future presentation
+```
+
+CoreEvent 只需要覆盖 consumer 真正需要观察的事实，例如：
+
+```text
+state changed
+session started / ended
+output delta
+operation failed
+```
+
+不描述具体 TUI component。
 
 ---
 
-## 13. Runtime public surface
+## 11. Submit 必须形成结构化闭环
 
-Core2 public API 应围绕 application capability，而不是旧 Core compatibility。
+`submit` 是 Dayloom application command，不是 Promptpile React 自己的生命周期状态。
 
-示意：
+普通对话 turn 的 Final 是用户可见自然语言。
 
-```ts
-const runtime = await createDayloomCore({ worldRoot })
-
-runtime.getState()
-runtime.subscribe(listener)
-
-await runtime.startSession('play')
-await runtime.sendSessionInput('进入酒馆')
-await runtime.submitSession()
-await runtime.cancelSession()
-
-await runtime.dispose()
-```
-
-这只是设计方向，不是冻结接口。
-
-不要因为现有 TUI 使用：
+Submit 使用一个**专用 submission run**：
 
 ```text
-executeCommand()
-getAvailableCommands()
-MessageStore
-RuntimeSnapshot
+user requests submit
+→ Core2 validate submit is allowed
+→ run Session-specific submission prompt on same Conversation
+→ React Final returns SessionSubmission text
+→ strict parser validates SessionSubmission
+→ Core2 converts validated submission into protocol staging operations
+→ Archive Protocol builds / validates candidate
+→ Core2 publication transaction
+→ Session completed
+→ reload current World
+→ Hub
 ```
 
-就要求 Core2 复制这些名字或数据格式。
+关键规则：
+
+```text
+model Final
+≠ persisted World
+```
+
+Final 只是 untrusted submission input。
+
+每个 Session kind 只需要定义三件事：
+
+```text
+conversation / submission prompt policy
+strict submission parser
+validated submission → protocol staging operations
+```
+
+不建立一套新的通用 World DTO，也不建立复杂 command bus。
+
+首个 `play` vertical slice 只实现 `play` 所需的 submission schema。
+
+### Submit failure
+
+任何一步失败都不能发布部分 World：
+
+```text
+React submission run fails
+parser fails
+business validation fails
+protocol validation fails
+publication fails
+```
+
+结果统一为：
+
+```text
+no new current World
+→ Session failed terminal
+→ error exposed to consumer
+```
+
+Archive publication 必须以 `current.json` 的最终 atomic visibility 为最后一步。
 
 ---
 
-## 14. “兼容当前 TUI”真正意味着什么
+## 12. Cancel
 
-Core2 需要支持以下 **交互语义**：
-
-### Hub 语义
-
-- consumer 能读取当前 World 状态；
-- consumer 能知道当前可开始的业务流程；
-- mutation 执行期间有 busy / progress / failure 信号。
-
-### Session 语义
-
-- consumer 能知道 Session 已开始；
-- consumer 能知道 Session kind；
-- user 可以连续发送自然语言输入；
-- assistant Final 可以流式呈现；
-- user 可以 submit；
-- user 可以 cancel；
-- Session 有明确 terminal state。
-
-### 结束语义
-
-- submit 成功后 World state 更新；
-- cancel 不发布业务 mutation；
-- Session 结束后 consumer 可以回到 Hub projection。
-
-以下不属于兼容要求：
+Cancel 保持简单：
 
 ```text
-旧 event name 一致
-旧 event payload 一致
-旧 snapshot shape 一致
-旧 command string 一致
-旧 message id 规则一致
-旧错误 code 一致
+abort active promptpile-react process if any
+→ do not publish World mutation
+→ mark Session cancelled
+→ leave active Session
+→ Hub
 ```
+
+Conversation / workspace 可以保留用于诊断；MVP 不要求自动清理策略。
+
+Cancel 不恢复旧 transaction shape，也不尝试撤销已经由 Promptpile 发布的 Conversation artifacts。
 
 ---
 
-## 15. TUI 应通过 adapter 迁移
+## 13. TUI compatibility
 
-目标关系：
+“兼容当前 TUI”只表示用户交互逻辑等价：
+
+```text
+Hub
+→ 看到当前允许的流程
+→ 开始 Session
+→ 多轮输入
+→ Final streaming
+→ submit / cancel
+→ 回到 Hub
+```
+
+不要求兼容：
+
+```text
+旧 event name / payload
+旧 snapshot shape
+旧 command string
+旧 message id
+旧 error code
+旧 core factory
+```
+
+迁移方向：
 
 ```text
 existing TUI components
         ↑
 TuiRuntimeDriver / TuiDriverState
         ↑
-new core2 runtime adapter
+core2 TUI adapter
         ↑
 @dayloom/core2
 ```
 
-迁移时优先重写：
+Adapter 属于 TUI package。
 
-```text
-packages/tui/src/runtime-driver/*
-```
-
-而不是让 `core2` 实现旧 runtime driver 期待的全部 Core API。
-
-Adapter 可以：
-
-- 把 Core2 runtime state 投影成 `TuiDriverState`；
-- 把 Core2 events 转成 TUI messages；
-- 保留当前 slash command UX；
-- 保留当前 Hub page / Session page 交互；
-- 隔离 presentation-specific loading / recent result state。
-
-这些都属于 TUI package，而不是 Core2。
+如果 TUI 需要某个 presentation-only 字段，应在 adapter 中生成，而不是加入 Core2 domain API。
 
 ---
 
-## 16. Submit 的 ownership
+## 14. Compression 暂不实现
 
-`submit` 是 Dayloom application command，不是 Promptpile React 自己的生命周期状态。
+Core2 MVP 不依赖 `promptpile-compress`。
 
-概念流程：
-
-```text
-user requests submit
-        ↓
-Core2 Session validates submit is allowed
-        ↓
-agent produces submission intent / candidate content
-        ↓
-Core2 validates business result
-        ↓
-Archive Protocol builds / validates candidate target
-        ↓
-Core2 publication transaction
-        ↓
-Session completed
-```
-
-模型输出不能绕过 protocol validation 直接发布 World。
-
-如果未来使用 MCP business tools，也仍应满足：
-
-```text
-agent decides / requests capability
-≠ agent owns World publication correctness
-```
-
----
-
-## 17. Cancel 的 ownership
-
-Cancel 必须保持简单：
-
-```text
-cancel active agent process if any
-→ close Session without World publication
-→ preserve or clean Session workspace according to policy
-→ emit terminal cancellation state
-```
-
-Cancel 不需要为了兼容旧 Core 恢复旧 transaction shape。
-
----
-
-## 18. Compression 的处理方式
-
-### 18.1 MVP
-
-Core2 MVP 可以不依赖 `promptpile-compress`。
-
-但调用顺序应天然允许未来增加 maintenance：
-
-```text
-prepare persistent Conversation
-→ optional Conversation maintenance
-→ run agent turn
-```
-
-MVP 中 maintenance 等价于 no-op。
-
-### 18.2 后续加入
-
-未来可以实现：
-
-```text
-ConversationMaintenance
-        ↓
-PromptpileCompressMaintenance
-        ↓
-runCompressionBeforeCompletion(...)
-```
-
-但不要为了这一未来能力提前建立大型 compression abstraction hierarchy。
-
-Compress 的加入应是 extension，不是 Core2 第二次架构迁移。
-
----
-
-## 19. MCP 暂不进入首个 vertical slice
-
-Promptpile React 与 MCP 是不同 ownership：
-
-```text
-promptpile-react
-= orchestration
-
-promptpile-mcp
-= generic tool execution
-
-core2
-= Dayloom business capabilities
-```
-
-Core2 首个版本可以先证明：
+因为 Conversation 从第一天就是 persistent 的，未来加入 compression 时只需要在 agent execution 前增加 Promptpile ecosystem 提供的 compression lifecycle：
 
 ```text
 persistent Conversation
-+ React turn
-+ Final streaming
-+ submit publication
-```
-
-需要工具后，再把稳定的 Dayloom capability 暴露成 MCP tools。
-
-不要先围绕 MCP JSON shape 重写 domain capability。
-
----
-
-## 20. 第一条 vertical slice
-
-不要先实现全部 init / planning / play / revise。
-
-第一条 vertical slice 只选择一个 Session kind，推荐 `play`，完整证明：
-
-```text
-load Archive V2 World
-        ↓
-start play Session
-        ↓
-create/recover persistent Conversation
-        ↓
-user input
-        ↓
-promptpile-react
-        ↓
-stream Final output
-        ↓
-second user input on same Conversation
-        ↓
-promptpile-react
-        ↓
-submit or cancel
-        ↓
-Archive V2 publication or no-op
-        ↓
-Session terminal
-```
-
-这条链通过后，再扩展其它 Session kind。
-
----
-
-## 21. 建议实施顺序
-
-### Step 0 — Core2 package skeleton
-
-建立：
-
-```text
-packages/core2
-```
-
-要求：
-
-- `@dayloom/archive-protocol` direct dependency；
-- `promptpile-react` direct dependency；
-- Node >= 20；
-- architecture guard；
-- 不 import legacy core / tui。
-
-### Step 1 — World read path
-
-先只实现：
-
-```text
-worldRoot
-→ protocol-backed repository
-→ read current World state
-```
-
-不实现 legacy fallback。
-
-### Step 2 — Session workspace + persistent Conversation
-
-证明：
-
-```text
-start Session
-→ durable Session identity
-→ durable Conversation location
-→ restart 后可恢复必要 metadata
-```
-
-暂时可以使用 fake AgentRuntime。
-
-### Step 3 — Promptpile React runner
-
-实现：
-
-```text
-persistent Conversation
+→ compress when needed
 → promptpile-react
-→ public agent events
-→ Core2 events
 ```
 
-必须包含 abort / non-zero exit / malformed event tests。
+在真正接入之前：
 
-### Step 4 — 一个完整 Session kind
+- 不定义 `ConversationMaintenance` interface；
+- 不定义 compression policy hierarchy；
+- 不提前设计 summary / archive retrieval API。
 
-推荐 `play`。
+Compress 应是后续 extension，不是第二次 Core 重构。
+
+---
+
+## 15. 建议最小目录
+
+不要从旧 Core 复制完整结构。
+
+第一版可以保持：
+
+```text
+packages/core2/
+├── package.json
+├── src/
+│   ├── index.ts
+│   ├── core.ts
+│   ├── state.ts
+│   ├── events.ts
+│   ├── world/
+│   │   ├── repository.ts
+│   │   └── publication.ts
+│   ├── session/
+│   │   ├── session.ts
+│   │   ├── workspace.ts
+│   │   └── play.ts
+│   └── promptpile/
+│       └── react-runner.ts
+└── test/
+```
+
+如果实现过程中某个文件自然变大，再拆分。
+
+不要因为“未来可能有多个实现”预先创建 interface hierarchy。
+
+---
+
+## 16. 真正的 vertical slice 实施顺序
+
+### Step 0 — package skeleton
+
+建立 `packages/core2`：
+
+```text
+@dayloom/archive-protocol direct dependency
+promptpile-react direct dependency
+Node >= 20
+architecture guard
+```
+
+### Step 1 — World read + legality
 
 完成：
 
 ```text
-start
-send
-stream
-send again
-submit/cancel
-terminal state
+worldRoot
+→ protocol-backed read
+→ CoreState
+→ startable Session kinds
 ```
 
-### Step 5 — TUI runtime adapter
+只支持 Archive V2，不 fallback legacy archive。
 
-保持现有 UI component 尽量不动，替换 driver 到 Core2 的连接方式。
+### Step 2 — Session workspace + persistent Conversation
 
-此时检查“交互语义兼容”，而不是“API diff”。
+完成：
 
-### Step 6 — World publication
+```text
+start play Session
+→ durable Session id / metadata
+→ persistent Conversation location
+→ Session.ready
+```
 
-让 submit 真正通过 Archive Protocol candidate validation + Core2 publication 更新 World。
+### Step 3 — React conversation turn
 
-### Step 7 — 扩展其它 Session kind
+完成：
 
-按产品优先级增加：
+```text
+send user input
+→ same persistent Conversation
+→ promptpile-react
+→ Final streaming
+→ Session.ready
+```
+
+至少证明连续两个 user turns 使用同一个 Conversation。
+
+### Step 4 — Submit + publication
+
+完成：
+
+```text
+submit
+→ dedicated submission run
+→ strict PlaySubmission parser
+→ protocol staging / candidate validation
+→ exclusive publication
+→ current World update
+→ Session completed
+```
+
+同时实现 cancel：
+
+```text
+cancel
+→ no World publication
+→ Session cancelled
+```
+
+到这里 Core2 application lifecycle 才算闭环。
+
+### Step 5 — TUI adapter
+
+重写 TUI runtime driver 到 Core2 的连接。
+
+验证：
+
+```text
+Hub → Play Session → turns → submit → Hub
+Hub → Play Session → cancel → Hub
+```
+
+### Step 6 — 其它 Session kinds
+
+再按产品需求增加：
 
 ```text
 planning
@@ -758,214 +709,134 @@ init
 revise
 ```
 
-### Step 8 — Conversation compression
+### Later — Compress / MCP / migration
 
-只有 Conversation 长度 / context budget 真正成为当前问题时，再加入 `promptpile-compress`。
+只在有真实需求时加入。
 
 ---
 
-## 22. 测试策略
+## 17. MVP 测试
 
-Core2 测试不以 legacy Core 单元测试逐个移植为目标。
+只测试架构闭环需要的事实。
 
-### Protocol boundary tests
+### Archive boundary
 
-验证：
+```text
+只使用 @dayloom/archive-protocol public API
+malformed archive fail closed
+staging / candidate 必须 protocol-valid
+publication conflict fail closed
+```
 
-- 只使用 `@dayloom/archive-protocol` public exports；
-- malformed archive object fail closed；
-- publication target 必须通过 protocol validation。
+### Promptpile React boundary
 
-### Agent boundary tests
+```text
+valid stream-json
+malformed protocol event → fail
+non-zero exit → fail
+abort → cancelled
+Final delta streaming
+```
 
-使用 fake executable / fixture stream 验证：
+### Session lifecycle
 
-- valid Agent Event stream；
-- malformed JSONL；
-- unknown event；
-- process non-zero exit；
-- abort；
-- partial Final output；
-- Final completion。
+```text
+start play
+send first turn
+send second turn on same Conversation
+busy 时第二个 mutation 被拒绝
+agent failure → Session failed terminal
+submit success → World changes exactly once
+submit failure → World unchanged
+cancel → World unchanged
+terminal Session cannot advance
+```
 
-### Session tests
+这里的“busy 时拒绝”不是并发支持，只是保证 Core2 不接受并发调用。
 
-验证：
+### TUI behavior
 
-- start；
-- multiple turns；
-- persistent Conversation identity；
-- submit；
-- cancel；
-- no concurrent mutation；
-- terminal Session cannot advance。
-
-### TUI compatibility tests
-
-测试用户可观察流程：
+只测试用户可观察流程：
 
 ```text
 Hub → Session → stream → submit → Hub
 Hub → Session → cancel → Hub
 ```
 
-不要测试 Core2 必须产生旧 RuntimeEvent payload。
+不测试旧 Core payload compatibility。
 
 ---
 
-## 23. Architecture guards
+## 18. MVP 完成标准
 
-建议 Core2 初期就建立静态 guard：
-
-禁止 source 出现：
+Core2 MVP 只有在以下链路完整成立时才完成：
 
 ```text
-@dayloom/core
-@dayloom/core-old
-@dayloom/tui
-@dayloom/tui-old
-@dayloom/archive-protocol/src/
-@dayloom/archive-protocol/dist/
-promptpile-react/src/
-promptpile-react/dist/
+Archive V2 World
+        ↓
+Core2 decides Play is legal
+        ↓
+start Play Session
+        ↓
+persistent Conversation
+        ↓
+user turn
+        ↓
+promptpile-react
+        ↓
+Final streaming
+        ↓
+second turn on same Conversation
+        ↓
+submit
+        ↓
+strict PlaySubmission
+        ↓
+protocol staging / candidate
+        ↓
+exclusive atomic publication
+        ↓
+new World
+        ↓
+Hub
 ```
 
-允许：
+并同时满足：
 
-```text
-@dayloom/archive-protocol
-@dayloom/archive-protocol/path
-@dayloom/archive-protocol/tree
-@dayloom/archive-protocol/staging
-```
-
-Promptpile React 通过 packaged executable / public protocol 集成。
+1. `core2` 不依赖 legacy Core / TUI；
+2. 只支持 Archive V2；
+3. 不自己实现 Promptpile Conversation artifact semantics；
+4. 不重新实现 React FSM；
+5. 不支持并发，只允许单 Session / 单执行流；
+6. 模型输出不能绕过 strict submission validation；
+7. submit 成功只产生一次合法 World publication；
+8. submit 失败 / cancel / agent failure 不产生部分 World；
+9. TUI 通过 adapter 保持等价交互；
+10. MVP 不包含 Compress、MCP、legacy migration 或其它预留型功能。
 
 ---
 
-## 24. Legacy Core 的处理
-
-Core2 建立后，当前 `core` 不需要立即删除。
-
-短期并存：
+## 19. 最终架构原则
 
 ```text
-core-old / core
-= legacy behavior reference
-
-core2
-= new runtime implementation
+Protocol owns persisted-data correctness.
+Promptpile owns Conversation artifacts and agent orchestration.
+Core2 owns business legality, Session lifecycle and World publication.
+Presentation owns interaction projection.
 ```
 
-不要建立：
+以及一条实施原则：
 
 ```text
-core2 wraps core
-core wraps core2
+只实现当前闭环所需要的 abstraction。
+没有第二个实现时，不提前设计插件层；
+没有并发需求时，不设计并发系统；
+没有 compression 需求时，不设计 compression framework；
+没有 legacy runtime 需求时，不保留 legacy compatibility。
 ```
 
-也不要尝试让同一 Session 在两个 Core 之间切换。
-
-当 Core2 + TUI vertical slice 达到产品可用标准后，再决定：
-
-- 是否删除当前 `core`；
-- 是否将 `core2` 最终重命名为 `core`；
-- 是否保留 legacy CLI / migration tooling。
-
-这些都不是 Core2 MVP 的前置工作。
-
----
-
-## 25. 旧存档兼容策略
-
-Core2 不直接支持 legacy archive runtime。
-
-如果以后需要旧数据迁移，应设计成独立的一次性边界：
+任何新增设计如果不能直接服务下面这条链路，应默认推迟：
 
 ```text
-legacy archive
-→ migration/import tool
-→ valid Archive V2 target
-→ Core2
+World → Session → Conversation → React → Submission → Publication → World
 ```
-
-而不是：
-
-```text
-Core2 repository
-→ detect v1/v2
-→ forever maintain two storage semantics
-```
-
----
-
-## 26. Failure / recovery 原则
-
-Core2 必须明确区分：
-
-```text
-Session failure
-Agent turn failure
-Conversation state
-World publication failure
-```
-
-基本原则：
-
-- agent turn 失败不能产生部分 Published World；
-- World publication 失败必须 fail closed；
-- process crash 后可以从 durable Session metadata 判断是否可恢复；
-- Conversation artifact 可以比 UI transcript 更权威；
-- recovery 不依赖完整内存 history。
-
-第一版不要求实现所有自动 recovery，但数据布局必须避免让 recovery 不可能。
-
----
-
-## 27. 不应提前冻结的内容
-
-本草案不冻结：
-
-- 最终 public API 函数名；
-- event payload 字段；
-- Session workspace 的最终目录名；
-- TUI adapter 具体文件结构；
-- MCP tool set；
-- compression policy；
-- semantic summary provider；
--所有 Session prompt 内容。
-
-先通过 vertical slice 获得真实约束，再冻结这些 surface。
-
----
-
-## 28. Core2 MVP 完成标准
-
-只有满足以下条件，才认为 Core2 第一阶段成立：
-
-1. `packages/core2` 完全不依赖 legacy Core / TUI；
-2. World 只通过新的 `@dayloom/archive-protocol` 读写；
-3. 一个业务 Session 可以完整运行；
-4. 同一 Session 多轮对话复用同一个 persistent Conversation；
-5. AI turn 使用 `promptpile-react`，而不是 direct Promptpile compatibility wrapper；
-6. Final output 可以流式传给 consumer；
-7. submit 能产生经过 protocol validation 的 World publication；
-8. cancel 不发布 World mutation；
-9. 当前 TUI 可以通过 adapter 完成等价的 Hub / Session 用户交互；
-10. 没有为了旧 Core API 或 TUI DTO 引入 compatibility layer。
-
-Compression 不属于上述 MVP hard requirement。
-
----
-
-## 29. 一句话架构原则
-
-```text
-Core2 是 Dayloom 新 application/runtime core。
-Archive Protocol 定义持久数据正确性；
-Promptpile React 定义 agent orchestration；
-Core2 定义 Session 与 World 的业务生命周期；
-TUI 只负责把这些语义投影成交互界面。
-```
-
-如果某个设计选择要求 Core2 为了“少改 TUI”或“兼容旧 Core”重新承担旧 abstraction，应默认拒绝，并优先修改 adapter / consumer。
