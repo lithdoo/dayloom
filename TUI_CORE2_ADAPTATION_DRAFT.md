@@ -1,17 +1,17 @@
-# Dayloom TUI → Core2 适配草案
+# Dayloom TUI → Core2 适配实现冻结草案
 
-> Status: Adaptation Draft  
+> Status: Implementation Freeze / 可直接实施  
 > Date: 2026-08-13  
 > Target package: `@dayloom/tui`  
 > Backend target: `@dayloom/core2`
 
 ---
 
-## 1. 目标
+## 1. 冻结目标
 
 本次工作不是创建第二套 TUI，也不是为 Core2 增加 TUI compatibility API。
 
-目标是：
+目标只有一个：
 
 ```text
 保留现有 packages/tui
@@ -36,10 +36,10 @@ Hub
 → /submit 或 /exit / /cancel
 → Session 结束
 → 回到 Hub
-→ 显示新的 World 状态
+→ 显示新的 World 状态 / terminal result
 ```
 
-本次适配只要求**交互语义一致**。
+本次适配只要求**用户可观察交互语义一致**。
 
 不要求：
 
@@ -53,7 +53,7 @@ Hub
 旧内部 driver 实现一致
 ```
 
-核心原则：
+冻结原则：
 
 ```text
 Core2 提供 application facts。
@@ -61,9 +61,17 @@ TUI 将 application facts 投影成 presentation state。
 Core2 不知道 TUI 的存在。
 ```
 
+实施过程中如果需要改变本文冻结的 dependency direction、state authority、message ownership、terminal-result semantics 或 public bootstrap contract，先更新本文，不在代码中临场发明兼容层。
+
 ---
 
-## 2. 为什么直接修改现有 `packages/tui`
+## 2. Package 决策冻结
+
+直接修改：
+
+```text
+packages/tui
+```
 
 不创建：
 
@@ -71,7 +79,7 @@ Core2 不知道 TUI 的存在。
 packages/tui2
 ```
 
-原因：当前需要保留的 presentation 资产仍然是同一套：
+原因：当前 presentation 仍然是同一套：
 
 ```text
 BindTTY app / components
@@ -86,7 +94,7 @@ status/help 展示
 slash command UX
 ```
 
-真正变化的是：
+真正变化的是 backend：
 
 ```text
 @dayloom/core
@@ -100,7 +108,7 @@ slash command UX
 
 ---
 
-## 3. Ownership / dependency boundary
+## 3. Ownership / dependency boundary 冻结
 
 目标依赖：
 
@@ -117,7 +125,7 @@ slash command UX
 @dayloom/tui → @dayloom/core
 ```
 
-禁止为了适配新增：
+禁止新增反向依赖：
 
 ```text
 @dayloom/core2 → @dayloom/tui
@@ -126,7 +134,7 @@ slash command UX
 @dayloom/core2 → TuiMessage
 ```
 
-也不创建一个旧 Runtime compatibility facade：
+禁止创建 legacy Runtime compatibility facade：
 
 ```text
 Core2
@@ -136,7 +144,15 @@ Core2
 → existing driver
 ```
 
-正确方向：
+禁止创建不存在真实需求的双 backend：
+
+```text
+RuntimeBackend
+OldCoreBackend
+Core2Backend
+```
+
+正确方向唯一为：
 
 ```text
 Core2 CoreState / CoreEvent / CoreResult
@@ -152,7 +168,7 @@ Core2 CoreState / CoreEvent / CoreResult
 
 ---
 
-## 4. 本次非目标
+## 4. 非目标
 
 本次适配不负责：
 
@@ -170,25 +186,15 @@ Core2 CoreState / CoreEvent / CoreResult
 同时支持 old core + core2 runtime switch
 ```
 
-特别禁止：
-
-```text
-RuntimeBackend interface
-OldCoreBackend
-Core2Backend
-```
-
-当前产品方向已经选择 Core2；不存在需要维持双 backend 的真实需求。
+当前产品方向已经选择 Core2；TUI 只消费 Core2 当前真实能力。
 
 ---
 
-## 5. 当前耦合面
-
-现有 TUI 对旧 Core 的耦合主要集中在四处。
+## 5. 当前旧 Core 耦合面
 
 ### 5.1 `runtime-driver/create-runtime-driver.ts`
 
-当前直接使用：
+删除对以下旧 Core runtime 构件的使用：
 
 ```text
 MessageStore
@@ -205,9 +211,7 @@ RuntimeSnapshot
 SessionFactory
 ```
 
-适配后这些全部从 TUI 删除。
-
-Driver 直接创建：
+Driver 改为直接创建：
 
 ```ts
 createDayloomCore({
@@ -218,53 +222,64 @@ createDayloomCore({
 
 ### 5.2 `types.ts`
 
-当前 `TuiDriverState` / `TuiPage` / message / session type 直接复用旧 Core 类型。
-
-适配后 presentation types 必须 TUI-local。
+删除对 legacy Runtime type 的继承/别名。
 
 ### 5.3 `hub/actions.ts`
 
-当前根据：
-
-```text
-WorldCommand[]
-CommandAvailability[]
-old WorldPhase
-```
-
-投影 Hub action。
-
-适配后仅根据 Core2：
-
-```text
-CoreState.world
-CoreState.capabilities
-```
-
-投影。
+删除 `WorldCommand[]` / `CommandAvailability[]` / old `WorldPhase` projection，改为 Core2 capability projection。
 
 ### 5.4 `view-model.ts`
 
-当前读取：
+删除对 `snapshot` / `commands` / `RuntimeMessage` 的读取，只消费 TUI-local driver state。
 
-```text
-snapshot.world
-snapshot.session.status
-commands
-RuntimeMessage
-```
+### 5.5 `message-history.ts`
 
-适配后读取 TUI-local driver state，不直接依赖 Core2，也不继续保留 legacy snapshot shape。
+删除 `RuntimeMessage` conversion。若仍保留此文件，只承担 TUI-local message helper；也可以直接并入 driver，避免为了旧结构保留无意义层。
 
 ---
 
-## 6. TUI-local state 目标
+## 6. TUI state authority 冻结
 
-不要为了“少改 view-model”保留一个假的 `RuntimeSnapshot`。
+TUI 不复制 Core2 lifecycle state machine。
 
-建议把 driver state 收敛成真正 presentation-oriented 的本地类型：
+Driver 内部唯一 authority 集合：
+
+```text
+latestCoreState
+hubMode
+selectedHubActionId
+recent
+当前 Session 的 presentation messages
+当前 streaming assistant message id（如需要）
+```
+
+以下全部是**派生值**，不得作为第二套 lifecycle authority 独立维护：
+
+```text
+page
+Hub Play availability
+session controls
+loadingLabel
+inputEnabled
+inputControlEnabled
+```
+
+特别禁止重新引入独立：
+
+```text
+loading
+TuiBusyState
+legacy RuntimeSnapshot
+legacy command availability cache
+```
+
+---
+
+## 7. TUI-local presentation types 冻结
 
 ```ts
+export type HubMode = 'status' | 'help';
+
 export type TuiSessionStatus =
   | 'ready'
   | 'running'
@@ -287,6 +302,16 @@ export interface TuiSessionState {
   status: TuiSessionStatus;
 }
 
+export type TuiPage =
+  | { kind: 'hub'; mode: HubMode }
+  | { kind: 'session'; sessionId: string; sessionKind: 'play' };
+
+export interface TuiSessionControls {
+  input: boolean;
+  submit: boolean;
+  cancel: boolean;
+}
+
 export interface TuiMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -294,34 +319,110 @@ export interface TuiMessage {
   status?: 'streaming' | 'complete' | 'error';
 }
 
+export interface TuiRecentResult {
+  kind: 'completed' | 'cancelled' | 'failed';
+  label: string;
+  detail: string | null;
+}
+
 export interface TuiDriverState {
   page: TuiPage;
   world: TuiWorldState;
   session: TuiSessionState | null;
+  sessionControls: TuiSessionControls;
   hubActions: TuiHubAction[];
   selectedHubActionId: string | null;
   recent: TuiRecentResult | null;
-  loading: TuiBusyState | null;
   messages: TuiMessage[];
 }
 ```
 
-这些是 presentation state，不是 Core2 API 的镜像。
+这些是 TUI presentation contract，不是 Core2 API 镜像。
 
-映射：
+### 7.1 Projection source
 
 ```text
-CoreState.world   → TuiWorldState
-CoreState.session → TuiSessionState
-Core capabilities → TuiHubAction / input availability
-CoreEvent         → message projection / state refresh
+CoreState.world
+→ TuiWorldState
+
+CoreState.session
+→ TuiSessionState
+
+CoreState.capabilities.startSessions
+→ Hub Play action
+
+CoreState.capabilities.send
+→ sessionControls.input
+
+CoreState.capabilities.submit
+→ sessionControls.submit
+
+CoreState.capabilities.cancel
+→ sessionControls.cancel
+```
+
+`sessionControls` 每次由最新 `CoreState.capabilities` 重新投影，不独立变更。
+
+这样即使 Core2 在 mutation begin 时出现：
+
+```text
+session.status == ready
+但 capability.send == false
+```
+
+TUI 也不会错误地继续开放输入。
+
+---
+
+## 8. Page projection 冻结
+
+`page.kind` 不是独立状态机。
+
+唯一规则：
+
+```text
+latestCoreState.session == null
+→ page = { kind: 'hub', mode: hubMode }
+
+latestCoreState.session != null
+→ page = {
+    kind: 'session',
+    sessionId,
+    sessionKind: 'play'
+  }
+```
+
+Driver 不保存一个可以与 Core session 相矛盾的 `page` authority。
+
+当观察到：
+
+```text
+previous Core session != null
+current Core session == null
+```
+
+TUI-local：
+
+```text
+hubMode = 'status'
+```
+
+之后 `page` 自然派生为 Hub(status)。
+
+适用于：
+
+```text
+submit success
+cancel success
+send terminal failure
+submit terminal failure
 ```
 
 ---
 
-## 7. `TuiRuntimeDriver` 保留
+## 9. `TuiRuntimeDriver` 冻结
 
-现有 driver interface 可以继续作为 TUI 内部 seam：
+现有 interface 保留为 TUI internal presentation seam：
 
 ```ts
 export interface TuiRuntimeDriver {
@@ -335,34 +436,20 @@ export interface TuiRuntimeDriver {
 }
 ```
 
-但它必须明确是：
-
-```text
-TUI internal presentation driver
-```
-
-而不是：
+它不是：
 
 ```text
 Core2 adapter contract
+generic backend contract
 ```
 
 Core2 永远不实现或 import 此 interface。
 
 ---
 
-## 8. Driver 创建契约
+## 10. Driver 创建 / test seam 冻结
 
-Core2 需要：
-
-```ts
-createDayloomCore({
-  worldRoot,
-  llmConfigPath,
-})
-```
-
-因此：
+生产创建：
 
 ```ts
 export interface CreateRuntimeDriverOptions {
@@ -372,30 +459,43 @@ export interface CreateRuntimeDriverOptions {
 }
 ```
 
-删除旧测试注入：
+生产路径：
+
+```ts
+createDayloomCore({
+  worldRoot,
+  llmConfigPath,
+})
+```
+
+删除旧注入：
 
 ```text
 runtime?: DayloomRuntime
 sessionFactory?: SessionFactory
 ```
 
-如果测试需要 seam，只允许在 TUI module-private/internal test entry 中注入一个已经创建好的 `DayloomCore`；不要把 backend abstraction 暴露成生产 API。
+如果测试需要 seam，只允许 module-private/internal test entry 注入一个已经创建好的 `DayloomCore` 或窄 factory function；不得把 backend abstraction 暴露成 package public API。
 
 ---
 
-## 9. TUI CLI / LLM config
+## 11. TUI CLI / LLM config 冻结
 
-旧 TUI 由旧 Core 自己从环境变量拼 LLM 配置；Core2 明确要求 caller 提供 `llmConfigPath`。
-
-这属于 application bootstrap / executable configuration，不属于 Core2 domain。
-
-本次建议增加：
+增加：
 
 ```text
 dayloom-tui [worldRoot] --llm-config <path>
 ```
 
-解析后：
+解析：
+
+```text
+--llm-config
+→ else DAYLOOM_LLM_CONFIG
+→ else startup error with clear usage
+```
+
+然后：
 
 ```ts
 createRuntimeDriver({
@@ -405,23 +505,7 @@ createRuntimeDriver({
 })
 ```
 
-允许一个简单环境变量 fallback：
-
-```text
-DAYLOOM_LLM_CONFIG
-```
-
-解析规则：
-
-```text
---llm-config
-→ else DAYLOOM_LLM_CONFIG
-→ else startup error with clear usage
-```
-
-不在 TUI 内重新生成 provider TOML。
-
-不把旧的：
+TUI 不重新生成 provider TOML，也不复制旧配置入口：
 
 ```text
 DAYLOOM_LLM_API_NAME
@@ -430,21 +514,15 @@ DAYLOOM_LLM_BASE_URL
 ...
 ```
 
-重新复制进新的 TUI runtime。
-
-配置内容 authority 仍由 Core2 的 caller-config guard 负责。
+配置内容 authority 仍由 Core2 caller-config guard 负责。
 
 ---
 
-## 10. Hub projection
+## 12. Hub projection 冻结
 
-Core2 MVP 当前只有 `play` Session capability。
+### 12.1 Local actions
 
-Hub action 分两类。
-
-### 10.1 Local actions
-
-继续存在：
+始终由 TUI 拥有：
 
 ```text
 status
@@ -452,32 +530,31 @@ help
 quit
 ```
 
-它们完全由 TUI 拥有。
+### 12.2 Core application action
 
-### 10.2 Core application action
-
-当前只有：
+Core2 MVP 当前只有：
 
 ```text
 play
 ```
 
-规则：
+唯一显示规则：
 
 ```text
-if coreState.capabilities.startSessions includes 'play'
-→ show Play action
+if latestCoreState.capabilities.startSessions includes 'play'
+→ show Play
 else
-→ do not show Play action
+→ do not show Play
 ```
 
-点击 Play：
+执行：
 
 ```text
-core.startSession('play')
+Play action
+→ core.startSession('play')
 ```
 
-禁止为了维持旧菜单而伪造：
+禁止为了旧菜单伪造：
 
 ```text
 init
@@ -487,59 +564,59 @@ settle
 abandon-day
 ```
 
-只有 Core2 真正提供对应 application capability 后，TUI 才显示。
-
-因此：
-
-```text
-交互模式保持一致
-≠ 当前业务 capability 数量必须与旧 Core 一致
-```
+交互模式保持一致，不意味着业务 capability 数量与旧 Core 一致。
 
 ---
 
-## 11. Page projection
+## 13. Core event consumption 冻结
 
-页面只由 Core2 Session 是否存在决定：
-
-```text
-core.state.session == null
-→ Hub
-
-core.state.session != null
-→ Session page
-```
-
-当：
+Driver 只消费 Core2 两类 public event：
 
 ```text
-Session → null
+state.changed
+output.delta
 ```
 
-且此前位于 Session page：
+### 13.1 `state.changed`
 
 ```text
-page → Hub(status)
+replace latestCoreState
+→ if Session transitioned non-null → null: hubMode = status
+→ recompute all derived TuiDriverState
+→ emit TUI state
 ```
 
-这适用于：
+不得从 `state.changed` 推断 operation success/failure，也不得生成 `recent`。
+
+`recent` 的 authority 是调用对应 Core mutation 返回的 `CoreResult`。
+
+### 13.2 `output.delta`
+
+只对当前 active Session 投影：
 
 ```text
-submit success
-cancel success
-send terminal failure
-submit failure
+event.sessionId == latestCoreState.session?.id
+→ consume
+
+otherwise
+→ ignore + optional diagnostic
 ```
 
-TUI 不需要理解 Promptpile/React failure lifecycle。
+TUI 不读取 Promptpile/React raw events。
 
 ---
 
-## 12. Message ownership
+## 14. Message ownership 冻结
 
-Core2 不提供 MessageStore，这是正确边界。
+```text
+Promptpile Conversation
+= AI interaction history authority
 
-TUI 自己维护当前 Session 的 presentation transcript。
+TUI messages
+= 当前进程、当前 Session 的 presentation transcript
+```
+
+TUI 不读取 Promptpile artifact，不从 Conversation 重建 UI transcript，不持久化 TUI transcript 为 World truth。
 
 最小模型：
 
@@ -549,129 +626,212 @@ assistant streaming message
 local system/error message
 ```
 
-不创建通用 message framework。
+不创建 generic message framework。
 
-建议继续只在 driver 内维护一个数组或小型 helper。
+### 14.1 Session start
 
-### 12.1 User input
+Play Session 成功创建后，为该 Session 开始新的 presentation transcript。
 
-当用户提交普通文本：
+上一 Session transcript 不进入新 Session，也不承担持久历史职责。
+
+### 14.2 User input
+
+普通文本：
 
 ```text
-trim / reject empty in TUI
+trim
+→ reject empty locally
+→ require sessionControls.input == true
 → append local user message
 → core.send(text)
 ```
 
-用户消息是 presentation projection，不是 Promptpile artifact authority。
+用户消息只是 UI projection；真正 AI Conversation artifact 仍由 Core2/Promptpile append。
 
-Core2/Promptpile Conversation 仍是 AI interaction history authority。
+### 14.3 Assistant streaming
 
-### 12.2 Assistant streaming
-
-Core2 event：
-
-```ts
-{ type: 'output.delta', sessionId, text }
-```
-
-Driver：
+普通 send run：
 
 ```text
-first delta
+first matching output.delta
 → create one assistant message(status=streaming)
 
-next delta
-→ append text to same assistant message
+next matching output.delta
+→ append text to same streaming assistant message
 
-send success
-→ mark complete
-
-send failure
-→ mark error or append local error message
+core.send() success
+→ mark that assistant message complete
+→ clear streaming assistant pointer
 ```
 
-Driver 不需要：
+由于 Core2 不支持并发，TUI 不创建 pending-turn map / turn scheduler。
+
+如果一次成功 send 没有 delta，则不要求制造空 assistant bubble。
+
+### 14.4 Non-terminal operation failure
+
+如果 CoreResult failure 后 Core Session 仍存在：
 
 ```text
-assistant-message-start
-assistant-message-end
-assistant-message-delta legacy event vocabulary
+Session page remains
+→ append local system/error message
 ```
 
-### 12.3 Submit
+适用于 legality/input 类错误或其它未终止 Session 的失败。
 
-Core2 不公开 submission JSON `output.delta`。
+### 14.5 Terminal operation failure
 
-因此 TUI 不需要过滤机器 JSON。
-
-`submit()` success：
+如果 CoreResult failure 后 Core Session 已经为 null：
 
 ```text
-recent = 会话已提交
-Session disappears
-page → Hub
+page 已由 CoreState 派生回 Hub
+→ recent = {
+    kind: 'failed',
+    label: operation-specific failure label,
+    detail: error.message
+  }
 ```
 
-### 12.4 Cancel
+**Hub `recent.failed` 是 terminal failure 的唯一用户可见 error authority。**
+
+不得在已经终止的 Session transcript 上再追加 error message，也不得为了展示错误人为保持 Session page。
+
+如果 terminal send failure 前已经显示过 partial assistant delta：
 
 ```text
-core.cancel()
-→ recent = 会话已取消
-→ page → Hub
+允许该 partial transcript 作为已结束 Session 的临时 presentation 数据存在，
+但进入 Hub 后不再承担错误展示职责；下一 Session 开始时清空。
 ```
+
+不增加 failed-session recovery UI。
 
 ---
 
-## 13. Loading / input semantics
+## 15. Operation result projection 冻结
 
-不要复制旧 Session status vocabulary：
-
-```text
-created
-waiting-input
-streaming
-loading
-completed
-cancelled
-failed
-```
-
-直接基于 Core2：
+### 15.1 Start Play
 
 ```text
-ready
-running
-submitting
+core.startSession('play') success
+→ Core state 决定进入 Session page
+→ clear stale recent if desired only when operation succeeds
+
+failure with no Session
+→ remain Hub
+→ recent.failed
 ```
 
-建议 projection：
+### 15.2 Send
 
 ```text
-ready
-→ inputEnabled = true
-→ loadingLabel = null
+core.send(text) success
+→ complete streaming assistant message
+→ remain Session ready
 
-running
-→ inputEnabled = false
-→ loadingLabel = 'AI 正在回复...'
+failure + Session remains
+→ local Session error
 
-submitting
-→ inputEnabled = false
-→ loadingLabel = '正在提交会话...'
+failure + Session null
+→ Hub + recent.failed
 ```
 
-Core2 mutation in flight 时 capabilities 已关闭，因此 TUI 也可将 Core capabilities 作为 legality source。
+### 15.3 Submit
 
-`/exit` / `/cancel` 当前 Core2 只允许在 `ready`，因此 running/submitting 时不要假装 cancel 可用。
+Core2 不公开 submission JSON `output.delta`，TUI 不需要过滤机器 JSON。
 
-UI hint 必须与真实 capability 一致。
+```text
+core.submit() success
+→ Core state contains refreshed World + no Session
+→ Hub(status)
+→ recent = completed / 会话已提交
+
+core.submit() failure + Session null
+→ Hub(status)
+→ recent.failed / 提交失败
+```
+
+### 15.4 Cancel
+
+```text
+core.cancel() success
+→ no Session
+→ Hub(status)
+→ recent = cancelled / 会话已取消
+```
+
+如果 cancel 返回 failure 且 Session 仍存在，则保留 Session 并显示 local error。
 
 ---
 
-## 14. Slash commands
+## 16. `recent` authority / event ordering 冻结
 
-Session 中保留：
+Core2 的 `state.changed` 与 mutation Promise completion 是不同时间线。
+
+因此 TUI 必须允许：
+
+```text
+state.changed(session = null)
+→ Hub 已经出现
+→ mutation Promise 稍后返回 failure/success
+→ recent 再更新
+```
+
+这是合法时序，不需要 event queue、terminal-session abstraction 或延迟 page transition。
+
+冻结规则：
+
+```text
+CoreState
+→ 决定 World / Session / page / controls
+
+CoreResult
+→ 决定对应用户动作的 recent outcome
+```
+
+二者不得互相冒充 authority。
+
+---
+
+## 17. Loading / input semantics 冻结
+
+不保留 `loading` 字段。
+
+`loadingLabel` 完全由 Session status 派生：
+
+```text
+session == null
+→ null
+
+ready
+→ null
+
+running
+→ 'AI 正在回复...'
+
+submitting
+→ '正在提交会话...'
+```
+
+输入 legality 不从 status 猜测，而从 `sessionControls`：
+
+```text
+inputEnabled
+= page.kind == session && sessionControls.input
+
+inputControlEnabled
+= page.kind == session
+  && (sessionControls.input || sessionControls.submit || sessionControls.cancel)
+```
+
+因此 mutation-in-flight 时，即便有短暂 `status == ready`，只要 Core capability 已关闭，TUI 就不会继续接受输入。
+
+UI hint 同样从 `sessionControls` + `session.status` 投影，不得承诺 Core2 当前不允许的 cancel/submit。
+
+---
+
+## 18. Slash command 冻结
+
+Session 中继续识别：
 
 ```text
 /submit
@@ -687,37 +847,39 @@ Session 中保留：
 
 ```text
 /submit
-→ if core capability.submit then core.submit()
-→ else local warning/error
+→ if sessionControls.submit then core.submit()
+→ else local warning
 
 /exit / /cancel
-→ if core capability.cancel then core.cancel()
-→ else local warning/error
+→ if sessionControls.cancel then core.cancel()
+→ else local warning
 
 /status / /help
-→ 保持现有提示：先退出 Session 回 Hub
+→ local提示：先退出 Session 回 Hub
 
 /next
 → local warning，TUI 不提供该命令
 
 /revise
-→ local warning；只有未来 Core2 真正提供 revise capability 后再考虑 Hub action
+→ local warning；未来只有 Core2 真正提供对应 capability 后才重新评估
 ```
 
-不把 slash command string 传给 Core2。
+slash command string 永不传入 Core2。
+
+running/submitting 时 Core2 当前不允许 cancel，因此 TUI textarea/control 也不得暗示 `/exit` 可执行。
 
 ---
 
-## 15. Hub content / status / help
+## 19. Hub content / status / help 冻结
 
-`hub/content.ts` 不再接收 legacy：
+`hub/content.ts` 不再接收：
 
 ```text
 RuntimeSnapshot
 CommandAvailability[]
 ```
 
-改为只接收 TUI-local：
+只接收 TUI-local：
 
 ```text
 TuiWorldState
@@ -737,42 +899,44 @@ current available actions
 recent result
 ```
 
-Help 只列出当前实际可用的 action 与本地导航说明。
+Help 只列出当前实际存在的 action 与本地导航说明。
 
-不向用户展示不存在的 Core2 commands。
+不展示不存在的 Core2 commands。
 
 ---
 
-## 16. Theme / labels
+## 20. Theme / labels 冻结
 
-`theme.ts` 当前若依赖旧 Core union type，应改成本地 string union：
+`theme.ts` 不再 import old Core unions。
+
+本地 label 输入：
 
 ```text
-PublishedWorldPhase
+TuiWorldState.phase
 TuiSessionStatus
 'play'
 ```
 
-视觉 label 保持当前风格：
+视觉 label 保留当前风格：
 
 ```text
-planned        → 已规划
+planned         → 已规划
 awaiting-settle → 待结算
-play           → 游玩
-ready          → 等待输入
-running        → AI 正在回复
-submitting     → 正在提交
+play            → 游玩
+ready           → 等待输入
+running         → AI 正在回复
+submitting      → 正在提交
 ```
 
-不要求 Core2 提供中文 label。
+Core2 不提供中文 label。
 
 ---
 
-## 17. Diagnostics
+## 21. Diagnostics 冻结
 
-Diagnostics 继续属于 TUI。
+Diagnostics 属于 TUI。
 
-建议记录 Core2 facts，而不是 legacy RuntimeEvent：
+记录：
 
 ```text
 driver-created
@@ -792,16 +956,16 @@ world revision / phase
 session id / kind / status
 CoreResult ok/error.code
 CoreEvent type
-page
+derived page
 ```
 
-不重新构造 legacy RuntimeEvent diagnostics shape。
+不重构 legacy RuntimeEvent diagnostics shape。
 
 ---
 
-## 18. `view-model.ts` 适配原则
+## 22. `view-model.ts` 适配冻结
 
-尽量保留：
+保留：
 
 ```text
 signals
@@ -813,57 +977,59 @@ textarea reset
 mount/dispose behavior
 ```
 
-只替换数据读取：
+替换：
 
 ```text
 snapshot.world      → state.world
 snapshot.session    → state.session
-commands            → hubActions / capabilities projection result
+commands            → state.hubActions
 RuntimeMessage      → TuiMessage
 ```
 
-例如：
+ViewModel 不直接 import Core2。
+
+计算：
 
 ```text
 loadingLabel
+→ state.session?.status
+
+inputEnabled
+→ state.sessionControls.input
+
+inputControlEnabled
+→ any legal session control
 ```
 
-直接根据：
-
-```text
-state.loading
-state.session?.status
-```
-
-而不是继续模拟旧 status。
+不模拟 legacy status，也不保留独立 loading state。
 
 ---
 
-## 19. Components 原则
+## 23. Components 冻结
 
 `app.tsx` 与 `components/*` 默认不改结构。
 
-只允许因 type/property rename 产生的机械调整。
+只允许因 TUI-local type/property rename 产生的机械调整。
 
-如果为了 Core2 适配需要大规模修改 component tree，应先停止并检查 driver/view-model 是否泄漏了 backend semantics。
+如果 Core2 backend replacement 导致 component tree 大规模修改，应停止并检查 driver/view-model 是否泄漏 backend semantics。
 
-目标是：
+目标：
 
 ```text
 backend replacement
-≈ driver + state projection change
+≈ driver + projection change
 ```
 
 而不是：
 
 ```text
 backend replacement
-→ rewrite presentation
+→ presentation rewrite
 ```
 
 ---
 
-## 20. Package change
+## 24. Package / architecture guard 冻结
 
 `packages/tui/package.json`：
 
@@ -879,18 +1045,18 @@ TUI source 最终不得 import：
 @dayloom/core-old
 ```
 
-建议增加简单 architecture test/guard：
+增加简单 architecture guard/test：
 
 ```text
 packages/tui/src/**
 → reject @dayloom/core / @dayloom/core-old imports
 ```
 
-无需设计跨 package architecture framework。
+无需跨 package architecture framework。
 
 ---
 
-## 21. 实施顺序
+## 25. 实施顺序冻结
 
 ### Step 0 — dependency / argv
 
@@ -904,7 +1070,8 @@ wire main.ts → createRuntimeDriver
 
 ```text
 remove @dayloom/core imports from types.ts
-introduce TuiWorldState / TuiSessionState / TuiMessage
+introduce TuiWorldState / TuiSessionState / TuiSessionControls / TuiMessage
+remove TuiBusyState / loading
 remove RuntimeSnapshot / CommandAvailability / WorldCommand aliases
 ```
 
@@ -921,17 +1088,19 @@ show Play only when Core2 exposes play capability
 ```text
 createDayloomCore
 subscribe CoreEvent
-CoreState → TuiDriverState
+hold latestCoreState only
+derive page / controls / Hub actions
 startSession/send/submit/cancel mapping
 local transcript projection
-recent/loading/page behavior
+CoreResult → recent
 ```
 
 ### Step 4 — view-model
 
 ```text
 replace snapshot/commands reads with local driver state
-map ready/running/submitting to existing loading/input UX
+derive loading from ready/running/submitting
+use sessionControls for legality
 keep navigation/history/scroll behavior
 ```
 
@@ -944,27 +1113,29 @@ update labels
 update diagnostics projection
 ```
 
-### Step 6 — tests
+### Step 6 — tests / guards
 
 ```text
 interaction-equivalent Play lifecycle
 streaming temporal behavior
+terminal result ordering
 slash commands
 Hub projection
 dispose
-architecture import guard
+legacy import guard
 ```
 
-完成 Step 6 后，现有 `packages/tui` 即完成 Core2 backend 切换。
+完成 Step 6 即完成现有 `packages/tui` 的 Core2 backend replacement。
 
 ---
 
-## 22. Acceptance tests
+## 26. Acceptance tests 冻结
 
 至少覆盖：
 
 ```text
 tui-no-longer-depends-on-dayloom-core
+tui-source-rejects-legacy-core-imports
 
 tui-argv-requires-or-resolves-llm-config
 tui-driver-creates-core2-with-world-and-llm-config
@@ -973,35 +1144,45 @@ tui-hub-shows-play-iff-core2-capability-allows-play
 tui-hub-keeps-status-help-quit-local
 tui-does-not-show-unsupported-legacy-world-commands
 
+tui-page-is-derived-from-core2-session-and-hub-mode
+tui-driver-has-no-independent-loading-authority
+tui-session-controls-project-core2-capabilities
+
 tui-start-play-enters-session-page
+tui-start-play-failure-remains-hub-and-sets-recent-failed
+
 tui-user-text-is-projected-locally-and-sent-to-core2
 tui-output-delta-updates-one-streaming-assistant-message-before-send-resolves
 tui-send-success-completes-assistant-message
-tui-send-failure-shows-error-and-returns-to-hub-when-core2-session-terminates
+tui-send-terminal-failure-returns-to-hub-with-recent-failed
+tui-send-nonterminal-failure-stays-in-session-with-local-error
 
 tui-submit-does-not-display-submission-json
 tui-submit-success-returns-to-hub-with-completed-recent-result
+tui-submit-terminal-failure-returns-to-hub-with-failed-recent-result
 tui-cancel-success-returns-to-hub-with-cancelled-recent-result
 
-tui-input-enabled-only-when-core2-session-ready
-tui-running-shows-ai-loading-state
-tui-submitting-shows-submit-loading-state
+tui-core-state-may-return-to-hub-before-result-without-losing-terminal-recent
+tui-recent-is-driven-by-core-result-not-core-event
 
-tui-submit-slash-command-calls-core2-submit
+tui-input-enabled-only-when-core2-send-capability-is-true
+tui-running-shows-ai-loading-label-derived-from-status
+tui-submitting-shows-submit-loading-label-derived-from-status
+tui-running-and-submitting-do-not-advertise-cancel
+
+tui-submit-slash-command-calls-core2-submit-only-when-legal
 tui-exit-and-cancel-slash-command-call-core2-cancel-only-when-legal
 tui-status-help-next-revise-remain-local-presentation-behavior
 
 tui-view-model-keeps-input-history-and-scroll-behavior
 tui-dispose-unsubscribes-and-disposes-core2
-
-tui-source-rejects-legacy-core-imports
 ```
 
-测试重点是**用户可观察交互语义**，不是模拟旧 Core event payload。
+测试重点是**用户可观察交互语义与 authority 边界**，不是 legacy Runtime payload compatibility。
 
 ---
 
-## 23. 适配完成标准
+## 27. Definition of Done
 
 同时满足：
 
@@ -1009,23 +1190,31 @@ tui-source-rejects-legacy-core-imports
 2. 不创建 `packages/tui2`；
 3. 不创建 old/core2 双 backend abstraction；
 4. Core2 不增加任何 TUI-specific API；
-5. TUI presentation types 不再继承 legacy Runtime types；
-6. Hub action 从 Core2 capabilities 投影；
-7. 不伪造 Core2 尚未支持的 legacy command；
-8. Play Session 保持 Hub → Session → multi-turn → submit/cancel → Hub 的交互；
-9. `output.delta` 在 UI 中实时显示；
-10. submit 的机器 JSON 永不展示；
-11. transcript/message lifecycle 完全由 TUI presentation 层拥有；
-12. Promptpile Conversation 仍由 Core2/Promptpile 拥有，TUI 不读取其 artifact；
-13. loading/input hint 与 Core2 当前真实 legality 一致；
-14. components/layout/input history/scroll 行为尽可能保持不变；
-15. CLI 显式解决 `llmConfigPath`，不重新复制 provider config policy；
-16. TUI tests 验证 interaction semantics，不验证 legacy Runtime compatibility；
-17. TUI source 不再 import legacy Core。
+5. TUI presentation types 不继承 legacy Runtime types；
+6. Driver 内唯一 Core lifecycle authority 是 latest `CoreState`；
+7. `page` 由 Core Session + `hubMode` 派生，不独立维护；
+8. 不存在独立 `loading` / `TuiBusyState` lifecycle truth；
+9. Hub Play action 从 Core2 start-session capability 投影；
+10. Session input/submit/cancel legality 从 Core2 capabilities 投影；
+11. 不伪造 Core2 尚未支持的 legacy command；
+12. Play 保持 Hub → Session → multi-turn → submit/cancel → Hub 的用户交互；
+13. `output.delta` 在 UI 中实时显示；
+14. submit machine JSON 永不展示；
+15. transcript/message lifecycle 完全由 TUI presentation 层拥有；
+16. Promptpile Conversation 仍由 Core2/Promptpile 拥有，TUI 不读取其 artifact；
+17. terminal operation failure 通过 Hub `recent.failed` 呈现，不人为保留失败 Session；
+18. non-terminal failure 才使用 Session-local error message；
+19. `CoreState` 决定 lifecycle/page，`CoreResult` 决定对应用户动作的 recent outcome；
+20. loading label 从 Core Session status 派生；
+21. input legality 从 projected Core capabilities 决定，而不是仅凭 status 猜测；
+22. components/layout/input history/scroll 行为尽可能保持不变；
+23. CLI 显式解决 `llmConfigPath`，不复制 provider config policy；
+24. tests 验证 interaction semantics 与 authority，不验证 legacy Runtime compatibility；
+25. TUI source 不再 import legacy Core。
 
 ---
 
-## 24. 边界判断规则
+## 28. 边界判断规则
 
 适配过程中，如果想给 Core2 增加字段，先问：
 
@@ -1062,11 +1251,11 @@ user-visible Final delta
 
 才属于 Core2 application boundary 的潜在问题。
 
-本次适配默认认为当前 Core2 Freeze 已足够，不主动修改 Core2。
+本次适配默认当前 Core2 Freeze 已足够，不主动修改 Core2。
 
 ---
 
-## 25. 最终结构
+## 29. 最终结构 / 闭环
 
 ```text
                     @dayloom/core2
@@ -1075,33 +1264,51 @@ user-visible Final delta
                            │
                            ▼
                 TuiRuntimeDriver
-                  │          │
-          state projection   command mapping
-                  │          │
-                  └────┬─────┘
-                       ▼
-                 TuiDriverState
-                       │
-                       ▼
-                  ViewModel
-                       │
-                       ▼
-            existing BindTTY components
+                   │        │
+            state facts   CoreResult
+                   │        │
+                   │        └──→ recent outcome
+                   │
+                   ├──→ derived page / controls / Hub actions
+                   └──→ output.delta → presentation messages
+                           │
+                           ▼
+                    TuiDriverState
+                           │
+                           ▼
+                       ViewModel
+                           │
+                           ▼
+                existing BindTTY components
+```
+
+最终 ownership：
+
+```text
+Core2 owns application semantics and legality.
+Core2 CoreState owns World / Session lifecycle truth.
+Core2 CoreResult owns mutation outcome truth.
+TUI owns presentation projection and ephemeral transcript.
+Consumers/components own rendering only.
 ```
 
 最终原则：
 
 ```text
-Core2 owns application semantics.
-TUI owns presentation semantics.
-
 TUI adapts to Core2.
 Core2 does not adapt to TUI.
+
+No fake Runtime.
+No dual backend.
+No second page state machine.
+No second loading state machine.
+No duplicated Conversation authority.
 ```
 
 本次工作的成功标准不是“让 Core2 看起来像旧 Runtime”，而是：
 
 ```text
 在不复刻旧 Runtime API 的情况下，
-现有 TUI 仍然自然完成同一套用户交互。
+现有 TUI 仍然自然完成同一套用户交互，
+且每个 lifecycle / legality / result / presentation fact 只有一个 authority。
 ```
