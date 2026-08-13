@@ -19,7 +19,9 @@ export function integer(value: unknown, schema: string, field: string, minimum: 
 }
 export function nullable<T>(value: unknown, parse: (value: unknown) => T): T | null { return value === null ? null : parse(value); }
 export function isIsoTimestamp(value: unknown): value is string {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value));
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const milliseconds = Date.parse(value);
+  return !Number.isNaN(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 export function timestamp(value: unknown, schema: string, field: string, code: ArchiveProtocolErrorCode = 'ARCHIVE_PROTOCOL_SHAPE_INVALID'): string {
   if (!isIsoTimestamp(value)) protocolError(code, `${schema}.${field} must be a canonical UTC timestamp.`, { field });

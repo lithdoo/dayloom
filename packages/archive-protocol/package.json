@@ -16,7 +16,9 @@
     "clean": "node scripts/clean-dist.mjs",
     "build": "npm run clean && tsc",
     "guard": "node scripts/check-architecture.mjs",
-    "test": "npm run build && npm run guard && node --test test/*.test.js"
+    "test": "npm run build && npm run guard && node --test test/*.test.js && npm run test:pack",
+    "test:pack": "node scripts/test-pack.mjs",
+    "prepack": "npm run build"
   },
   "engines": { "node": ">=18" },
   "license": "ISC",

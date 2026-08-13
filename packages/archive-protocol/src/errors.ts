@@ -7,7 +7,8 @@ export const ARCHIVE_PROTOCOL_ERROR_CODES = [
 ] as const;
 
 export type ArchiveProtocolErrorCode = typeof ARCHIVE_PROTOCOL_ERROR_CODES[number];
-export type ArchiveProtocolErrorDetails = Readonly<Record<string, string | number | boolean | null>>;
+export type JsonScalar = string | number | boolean | null;
+export type ArchiveProtocolErrorDetails = Readonly<Record<string, JsonScalar>>;
 export interface ArchiveProtocolErrorData {
   code: ArchiveProtocolErrorCode;
   message: string;
