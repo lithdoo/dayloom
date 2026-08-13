@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const forbidden = [
   /(?:from\s+|require\()['"]node:fs(?:\/promises)?['"]/, /(?:from\s+|require\()['"]child_process['"]/,
-  /(?:from\s+|require\()['"]node:(?:child_process|process)['"]/, /\bprocess\.(?:env|cwd)\b/,
+  /(?:from\s+|require\()['"]node:(?:child_process|process)['"]/, /\bprocess\s*\./,
   /['"]@dayloom\/(?:core|tui)(?:\/[^'"]*)?['"]/, /['"]promptpile[^'"]*['"]/,
 ];
 const source = fileURLToPath(new URL('../src', import.meta.url));

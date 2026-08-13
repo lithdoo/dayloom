@@ -621,10 +621,16 @@ export interface StagingManifestV1 {
 
 `changes` 是 final-state manifest，不是 edit log。
 
-Pure overlay：
+Pure syntactic algebra：
 
 ```ts
-overlayRootTreeV1(base, staging)
+applyStagedChangesV1(tree, changes)
+```
+
+Transaction-aware candidate construction：
+
+```ts
+buildCandidateTreeV1({ baseTree, staging })
 ```
 
 必须满足：
@@ -633,6 +639,12 @@ overlayRootTreeV1(base, staging)
 same base
 + same staging manifest
 ⇒ same candidate tree bytes/hash
+
+baseRevision == 0
+⇒ base tree is empty
+
+baseRevision > 0
+⇒ hash(base tree) == staging.baseRootTreeHash
 ```
 
 DELETE missing 第一版为 idempotent no-op。
@@ -659,9 +671,22 @@ export interface ArchiveOperationV2 {
 
   createdAt: string;
   updatedAt: string;
-  lastError: ArchiveProtocolErrorData | null;
+  lastError: ArchiveOperationErrorV1 | null;
 }
 ```
+
+```ts
+export interface ArchiveOperationErrorV1 {
+  source: 'protocol' | 'runtime' | 'tool';
+  code: string;
+  message: string;
+  details?: Record<string, string | number | boolean | null>;
+}
+```
+
+只有 `source == 'protocol'` 时，`code` 必须属于稳定的
+`ARCHIVE_PROTOCOL_*` error vocabulary。Runtime/tool diagnostic 保留自身
+error ownership，不得伪装成 protocol error。
 
 状态语义：
 
@@ -715,6 +740,37 @@ publish commit
 move current
 GC delete
 ```
+
+### 16.1 Cross-object relation contract
+
+Archive Protocol 不止拥有单对象 schema，还拥有引用之间的纯关系验证：
+
+```ts
+validateCurrentCommitRelationV2({ current, commit })
+validateCommitParentRelationV2({ child, parent })
+validateOperationStagingRelationV2({ operation, staging })
+validatePreparedTargetRelationV2({ operation, targetCommit, candidateTree })
+```
+
+冻结关系：
+
+```text
+current.commitId == commit.id
+current.revision == commit.revision
+
+child.parentCommitId == parent.id
+child.revision == parent.revision + 1
+
+operation.base* == staging.base*
+
+targetCommit.operationId == operation.id
+targetCommit.parentCommitId == operation.baseCommitId
+targetCommit.revision == operation.baseRevision + 1
+targetCommit.rootTreeHash == operation.targetRootTreeHash
+hash(candidateTree) == operation.targetRootTreeHash
+```
+
+这些 validator 保持小而可组合，不引入执行 I/O 的巨型 `validateEverything()`。
 
 ---
 
