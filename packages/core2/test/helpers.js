@@ -40,10 +40,11 @@ function eventStream(content) {
 }
 class FakeRunner {
   constructor(finals = []) { this.finals = [...finals]; this.calls = []; }
-  async run(bin, args, stdin) {
-    this.calls.push({ bin, args: [...args], stdin });
+  async run(bin, args, options = {}) {
+    this.calls.push({ bin, args: [...args], stdin: options.stdin });
     if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
-    return { code: 0, stdout: eventStream(this.finals.shift() ?? ''), stderr: '' };
+    const stdout = eventStream(this.finals.shift() ?? ''); options.onStdout?.(stdout);
+    return { code: 0, stdout, stderr: '' };
   }
 }
 module.exports = { archiveFixture, FakeRunner, eventStream };

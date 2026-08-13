@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { access, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -13,11 +12,23 @@ import type { PlayDocuments } from '../session/submission';
 import { readPublishedWorld, type PublishedWorld } from './read';
 
 const jsonBytes = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
-async function exists(target: string) { try { await access(target, constants.F_OK); return true; } catch { return false; } }
-async function immutable(target: string, bytes: Uint8Array) {
+export async function installImmutable(target: string, bytes: Uint8Array): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true });
-  try { await writeFile(target, bytes, { flag: 'wx' }); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !Buffer.from(await readFile(target)).equals(Buffer.from(bytes))) throw error; }
+  const temporary = `${target}.tmp-${randomUUID()}`;
+  let handle;
+  try {
+    handle = await open(temporary, 'wx');
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close(); handle = undefined;
+    try { await link(temporary, target); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !Buffer.from(await readFile(target)).equals(Buffer.from(bytes))) throw error;
+    }
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 async function atomic(target: string, bytes: Uint8Array) {
   const temporary = `${target}.tmp-${randomUUID()}`;
@@ -25,7 +36,8 @@ async function atomic(target: string, bytes: Uint8Array) {
   try { await rename(temporary, target); } finally { await rm(temporary, { force: true }); }
 }
 
-export async function publishPlay(worldRoot: string, pinned: PublishedWorld, day: string, documents: PlayDocuments): Promise<PublishedWorld> {
+interface PublicationOptions { writeDiagnostic?: (target: string, bytes: Uint8Array) => Promise<void> }
+export async function publishPlay(worldRoot: string, pinned: PublishedWorld, day: string, documents: PlayDocuments, options: PublicationOptions = {}): Promise<PublishedWorld> {
   const playPath = `days/${day}/play.json`, summaryPath = `days/${day}/summary.md`;
   if (pinned.tree.entries.some((entry) => entry.path === playPath || entry.path === summaryPath)) throw Object.assign(new Error('Published Play history must not be overwritten.'), { code: 'SUBMISSION_INVALID' });
   const operationId = `op_${randomUUID().replaceAll('-', '')}`, commitId = `commit_${randomUUID().replaceAll('-', '')}`, timestamp = new Date().toISOString();
@@ -48,11 +60,11 @@ export async function publishPlay(worldRoot: string, pinned: PublishedWorld, day
     validateOperationStagingRelationV2({ operation, staging }); validateCommitParentRelationV2({ child: commit, parent: pinned.commit }); validatePreparedTargetRelationV2({ operation, targetCommit: commit, candidateTree: candidate });
     for (const change of changes) {
       if (change.op !== 'put') continue;
-      await immutable(path.join(worldRoot, ...formatBlobObjectPathV1(change.sha256).split('/')), files.find((file) => file.path === change.path)!.bytes);
+      await installImmutable(path.join(worldRoot, ...formatBlobObjectPathV1(change.sha256).split('/')), files.find((file) => file.path === change.path)!.bytes);
     }
-    await immutable(path.join(worldRoot, ...formatTreeObjectPathV1(treeHash).split('/')), encodeRootTreeCanonicalV1(candidate));
-    await immutable(path.join(worldRoot, ...formatCommitObjectPathV2(commitId).split('/')), jsonBytes(commit));
-    await immutable(path.join(worldRoot, ...formatOperationPathV2(operationId).split('/')), jsonBytes(operation));
+    await installImmutable(path.join(worldRoot, ...formatTreeObjectPathV1(treeHash).split('/')), encodeRootTreeCanonicalV1(candidate));
+    await installImmutable(path.join(worldRoot, ...formatCommitObjectPathV2(commitId).split('/')), jsonBytes(commit));
+    await installImmutable(path.join(worldRoot, ...formatOperationPathV2(operationId).split('/')), jsonBytes(operation));
     await atomic(path.join(worldRoot, 'current.json'), jsonBytes(parseCurrentPointerV2({ schemaVersion: 2, revision: commit.revision, commitId, updatedAt: timestamp })));
     committed = Object.freeze({
       manifest: pinned.manifest, commit, tree: candidate,
@@ -61,7 +73,8 @@ export async function publishPlay(worldRoot: string, pinned: PublishedWorld, day
     });
     try { committed = await readPublishedWorld(worldRoot); } catch { /* replacement is already the public truth */ }
     const diagnosed = parseArchiveOperationV2({ ...operation, status: 'published', updatedAt: new Date().toISOString() });
-    try { await atomic(path.join(worldRoot, ...formatOperationPathV2(operationId).split('/')), jsonBytes(diagnosed)); } catch { /* current.json is already public truth */ }
+    const diagnosticTarget = path.join(worldRoot, ...formatOperationPathV2(operationId).split('/'));
+    try { await (options.writeDiagnostic ?? atomic)(diagnosticTarget, jsonBytes(diagnosed)); } catch { /* current.json is already public truth */ }
     return committed;
   } finally {
     try { await lock.close(); await rm(lockPath, { force: true }); }

@@ -22,13 +22,13 @@ export interface CoreState {
   };
 }
 
-export function buildState(world: CoreWorldView, session: CoreState['session'], mutationInFlight: boolean): CoreState {
-  const ready = session?.status === 'ready' && !mutationInFlight;
+export function buildState(world: CoreWorldView, session: CoreState['session'], mutationInFlight: boolean, disposed = false): CoreState {
+  const ready = !disposed && session?.status === 'ready' && !mutationInFlight;
   return Object.freeze({
     world: Object.freeze({ ...world }),
     session: session === null ? null : Object.freeze({ ...session }),
     capabilities: Object.freeze({
-      startSessions: Object.freeze(session === null && !mutationInFlight && world.phase === 'planned' && world.day !== null ? ['play'] as const : []),
+      startSessions: Object.freeze(!disposed && session === null && !mutationInFlight && world.phase === 'planned' && world.day !== null ? ['play'] as const : []),
       send: ready,
       submit: ready,
       cancel: ready,

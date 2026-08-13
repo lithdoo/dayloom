@@ -31,9 +31,42 @@ test('React runner rejects malformed, schema-invalid, gaps, session changes and 
     eventStream('ok').replace('"session_id":"react-session","sequence":1', '"session_id":"changed","sequence":1'),
     eventStream('ok').replace('"content":"ok"}}', '"content":"different"}}'),
   ]) {
-    const runner = { run: async () => ({ code: 0, stdout, stderr: '' }) };
+    const runner = { run: async (_bin, _args, options) => { options.onStdout?.(stdout); return { code: 0, stdout, stderr: '' }; } };
     await assert.rejects(() => runReact({ ...base, runner }));
   }
+});
+test('React runner consumes JSONL incrementally across stdout chunks', async () => {
+  const boundaries = await resolvePackagedBoundaries(), received = [];
+  const stream = eventStream('hello'), split = stream.indexOf('hello') + 2;
+  const runner = { run: async (_bin, _args, options) => {
+    options.onStdout(stream.slice(0, split)); options.onStdout(stream.slice(split));
+    return { code: 0, stdout: stream, stderr: '' };
+  } };
+  const final = await runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', onDelta: (text) => received.push(text) });
+  assert.equal(final, 'hello'); assert.deepEqual(received, ['hello']);
+});
+test('React runner emits Final delta before the child process closes', async () => {
+  const boundaries = await resolvePackagedBoundaries(), lines = eventStream('live').trimEnd().split('\n'); let close;
+  const runner = { run: async (_bin, _args, options) => new Promise((resolve) => {
+    options.onStdout(`${lines[0]}\n${lines[1]}\n`);
+    close = () => { options.onStdout(`${lines[2]}\n`); resolve({ code: 0, stdout: eventStream('live'), stderr: '' }); };
+  }) };
+  let delta = '', settled = false;
+  const running = runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', onDelta: (text) => { delta += text; } }).finally(() => { settled = true; });
+  while (!close) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(delta, 'live'); assert.equal(settled, false); close(); assert.equal(await running, 'live');
+});
+test('React runner rejects truncated JSONL at EOF', async () => {
+  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('x').slice(0, -3);
+  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
+  await assert.rejects(() => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' }), /truncated JSONL/);
+});
+test('React invocation keeps the frozen context/output topology and enables no input, tools, or hook', async () => {
+  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('ok'); let captured;
+  const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
+  await runReact({ runner, reactBin: 'packaged-react', validate: boundaries.validateAgentEvent, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir' });
+  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json']);
+  assert.equal(captured.args.includes('--input'), false); assert.equal(captured.args.includes('--tools-file'), false); assert.equal(captured.args.includes('--after-hook-path'), false);
 });
 test('architecture guard rejects legacy and deep imports', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-guard-'));
