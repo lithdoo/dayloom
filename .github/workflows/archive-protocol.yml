@@ -5,6 +5,7 @@ on:
     paths:
       - 'packages/archive-protocol/**'
       - 'packages/core/**'
+      - 'packages/core2/**'
       - 'packages/tui/**'
       - 'fixtures/archive-protocol/**'
       - 'package.json'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'packages/archive-protocol/**'
       - 'packages/core/**'
+      - 'packages/core2/**'
       - 'packages/tui/**'
       - 'fixtures/archive-protocol/**'
       - 'package.json'
@@ -38,4 +40,7 @@ jobs:
       - run: npm ci
       - run: npm test -w @dayloom/archive-protocol
       - run: npm test -w @dayloom/core
+      - run: npm test -w @dayloom/core2
+        if: matrix.node != 18
       - run: npm test -w @dayloom/tui
+        if: matrix.node != 18

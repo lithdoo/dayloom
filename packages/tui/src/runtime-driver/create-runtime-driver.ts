@@ -191,7 +191,7 @@ export async function createRuntimeDriverInternal(
       },
       hubActions: projected.actions,
       selectedHubActionId: projected.selectedId,
-      recent,
+      recent: recent ? { ...recent } : null,
       messages: messages.map((message) => ({ ...message })),
     };
   }

@@ -22,7 +22,7 @@ export interface ViewModel {
   inputControlEnabled: ReadableSignal<boolean>;
   inputMode: Signal<TuiInputMode>;
   inputValue: Signal<string>;
-  inputInstruction: Signal<string>;
+  inputInstruction: ReadableSignal<string>;
   inputPrompt: Signal<string>;
   inputHint: ReadableSignal<string>;
   inputResetToken: Signal<number>;
@@ -53,7 +53,6 @@ export function createViewModel(
   const state = createSignal(driver.getState());
   const inputMode = createSignal<TuiInputMode>('hidden');
   const inputValue = createSignal('');
-  const inputInstruction = createSignal('输入消息，或输入 /submit 提交、/exit 取消。');
   const inputPrompt = createSignal('> ');
   const inputResetToken = createSignal(0);
   const viewportWidth = createSignal(80);
@@ -112,6 +111,17 @@ export function createViewModel(
     if (current.sessionControls.submit) controls.push('/submit 提交');
     if (current.sessionControls.cancel) controls.push('/exit 取消');
     return controls.join(' · ');
+  });
+  const inputInstruction = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session' || !current.session) return '';
+    const actions: string[] = [];
+    if (current.sessionControls.input) actions.push('输入消息');
+    if (current.sessionControls.submit) actions.push('输入 /submit 提交');
+    if (current.sessionControls.cancel) actions.push('输入 /exit 取消');
+    return actions.length > 0
+      ? `${actions.join('，或')}。`
+      : `${sessionStatusLabel(current.session.status)}。`;
   });
 
   const vm: ViewModel = {

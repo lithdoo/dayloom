@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const world = {
   worldId: 'world1', title: 'Test World', revision: 1, commitId: 'commit1',
@@ -108,6 +111,16 @@ test('driver completes Play multi-turn streaming and explicit submit', async () 
   await driver.dispose();
 });
 
+test('driver state returns a defensive copy of recent outcome', async () => {
+  const { driver } = await createDriver();
+  await driver.runHubAction('play');
+  await driver.submitSessionText('/exit');
+  const exposed = driver.getState();
+  exposed.recent.detail = 'mutated outside';
+  assert.equal(driver.getState().recent.detail, null);
+  await driver.dispose();
+});
+
 test('output delta is visible before send resolves and stale deltas are ignored', async () => {
   const core = new FakeCore({ deltas: [] });
   let resolveSend;
@@ -171,6 +184,44 @@ test('view model preserves input history, loading projection, focus lifecycle an
   await driver.submitSessionText('/exit'); drain(scheduled); assert.equal(focused.at(-1), HUB_SELECT_ID);
   vm.selectHubAction('quit'); await vm.submitHubSelection(); assert.equal(exitRequests, 1);
   stop(); await vm.dispose();
+});
+
+test('session instructions and Hub footer advertise only projected capabilities', async () => {
+  const { createViewModel } = await import('../dist/index.js');
+  const { hubFooterHint } = await import('../dist/components/footer.js');
+  const core = new FakeCore();
+  const { driver } = await createDriverWithCore(core);
+  const vm = createViewModel(driver);
+
+  assert.doesNotMatch(hubFooterHint(driver.getState().hubActions.filter((action) => action.id !== 'play')), /p 行动/);
+  assert.match(hubFooterHint(driver.getState().hubActions), /p 行动/);
+  await driver.runHubAction('play');
+  assert.match(vm.inputInstruction.get(), /\/submit/);
+  assert.match(vm.inputInstruction.get(), /\/exit/);
+
+  core.change(sessionState('session1', 'running'));
+  assert.equal(vm.inputInstruction.get(), 'AI 回复中。');
+  assert.doesNotMatch(vm.inputInstruction.get(), /\/submit|\/exit/);
+  core.change(sessionState('session1', 'submitting'));
+  assert.equal(vm.inputInstruction.get(), '提交中。');
+  assert.doesNotMatch(vm.inputInstruction.get(), /\/submit|\/exit/);
+  await vm.dispose();
+});
+
+test('architecture guard rejects core-old imports', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-guard-'));
+  try {
+    fs.writeFileSync(path.join(root, 'violation.ts'), "import '@dayloom/core-old';\n");
+    const result = spawnSync(process.execPath, ['scripts/check-architecture.mjs'], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      env: { ...process.env, TUI_ARCHITECTURE_ROOT: root },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /legacy Core import @dayloom\/core-old/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('dispose is idempotent, unsubscribes, and prevents later emissions', async () => {
