@@ -7,6 +7,7 @@ const examplesRoot = path.join(repoRoot, 'examples');
 const expectedFiles = new Set([
   'dayloom-tui/.gitignore',
   'dayloom-tui/README.md',
+  'dayloom-tui/init-world.mjs',
   'dayloom-tui/llm.example.toml',
   'dayloom-tui/open-world.bat',
   'dayloom-tui/open-world.sh',
@@ -23,8 +24,10 @@ const forbiddenContent = [
 async function files(directory) {
   const result = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name === '.runtime') continue;
     const target = path.join(directory, entry.name);
+    const relative = path.relative(examplesRoot, target).split(path.sep).join('/');
+    if (entry.isDirectory() && (entry.name === '.runtime' || relative === 'dayloom-tui/world')) continue;
+    if (entry.isFile() && relative === 'dayloom-tui/llm.toml') continue;
     if (entry.isDirectory()) result.push(...await files(target));
     else if (entry.isFile()) result.push(target);
   }

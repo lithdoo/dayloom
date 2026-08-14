@@ -1,11 +1,11 @@
-# Promptpile caller configuration for an OpenAI-compatible provider.
-# Copy this file, replace the placeholder values, and export LLM_API_KEY.
+# Promptpile caller configuration matching the previous .env defaults.
+# Export DEEPSEEK_API_KEY before starting Dayloom. Do not put the secret here.
 
 [[llm_api]]
-name = "example"
-model = "replace-with-model"
-base_url = "https://replace-with-provider.example/v1"
-api_key_env = "LLM_API_KEY"
+name = "deepseek"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
 
 [promptpile]
-llm_api = "example"
+llm_api = "deepseek"

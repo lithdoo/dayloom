@@ -12,6 +12,19 @@
 
 ## 启动
 
+不传参数时，脚本默认使用当前示例目录下的 `world` 和 `llm.toml`：
+
+```bash
+./open-world.sh
+```
+
+```bat
+open-world.bat
+```
+
+脚本会在 `world` 目录不存在时自动创建，并在首次构建后初始化为最小的有效 Archive V2 World；在 `llm.toml` 不存在时，会从 `llm.example.toml` 自动复制一份。默认配置使用 DeepSeek，启动前需设置 `DEEPSEEK_API_KEY`；使用其他 provider 时再修改 `llm.toml`。
+也可以继续显式指定路径：
+
 macOS/Linux：
 
 ```bash
@@ -24,7 +37,7 @@ Windows：
 open-world.bat C:\path\to\world C:\path\to\llm.toml
 ```
 
-也可以省略第二个参数，通过 `DAYLOOM_LLM_CONFIG` 提供配置路径。入口脚本会依次构建 `@dayloom/archive-protocol`、`@dayloom/core2` 和 `@dayloom/tui`，再启动当前 TUI。
+也可以省略第二个参数，通过 `DAYLOOM_LLM_CONFIG` 提供配置路径。参数、环境变量和默认值的优先级依次为：命令行参数、`DAYLOOM_LLM_CONFIG`、示例目录下的 `llm.toml`。入口脚本会依次构建 `@dayloom/archive-protocol`、`@dayloom/core2` 和 `@dayloom/tui`，再启动当前 TUI。
 
 Session 支持自然语言多轮输入。使用 `/submit` 提交，使用 `/exit` 或 `/cancel` 取消并退出。
 
