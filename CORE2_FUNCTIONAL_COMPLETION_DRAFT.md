@@ -791,11 +791,7 @@ revision = 1
 createdAt
 ```
 
-`worldId` 使用 Core2 private stable-id generator，例如：
-
-```text
-world_<uuid-without-dashes>
-```
+`worldId` 只要求由 Core2 生成并满足 Archive Protocol stable-id contract；具体 private 格式不是 public semantic，不冻结 prefix。
 
 Init 构造：
 
@@ -1329,14 +1325,18 @@ validate parent relation when base exists
 validate prepared target relation
 acquire publication lock
 recheck exact base
-install immutable target graph
+install immutable blobs/tree/commit
+install prepared operation record
 initial publication install manifest
-current.json LAST
+replace current.json as final World-visibility step
+best-effort mark operation published after visibility
 release lock
 return visible PublishedWorld
 ```
 
-它不负责：
+`operations/<id>.json` 是 lifecycle/diagnostic record，不是 content-addressed immutable object；其 post-publication status update 不改变 Published World truth。
+
+Primitive 不负责：
 
 ```text
 Init legality
@@ -1370,9 +1370,11 @@ revision = 1
 build + protocol-validate candidate graph completely
 → acquire .locks/publish.lock
 → recheck root still uninitialized
-→ install immutable blobs/tree/commit/operation
+→ install immutable blobs/tree/commit
+→ install prepared operation record
 → install manifest.json
-→ atomic create/replace current.json LAST
+→ atomic create/replace current.json as final World-visibility step
+→ best-effort mark operation published
 ```
 
 只有 `current.json` 成功后才存在 Published World。
@@ -1385,7 +1387,7 @@ Core2 必须记录本次 attempt **实际新建**的 durable files。
 
 ```text
 remove manifest if this attempt created it
-remove only immutable/object/commit/operation files this attempt newly created
+remove only blob/tree/commit/operation files this attempt newly created
 never delete files that pre-existed this attempt
 remove temp files
 release lock
@@ -1416,7 +1418,7 @@ fail-closed，不允许 Init 覆盖。
 
 这避免为了极少见 crash residue 引入 startup recovery coordinator。
 
-### 29.3 post-current failure
+### 29.3 post-current diagnostic failure
 
 一旦 `current.json` 成功：
 
@@ -1424,7 +1426,16 @@ fail-closed，不允许 Init 覆盖。
 Published World 已经是 public truth
 ```
 
-后续 diagnostic / operation-status 写失败不得回滚 current，也不得删除已发布 immutable graph。
+随后 `operation.status = published` 等 diagnostic 更新可以发生，但：
+
+```text
+diagnostic write failure
+→ 不回滚 current
+→ 不删除已发布 immutable graph
+→ 不把成功 publication 改判为失败
+```
+
+所以 `current.json` 是最后的 **World visibility switch**，不是最后一个可能发生的 diagnostic filesystem write。
 
 ---
 
@@ -1456,7 +1467,7 @@ candidateTreeHash === baseTreeHash
 
 Publication 总 theorem：
 
-> **先完整构造并验证 immutable target graph；在 exclusive publication ownership 下 recheck pinned base；`current.json` 永远是最后公开可见写入。**
+> **先完整构造并验证 target graph；在 exclusive publication ownership 下 recheck pinned base；安装 target durable graph 后，以 `current.json` 作为最终 World 可见性切换。其后的 diagnostic 更新不参与 World truth。**
 
 ---
 
@@ -1748,7 +1759,7 @@ core2-init-cancel-keeps-uninitialized
 core2-init-submit-publishes-revision-1-idle
 core2-init-generates-world-id-in-core
 core2-init-does-not-create-plan
-core2-init-current-json-is-final-visibility-step
+core2-init-current-json-is-final-world-visibility-step
 core2-init-sync-precurrent-failure-cleans-created-files
 core2-init-sync-precurrent-failure-returns-uninitialized
 core2-concurrent-init-detects-world-conflict
@@ -1873,7 +1884,7 @@ Core2 只有全部满足才算完整：
 22. 四类 Session 共用已验证 Promptpile / React / compression mechanics，不复制四套 runtime。
 23. compression beta.2 live-trigger、restore-source、timeout/drain、error preservation theorem 全部保持。
 24. 六类 publication 使用一个 mechanical primitive；business legality 仍在具体模块。
-25. `current.json` 对所有 publication 始终最后公开可见。
+25. `current.json` 对所有 publication 始终是最终 **World visibility switch**；之后只允许不影响 World truth 的 diagnostic 更新。
 26. Public API/event 不含 presentation state。
 27. 不引入 command bus、StateMachine framework、RuntimeOperations framework、plugin/provider framework、queue、scheduler 或并发系统。
 28. Core2 implementation 阶段不修改 restored TUI 来迁就未完成能力。
