@@ -10,3 +10,7 @@ test('public API exports only application contract', () => {
 test('core2 pins the frozen promptpile-compress release', () => {
   assert.equal(corePackage.dependencies['promptpile-compress'], '0.1.0-beta.2');
 });
+
+test('core2 package describes the complete product lifecycle', () => {
+  assert.doesNotMatch(corePackage.description, /play-only|minimal.*play runtime/i);
+});

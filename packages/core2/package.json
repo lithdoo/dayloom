@@ -1,7 +1,7 @@
 {
   "name": "@dayloom/core2",
   "version": "0.0.0",
-  "description": "Minimal Archive V2 Dayloom Play runtime.",
+  "description": "Archive V2 Dayloom product lifecycle runtime.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "commonjs",

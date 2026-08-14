@@ -29,6 +29,8 @@ for (const file of await files(root)) {
     if (forbidden.some((rule) => rule.test(match[1]))) violations.push(`${file}: forbidden import ${match[1]}`);
   }
 }
+const packageJson = JSON.parse(await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+if (/play-only|minimal.*play runtime/i.test(packageJson.description)) violations.push('package description must describe the complete product lifecycle');
 if (violations.length) {
   console.error(violations.join('\n'));
   process.exitCode = 1;

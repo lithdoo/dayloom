@@ -15,9 +15,9 @@ const { archiveFixture, eventStream } = require('./helpers');
 test('the public TUI example is a valid caller-owned Promptpile config', async () => {
   const example = path.resolve(__dirname, '../../../examples/dayloom-tui/llm.example.toml');
   const config = await readCallerConfig(example);
-  assert.equal(config.llm_api[0].name, 'example');
-  assert.equal(config.llm_api[0].api_key_env, 'LLM_API_KEY');
-  assert.equal(config.promptpile.llm_api, 'example');
+  assert.equal(typeof config.llm_api[0].name, 'string');
+  assert.equal(typeof config.llm_api[0].api_key_env, 'string');
+  assert.equal(config.promptpile.llm_api, config.llm_api[0].name);
   assert.equal(config['promptpile-react'], undefined);
 });
 

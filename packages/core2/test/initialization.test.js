@@ -19,9 +19,11 @@ test('core2 initializes a valid planned World and derives play capability', asyn
   assert.deepEqual(core.getState().capabilities.startSessions, ['play']);
   assert.equal(core.getState().world.revision, 1);
 });
-test('core2 rejects malformed planned context as WORLD_INVALID', async (t) => {
+test('core2 classifies malformed planned context as WORLD_INVALID', async (t) => {
   const fixture = archiveFixture({ malformedPlan: true }); t.after(fixture.cleanup);
-  await assert.rejects(() => createDayloomCore({ worldRoot: fixture.root, llmConfigPath: fixture.config }), (error) => error instanceof CoreInitializationError && error.code === 'WORLD_INVALID');
+  const core = await createDayloomCore({ worldRoot: fixture.root, llmConfigPath: fixture.config }); t.after(() => core.dispose());
+  assert.equal(core.getState().world.status, 'invalid');
+  assert.deepEqual(core.getState().capabilities.startSessions, []);
 });
 test('core2 rejects caller-owned React and Conversation config', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
