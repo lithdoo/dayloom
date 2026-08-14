@@ -105,6 +105,57 @@ test('tui-selection-persists-while-visible and falls back to recommendation', as
   await driver.dispose();
 });
 
+test('tui-hub-actions-are-noop-outside-hub-page', async () => {
+  const core = new ScriptedDayloomCore();
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const before = driver.getState();
+  assert.equal(await driver.runHubAction('status'), 'continue');
+  driver.selectHubAction('status');
+  assert.deepEqual(driver.getState(), before);
+  assert.deepEqual(core.calls.filter((call) => call[0] !== 'dispose'), [['startSession', 'init']]);
+  await driver.dispose();
+});
+
+test('tui-dispose-during-hub-request-prevents-late-presentation-write', async () => {
+  const gate = deferred();
+  const core = new ScriptedDayloomCore({
+    world: published({ phase: 'awaiting-settle', day: 'day1' }),
+    handlers: { async settle(instance) {
+      await gate.promise;
+      instance.world = published({ revision: 2, phase: 'idle', day: null, lastSettledDay: 'day1' });
+      return success();
+    } },
+  });
+  const driver = await driverFor(core);
+  const request = driver.runHubAction('settle');
+  const beforeDispose = driver.getState();
+  await driver.dispose();
+  gate.resolve();
+  assert.equal(await request, 'exit');
+  assert.deepEqual(driver.getState(), { ...beforeDispose, messages: [] });
+});
+
+test('tui-listener-errors-are-isolated-from-hub-actions', async () => {
+  const errors = [];
+  const diagnostic = {
+    enabled: true,
+    log() {},
+    error(event, error) { errors.push([event, error]); },
+    flush() {},
+    dispose() {},
+  };
+  const core = new ScriptedDayloomCore();
+  const { createRuntimeDriverFromCoreForTest } = await import(testDriverModule);
+  const driver = createRuntimeDriverFromCoreForTest({ worldRoot: path.resolve('test-world'), core, diagnostic });
+  let notifications = 0;
+  driver.subscribe(() => { notifications += 1; if (notifications > 1) throw new Error('listener failed'); });
+  assert.equal(await driver.runHubAction('init'), 'continue');
+  assert.deepEqual(core.calls.filter((call) => call[0] !== 'dispose'), [['startSession', 'init']]);
+  assert.equal(driver.getState().page.kind, 'session');
+  assert.equal(errors.some(([event]) => event === 'driver-listener-error'), true);
+  await driver.dispose();
+});
+
 test('tui user text, delta aggregation, and send success preserve one transcript', async () => {
   const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['one', ' two'] }] });
   const driver = await driverFor(core); await driver.runHubAction('init');

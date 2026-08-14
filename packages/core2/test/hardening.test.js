@@ -302,3 +302,36 @@ test('a late old child end cannot clear ownership of a newer child', async (t) =
   core.childStarted(oldChild); core.childStarted(newerChild); core.childEnded(oldChild);
   await core.dispose(); assert.equal(newerChild.killed, true);
 });
+
+test('dispose kills a child started after disposal begins and waits for the operation to unwind', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  let enterRun, releaseRun, lateChild;
+  const enteredRun = new Promise((resolve) => { enterRun = resolve; });
+  const runner = { run(_bin, args, options = {}) {
+    if (args[0] !== 'conversation') throw new Error('React must not start.');
+    return new Promise((resolve) => {
+      releaseRun = () => {
+        lateChild = { killed: false, kill() { this.killed = true; } };
+        options.onChild?.(lateChild);
+        resolve({ code: lateChild.killed ? 1 : 0, stdout: '', stderr: 'disposed' });
+      };
+      enterRun();
+    });
+  } };
+  const core = await createDayloomCoreInternal(
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
+    { runner, boundaries: await resolvePackagedBoundaries() },
+  );
+  const starting = core.startSession('play');
+  await enteredRun;
+  let disposalFinished = false;
+  const disposal = core.dispose().then(() => { disposalFinished = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(disposalFinished, false);
+  releaseRun();
+  const result = await starting;
+  await disposal;
+  assert.equal(lateChild.killed, true);
+  assert.equal(result.error.code, 'CONVERSATION_FAILED');
+  assert.equal(disposalFinished, true);
+});

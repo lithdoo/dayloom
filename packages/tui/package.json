@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "guard": "node scripts/check-architecture.mjs",
-    "test": "npm run build && npm run guard && node --test --test-concurrency=1 test/*.test.js"
+    "test": "npm run build && npm run guard && node scripts/run-tests.mjs"
   },
   "files": [
     "dist",

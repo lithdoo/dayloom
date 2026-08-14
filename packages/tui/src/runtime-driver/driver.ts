@@ -70,7 +70,7 @@ export function createDriverFromCore(options: {
     },
     async runHubAction(actionId) {
       if (disposed) return 'exit';
-      if (pendingHubRequest) return 'continue';
+      if (page.kind !== 'hub' || pendingHubRequest) return 'continue';
       const projection = projectedActions();
       const action = projection.actions.find((candidate) => candidate.id === actionId);
       if (!action) return 'continue';
@@ -82,11 +82,12 @@ export function createDriverFromCore(options: {
         return 'continue';
       }
 
-      pendingHubRequest = {
+      const request: PendingHubRequest = {
         actionId: action.id,
         frozenActions: projection.actions.map((candidate) => ({ ...candidate })),
         frozenSelectedId: projection.selectedId,
       };
+      pendingHubRequest = request;
       page = { kind: 'hub', mode: hubMode, busy: { actionId: action.id, label: loadingForAction(action.id) } };
       emit();
       let result: CoreResult;
@@ -95,6 +96,7 @@ export function createDriverFromCore(options: {
         diagnostic?.error('hub-action-error', error, { actionId: action.id });
         result = internalFailure(error);
       }
+      if (disposed || pendingHubRequest !== request) return disposed ? 'exit' : 'continue';
       latestCoreState = core.getState();
       pendingHubRequest = null;
       if (isSessionAction(action.id)) reduceStartSession(action.id, result);
@@ -129,7 +131,7 @@ export function createDriverFromCore(options: {
       hubMode = mode; page = { kind: 'hub', mode, busy: null }; emit();
     },
     selectHubAction(actionId) {
-      if (disposed || pendingHubRequest) return;
+      if (disposed || page.kind !== 'hub' || pendingHubRequest) return;
       const actions = projectedActions().actions;
       if (!actions.some((action) => action.id === actionId)) return;
       selectedHubActionId = actionId; emit();
@@ -348,7 +350,10 @@ export function createDriverFromCore(options: {
   function emit(): void {
     if (disposed) return;
     const state = getState();
-    for (const listener of listeners) listener(state);
+    for (const listener of [...listeners]) {
+      try { listener(state); }
+      catch (error) { diagnostic?.error('driver-listener-error', error); }
+    }
   }
 }
 

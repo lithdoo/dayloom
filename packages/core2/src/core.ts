@@ -68,7 +68,7 @@ class DayloomCoreImpl implements DayloomCore {
   private changed() { this.emit({ type: 'state.changed', state: this.getState() }); }
   private childStarted(child: ChildProcess, sessionId?: string) {
     this.activeChild = child;
-    if (sessionId !== undefined && this.cancelRequestedSessionId === sessionId) child.kill();
+    if (this.disposed || (sessionId !== undefined && this.cancelRequestedSessionId === sessionId)) child.kill();
   }
   private childEnded(child: ChildProcess) { if (this.activeChild === child) this.activeChild = null; }
   private async appendConversation(directory: string, content: string, sessionId?: string): Promise<void> {

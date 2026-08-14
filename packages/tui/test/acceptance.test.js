@@ -108,7 +108,10 @@ test('tui composed lifecycle reaches day2 planned through the public Core2 contr
 });
 
 test('tui clean CI orders protocol then core2 then tui and has a required Ubuntu PTY job', () => {
-  const workflow = fs.readFileSync(path.resolve(import.meta.dirname, '../../..', '.github/workflows/tui.yml'), 'utf8');
+  const root = path.resolve(import.meta.dirname, '../../..');
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/tui.yml'), 'utf8');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'packages/tui/package.json'), 'utf8'));
+  const testRunner = fs.readFileSync(path.join(root, 'packages/tui/scripts/run-tests.mjs'), 'utf8');
   const protocol = workflow.indexOf('npm run build -w @dayloom/archive-protocol');
   const core2 = workflow.indexOf('npm test -w @dayloom/core2', protocol);
   const tui = workflow.indexOf('npm test -w @dayloom/tui', core2);
@@ -116,6 +119,9 @@ test('tui clean CI orders protocol then core2 then tui and has a required Ubuntu
   assert.match(workflow, /os: \[ubuntu-latest, windows-latest\]/);
   assert.match(workflow, /node: \[20, 22\]/);
   assert.match(workflow, /required-pty:[\s\S]*DAYLOOM_TUI_REQUIRE_PTY: '1'/);
+  assert.equal(packageJson.scripts.test, 'npm run build && npm run guard && node scripts/run-tests.mjs');
+  assert.match(testRunner, /readdir\(testDirectory\)/);
+  assert.match(testRunner, /'--test-concurrency=1'/);
 });
 
 async function waitFor(predicate, timeoutMs = 1000) {
