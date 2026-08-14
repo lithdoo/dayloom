@@ -1,6 +1,6 @@
 import { computed, createSignal, type ReadableSignal, type Signal } from 'bindtty';
 import { formatHubHelp, formatHubStatus } from './hub/content.js';
-import { driverMessageToTui, type TuiDisplayMessage } from './message-history.js';
+import { runtimeMessageToTui, type TuiMessage } from './message-history.js';
 import { phaseLabel, sessionKindLabel, sessionStatusLabel } from './theme.js';
 import type { TuiRuntimeDriver } from './runtime-driver/index.js';
 import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage } from './types.js';
@@ -12,7 +12,7 @@ export interface ViewModel {
   page: ReadableSignal<TuiPage>;
   hubActions: ReadableSignal<readonly TuiHubAction[]>;
   selectedHubActionId: ReadableSignal<string | null>;
-  visibleMessages: ReadableSignal<readonly TuiDisplayMessage[]>;
+  visibleMessages: ReadableSignal<readonly TuiMessage[]>;
   headerPrimary: ReadableSignal<string>;
   headerSecondary: ReadableSignal<string>;
   loadingLabel: ReadableSignal<string | null>;
@@ -22,7 +22,7 @@ export interface ViewModel {
   inputControlEnabled: ReadableSignal<boolean>;
   inputMode: Signal<TuiInputMode>;
   inputValue: Signal<string>;
-  inputInstruction: ReadableSignal<string>;
+  inputInstruction: Signal<string>;
   inputPrompt: Signal<string>;
   inputHint: ReadableSignal<string>;
   inputResetToken: Signal<number>;
@@ -53,6 +53,7 @@ export function createViewModel(
   const state = createSignal(driver.getState());
   const inputMode = createSignal<TuiInputMode>('hidden');
   const inputValue = createSignal('');
+  const inputInstruction = createSignal('输入消息，或输入 /submit 提交、/exit 取消。');
   const inputPrompt = createSignal('> ');
   const inputResetToken = createSignal(0);
   const viewportWidth = createSignal(80);
@@ -79,10 +80,15 @@ export function createViewModel(
 
   const loadingLabel = computed(() => {
     const current = state.get();
+    if (current.loading) return current.loading.label;
     if (current.page.kind !== 'session') return null;
-    switch (current.session?.status) {
-      case 'running':
+    switch (current.snapshot.session.status) {
+      case 'created':
+        return '正在启动会话...';
+      case 'streaming':
         return 'AI 正在回复...';
+      case 'loading':
+        return current.snapshot.session.loading?.detail ?? '正在处理...';
       case 'submitting':
         return '正在提交会话...';
       default:
@@ -92,40 +98,27 @@ export function createViewModel(
   const inputEnabled = computed(() => {
     const current = state.get();
     return current.page.kind === 'session'
-      && current.sessionControls.input;
+      && current.snapshot.session.status === 'waiting-input'
+      && loadingLabel.get() === null;
   });
   const inputControlEnabled = computed(() => {
     const current = state.get();
     if (current.page.kind !== 'session') return false;
-    return current.sessionControls.input
-      || current.sessionControls.submit
-      || current.sessionControls.cancel;
+    return current.snapshot.session.status !== 'submitting'
+      && current.snapshot.session.status !== 'completed'
+      && current.snapshot.session.status !== 'cancelled';
   });
   const inputHint = computed(() => {
     const current = state.get();
     if (current.page.kind !== 'session') return '';
-    const status = current.session?.status;
-    if (!status) return '';
-    if (!inputControlEnabled.get()) return sessionStatusLabel(status);
-    const controls = [];
-    if (current.sessionControls.submit) controls.push('/submit 提交');
-    if (current.sessionControls.cancel) controls.push('/exit 取消');
-    return controls.join(' · ');
-  });
-  const inputInstruction = computed(() => {
-    const current = state.get();
-    if (current.page.kind !== 'session' || !current.session) return '';
-    const actions: string[] = [];
-    if (current.sessionControls.input) actions.push('输入消息');
-    if (current.sessionControls.submit) actions.push('输入 /submit 提交');
-    if (current.sessionControls.cancel) actions.push('输入 /exit 取消');
-    return actions.length > 0
-      ? `${actions.join('，或')}。`
-      : `${sessionStatusLabel(current.session.status)}。`;
+    const status = current.snapshot.session.status;
+    if (status === 'failed') return '/exit 或 /cancel 返回 Hub';
+    if (!inputEnabled.get()) return `${sessionStatusLabel(status)} · /exit 取消`;
+    return '/submit 提交 · /exit 取消';
   });
 
   const vm: ViewModel = {
-    worldRoot: driver.getState().world.worldRoot,
+    worldRoot: driver.getState().snapshot.world.worldRoot,
     driver,
     state,
     page: computed(() => state.get().page),
@@ -135,34 +128,36 @@ export function createViewModel(
       const current = state.get();
       if (current.page.kind === 'hub') {
         const text = current.page.mode === 'help'
-          ? formatHubHelp({ actions: current.hubActions })
+          ? formatHubHelp({ commands: current.commands, actions: current.hubActions })
           : formatHubStatus({
-            world: current.world,
+            snapshot: current.snapshot,
             actions: current.hubActions,
+            commands: current.commands,
             recent: current.recent,
           });
         return [{
-          id: `hub:${current.page.mode}:${current.world.revision}:${current.world.phase}`,
+          id: `hub:${current.page.mode}:${current.snapshot.world.phase}:${current.snapshot.world.day ?? '-'}`,
           role: 'system',
           text,
         }];
       }
-      return current.messages.map(driverMessageToTui);
+      return current.messages.map(runtimeMessageToTui);
     }),
     headerPrimary: computed(() => {
-      const world = state.get().world;
-      return `World: ${world.title} · ${world.worldRoot}`;
+      const snapshot = state.get().snapshot;
+      return `World: ${snapshot.world.worldRoot}`;
     }),
     headerSecondary: computed(() => {
       const current = state.get();
-      const world = current.world;
+      const world = current.snapshot.world;
       const parts = [world.day ?? null, `${phaseLabel(world.phase)} (${world.phase})`];
       if (current.page.kind === 'session') {
         parts.push(
-          sessionKindLabel(),
-          ...(current.session ? [sessionStatusLabel(current.session.status)] : []),
+          sessionKindLabel(current.page.sessionKind),
+          sessionStatusLabel(current.snapshot.session.status),
         );
       }
+      if (current.loading) parts.push(current.loading.label);
       return parts.filter(Boolean).join(' · ');
     }),
     loadingLabel,

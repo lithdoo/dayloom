@@ -1,9 +1,11 @@
-# Dayloom TUI → Core2 适配实现冻结
+# Dayloom TUI → Core2 适配实现冻结（已取代）
 
-> Status: Implemented / 已按冻结契约落地
+> Status: Superseded / Functional parity regression
 > Date: 2026-08-13  
 > Target package: `@dayloom/tui`  
 > Backend target: `@dayloom/core2`
+
+> 本文档记录的迁移因缩减了既有 TUI 产品生命周期而失效，不再作为实现或验收依据。当前恢复与验收依据是 [`TUI_RESTORATION_PLAN.md`](./TUI_RESTORATION_PLAN.md)；在 Core2 达到完整 functional parity 前，`@dayloom/tui` 继续使用 `@dayloom/core` Runtime。
 
 ---
 

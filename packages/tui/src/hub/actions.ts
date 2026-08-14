@@ -1,4 +1,15 @@
-import type { TuiHubAction } from '../types.js';
+import type { CommandAvailability, WorldCommand, WorldPhase } from '@dayloom/core';
+import { commandLabel, commandSummary } from '../theme.js';
+import type { HubMode, TuiHubAction } from '../types.js';
+
+const worldCommandOrder: WorldCommand[] = [
+  'init',
+  'daily',
+  'revise',
+  'play',
+  'settle',
+  'abandon-day',
+];
 
 const localActions: TuiHubAction[] = [
   {
@@ -28,22 +39,27 @@ const localActions: TuiHubAction[] = [
 ];
 
 export function projectHubActions(
-  startSessions: readonly 'play'[],
+  phase: WorldPhase,
+  commands: readonly CommandAvailability[],
   selectedId: string | null,
+  mode: HubMode,
 ): { actions: TuiHubAction[]; selectedId: string | null } {
-  const playAvailable = startSessions.includes('play');
-  const sessionActions: TuiHubAction[] = playAvailable ? [{
-    id: 'play',
-    kind: 'session',
-    sessionKind: 'play',
-    label: '进入行动',
-    summary: '推进今天的事件和行动',
-    shortcut: 'p',
-    recommended: true,
-  }] : [];
-  const actions = [...sessionActions, ...localActions.map((action) => ({
+  const byName = new Map(commands.map((command) => [command.name, command]));
+  const coreActions = worldCommandOrder
+    .filter((command) => byName.get(command)?.enabled)
+    .map<TuiHubAction>((command) => ({
+      id: command,
+      kind: 'core-command',
+      command,
+      label: commandLabel(command),
+      summary: commandSummary(command),
+      shortcut: shortcutForCommand(command),
+      recommended: command === recommendedCommandForPhase(phase),
+    }));
+
+  const actions = [...coreActions, ...localActions.map((action) => ({
     ...action,
-    recommended: !playAvailable && action.id === 'status',
+    recommended: coreActions.length === 0 && action.id === 'status' && mode === 'status',
   }))];
 
   if (actions.length === 0) {
@@ -56,5 +72,35 @@ export function projectHubActions(
     actions,
     selectedId: actions.find((action) => action.recommended)?.id ?? actions[0]!.id,
   };
+}
+
+export function isWorldCommand(command: string): command is WorldCommand {
+  return (worldCommandOrder as string[]).includes(command);
+}
+
+function recommendedCommandForPhase(phase: WorldPhase): WorldCommand | null {
+  switch (phase) {
+    case 'uninitialized':
+      return 'init';
+    case 'idle':
+      return 'daily';
+    case 'planned':
+      return 'play';
+    case 'awaiting-settle':
+      return 'settle';
+    default:
+      return null;
+  }
+}
+
+function shortcutForCommand(command: WorldCommand): string | null {
+  const shortcuts: Partial<Record<WorldCommand, string>> = {
+    init: 'i',
+    daily: 'd',
+    revise: 'r',
+    play: 'p',
+    settle: 't',
+  };
+  return shortcuts[command] ?? null;
 }
 

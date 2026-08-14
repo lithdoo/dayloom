@@ -1,3 +1,7 @@
 .runtime/
+.env
 llm.toml
+output/
 world/
+world2/
+world2-resize-test/

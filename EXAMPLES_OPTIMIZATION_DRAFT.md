@@ -1,6 +1,9 @@
-# Dayloom Examples 优化草案
+# Dayloom Examples 优化草案（部分结论已失效）
 
-Status: Design Draft / 待评审
+> Status: Superseded where based on Core2 Play-only replacing Core
+> 本文关于“Core2 Play-only 已完整替代 Core”以及据此要求标准 TUI 示例预置 `planned` Archive V2 World 的结论已失效。标准 `examples/dayloom-tui` 入口应使用 `@dayloom/core`，从空目录和 `uninitialized` Hub 开始；其余历史分析仅供参考，不再作为 TUI 恢复依据。
+
+Original status: Design Draft / 待评审
 Date: 2026-08-14
 Target: `examples/`
 

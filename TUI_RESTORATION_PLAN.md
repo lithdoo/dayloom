@@ -1,10 +1,12 @@
 # Dayloom TUI 完整恢复计划
 
-> Status: Recovery Plan / 待执行  
+> Status: Restored / 自动化验收通过
 > Date: 2026-08-14  
 > Target: `@dayloom/tui`  
 > Recovery baseline: `cd10fb7608c294c119c5a29ffc855172a5a58594`  
 > Regression start: `c0d1b5f38c1d67cec62730ccd263c4429a490de1` (`adapt tui to core2`)
+
+> Execution record (2026-08-14): recovery safety ref `recovery/pre-tui-restore-20260814` points to pre-restore HEAD `daf71d504040ab97c47c51689e193f8ebfb9e91b`. `packages/tui` matches the recovery baseline exactly; Core and TUI builds, Core tests (139/139), TUI tests (17/17), and automated real-PTY scenarios pass. A live-provider, operator-driven Windows Terminal lifecycle/resize smoke remains an environment-specific release check rather than an automated repository check.
 
 ## 1. 目标
 

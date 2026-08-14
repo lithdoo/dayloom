@@ -67,7 +67,7 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
 
   const showHubSelect = computed(() => {
     const page = vm.page.get();
-    return page.kind === 'hub';
+    return page.kind === 'hub' && !page.busy;
   });
   const showSessionInput = computed(() => vm.page.get().kind === 'session');
 
@@ -138,7 +138,7 @@ export function mountAutofocus(
       const page = vm.page.get();
       if (page.kind === 'session') {
         app.focus(TEXTAREA_ID);
-      } else {
+      } else if (!page.busy) {
         app.focus(HUB_SELECT_ID);
       }
     });

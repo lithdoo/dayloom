@@ -10,7 +10,7 @@ dayloom 是一个以“天”为推进单位的 AI 生活模拟与日记生成�
 - [`packages/cli`](packages/cli/)：**已废弃**的旧 `dayloom` CLI；仍依赖 `@dayloom/core-old`，不再承接新功能
 - [`packages/core-old`](packages/core-old/)：旧引擎，仅为 CLI 和迁移验证保留，准备弃用
 - [`packages/tui-old`](packages/tui-old/)：旧全屏 TUI（`dayloom-tui-old`），准备弃用
-- [`examples/dayloom-tui`](examples/dayloom-tui/)：新旧 TUI 启动示例
+- [`examples/dayloom-tui`](examples/dayloom-tui/)：正式 `@dayloom/core` + `@dayloom/tui` 启动示例
 
 `core-old` 与 `tui-old` 不再承接新功能；后续应先迁移 CLI，再删除这两个旧包。
 
@@ -24,7 +24,7 @@ npm run build
 npm test
 ```
 
-> `@dayloom/cli` 已废弃，仅为迁移验证保留。新使用方式请采用 `@dayloom/tui`（`dayloom-tui`）与 `@dayloom/core2` application API。
+> `@dayloom/cli` 已废弃，仅为迁移验证保留。正式产品入口是 `@dayloom/tui`（`dayloom-tui`）与 `@dayloom/core` Runtime；`@dayloom/core2` 作为尚未达到完整功能对等的独立实现保留。
 
 旧 CLI 的交互命令通过 `createCliSessionIO()` 注入 `SessionIO`。根目录 `npm install` 后仍可用 `npx dayloom` 进行兼容性验证。
 

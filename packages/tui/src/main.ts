@@ -30,10 +30,8 @@ async function main(): Promise<void> {
       return;
     }
     const worldRoot = path.resolve(parsed.worldRoot);
-    const llmConfigPath = path.resolve(parsed.llmConfigPath!);
     diagnostic.log('process-start', {
       worldRoot,
-      llmConfigPath,
       platform: process.platform,
       nodeVersion: process.version,
       terminalProgram: process.env.TERM_PROGRAM,
@@ -41,7 +39,7 @@ async function main(): Promise<void> {
       stdinIsTTY: process.stdin.isTTY === true,
       stdoutIsTTY: process.stdout.isTTY === true,
     });
-    const driver = await createRuntimeDriver({ worldRoot, llmConfigPath, diagnostic });
+    const driver = await createRuntimeDriver({ worldRoot, diagnostic });
     let mounted: ReturnType<typeof mountApp> | null = null;
     let shutdownPromise: Promise<void> | null = null;
     const shutdown = (): Promise<void> => {

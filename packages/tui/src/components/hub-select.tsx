@@ -14,7 +14,7 @@ export function HubSelect(props: { vm: ViewModel }) {
 
   function onKey(event: TerminalKeyEvent): boolean {
     const page = vm.page.get();
-    if (page.kind !== 'hub') return false;
+    if (page.kind !== 'hub' || page.busy) return false;
     if (event.kind === 'key' && event.key === 'up') {
       vm.moveHubSelection(-1);
       return true;
