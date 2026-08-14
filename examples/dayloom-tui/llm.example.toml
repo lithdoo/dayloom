@@ -1,0 +1,11 @@
+# Promptpile caller configuration for an OpenAI-compatible provider.
+# Copy this file, replace the placeholder values, and export LLM_API_KEY.
+
+[[llm_api]]
+name = "example"
+model = "replace-with-model"
+base_url = "https://replace-with-provider.example/v1"
+api_key_env = "LLM_API_KEY"
+
+[promptpile]
+llm_api = "example"

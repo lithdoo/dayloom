@@ -8,6 +8,8 @@ on:
       - 'packages/core2/**'
       - 'packages/tui/**'
       - 'fixtures/archive-protocol/**'
+      - 'examples/**'
+      - 'scripts/check-examples.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
@@ -19,12 +21,29 @@ on:
       - 'packages/core2/**'
       - 'packages/tui/**'
       - 'fixtures/archive-protocol/**'
+      - 'examples/**'
+      - 'scripts/check-examples.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
       - '.github/workflows/archive-protocol.yml'
 
 jobs:
+  examples:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm run examples:check
+      - if: runner.os == 'Linux'
+        run: bash -n examples/dayloom-tui/open-world.sh
+
   core2:
     strategy:
       fail-fast: false

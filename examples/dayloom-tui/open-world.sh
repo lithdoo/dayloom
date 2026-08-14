@@ -12,6 +12,19 @@ if [[ -z "$WORLD_DIR" || -z "$LLM_CONFIG" ]]; then
   exit 1
 fi
 
+if [[ ! -d "$WORLD_DIR" ]]; then
+  echo "World directory does not exist: $WORLD_DIR" >&2
+  exit 1
+fi
+if [[ ! -f "$LLM_CONFIG" ]]; then
+  echo "LLM config does not exist: $LLM_CONFIG" >&2
+  exit 1
+fi
+
+WORLD_DIR=$(cd "$WORLD_DIR" && pwd -P)
+LLM_CONFIG_DIR=$(cd "$(dirname "$LLM_CONFIG")" && pwd -P)
+LLM_CONFIG="$LLM_CONFIG_DIR/$(basename "$LLM_CONFIG")"
+
 cd "$DAY_LOOM_DIR"
 npm run build -w @dayloom/archive-protocol -w @dayloom/core2 -w @dayloom/tui
 node packages/tui/dist/main.js "$WORLD_DIR" --llm-config "$LLM_CONFIG"

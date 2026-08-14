@@ -13,6 +13,7 @@
     "tui:old": "node packages/tui-old/dist/main.js",
     "docs:dev": "vitepress dev doc",
     "docs:check": "node scripts/check-docs.mjs",
+    "examples:check": "node scripts/check-examples.mjs",
     "docs:build": "npm run docs:check && vitepress build doc",
     "docs:preview": "vitepress preview doc"
   },

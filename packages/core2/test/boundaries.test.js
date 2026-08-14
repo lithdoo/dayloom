@@ -12,6 +12,15 @@ const { createPlayWorkspace, WRITABLE_SUMMARY_AUTHORITY_NOTE } = require('../dis
 const { readPublishedWorld } = require('../dist/world/read');
 const { archiveFixture, eventStream } = require('./helpers');
 
+test('the public TUI example is a valid caller-owned Promptpile config', async () => {
+  const example = path.resolve(__dirname, '../../../examples/dayloom-tui/llm.example.toml');
+  const config = await readCallerConfig(example);
+  assert.equal(config.llm_api[0].name, 'example');
+  assert.equal(config.llm_api[0].api_key_env, 'LLM_API_KEY');
+  assert.equal(config.promptpile.llm_api, 'example');
+  assert.equal(config['promptpile-react'], undefined);
+});
+
 test('derived config preserves profiles and owns max-step and prompt paths', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-config-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const caller = path.join(root, 'caller.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="profile"\nmodel="m"\n[promptpile]\nllm_api="profile"\nllm_api_temperature=0.3\n');
