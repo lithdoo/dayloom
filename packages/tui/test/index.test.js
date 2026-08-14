@@ -1,342 +1,247 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ScriptedDayloomCore, deferred, failure, invalid, published, success } from './support/scripted-core.mjs';
 
-test('exports package marker', async () => {
-  const { tuiPackageName } = await import('../dist/index.js');
-  assert.equal(tuiPackageName, '@dayloom/tui');
+const testDriverModule = '../dist/runtime-driver/create-runtime-driver-from-core-for-test.js';
+
+async function driverFor(core, worldRoot = path.resolve('test-world')) {
+  const { createRuntimeDriverFromCoreForTest } = await import(testDriverModule);
+  return createRuntimeDriverFromCoreForTest({ worldRoot, core });
+}
+
+test('exports package marker without exporting the test-only Core seam', async () => {
+  const api = await import('../dist/index.js');
+  assert.equal(api.tuiPackageName, '@dayloom/tui');
+  assert.equal('createRuntimeDriverFromCoreForTest' in api, false);
 });
 
-test('argv accepts one optional world root and rejects extra arguments', async () => {
-  const { parseArgv, usage } = await import('../dist/index.js');
-
-  assert.deepEqual(parseArgv(['node', 'dayloom-tui'], '/tmp/default'), {
-    worldRoot: '/tmp/default',
-    help: false,
-  });
-  assert.deepEqual(parseArgv(['node', 'dayloom-tui', './world']), {
-    worldRoot: './world',
-    help: false,
-  });
-  assert.equal(parseArgv(['node', 'dayloom-tui', '--help']).help, true);
-  assert.throws(
-    () => parseArgv(['node', 'dayloom-tui', 'one', 'two']),
-    /Unexpected argument: two/,
-  );
-  assert.throws(
-    () => parseArgv(['node', 'dayloom-tui', '--lang']),
-    /Unknown option: --lang/,
-  );
-  assert.match(usage(), /dayloom-tui \[worldRoot\]/);
+test('tui-cli-option-order-is-stable and config precedence is exact', async () => {
+  const { parseArgv, resolveLlmConfigPath, usage } = await import('../dist/index.js');
+  assert.deepEqual(parseArgv(['node', 'tui'], '/cwd'), { worldRoot: '/cwd', llmConfigPath: null, help: false });
+  assert.deepEqual(parseArgv(['node', 'tui', 'world', '--llm-config', 'a.toml']), { worldRoot: 'world', llmConfigPath: 'a.toml', help: false });
+  assert.deepEqual(parseArgv(['node', 'tui', '--llm-config', 'a.toml', 'world']), { worldRoot: 'world', llmConfigPath: 'a.toml', help: false });
+  assert.equal(resolveLlmConfigPath(parseArgv(['node', 'tui', '--llm-config', 'cli.toml']), { DAYLOOM_LLM_CONFIG: 'env.toml' }), 'cli.toml');
+  assert.equal(resolveLlmConfigPath(parseArgv(['node', 'tui']), { DAYLOOM_LLM_CONFIG: 'env.toml' }), 'env.toml');
+  assert.throws(() => resolveLlmConfigPath(parseArgv(['node', 'tui']), {}), /Missing LLM config/);
+  assert.throws(() => parseArgv(['node', 'tui', '--llm-config']), /Missing value/);
+  assert.throws(() => parseArgv(['node', 'tui', '--llm-config', 'a', '--llm-config', 'b']), /Duplicate/);
+  assert.throws(() => parseArgv(['node', 'tui', 'one', 'two']), /Unexpected argument/);
+  assert.throws(() => parseArgv(['node', 'tui', '--lang']), /Unknown option/);
+  assert.equal(parseArgv(['node', 'tui', '--help']).help, true);
+  assert.match(usage(), /--llm-config <path>/);
 });
 
-test('projects hub actions from core command availability', async () => {
-  const { projectHubActions } = await import('../dist/index.js');
-  const { getCommandAvailability } = await import('@dayloom/core');
-  const snapshot = {
-    worldRoot: '/tmp/world',
-    phase: 'idle',
-    day: 'day_0001',
-    initialized: true,
-    invalidReason: null,
-  };
-  const session = {
-    active: false,
-    id: null,
-    kind: null,
-    status: 'none',
-    input: null,
-    loading: null,
-    error: null,
-  };
-
-  const projected = projectHubActions(snapshot.phase, getCommandAvailability(snapshot, session), null, 'status');
-
-  assert.deepEqual(projected.actions.map((action) => action.id), [
-    'daily',
-    'revise',
-    'status',
-    'help',
-    'quit',
-  ]);
-  assert.equal(projected.selectedId, 'daily');
+test('tui-cli-help-needs-no-llm-config and production startup rejects missing config before mount', () => {
+  const main = path.resolve(import.meta.dirname, '../dist/main.js');
+  const help = spawnSync(process.execPath, [main, '--help'], { encoding: 'utf8', env: { ...process.env, DAYLOOM_LLM_CONFIG: '' } });
+  assert.equal(help.status, 0); assert.match(help.stdout, /Usage: dayloom-tui/); assert.equal(help.stderr, '');
+  const missing = spawnSync(process.execPath, [main], { encoding: 'utf8', env: { ...process.env, DAYLOOM_LLM_CONFIG: '' } });
+  assert.equal(missing.status, 1); assert.match(missing.stderr, /Missing LLM config/);
 });
 
-test('runtime driver keeps session open for normal input and submits on /submit', async (t) => {
-  const { createRuntimeDriver } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory({ deltas: ['ok'] }),
-  });
+test('tui projects Core2 world states and exact Hub actions', async () => {
+  const cases = [
+    [new ScriptedDayloomCore(), 'uninitialized', ['init', 'status', 'help', 'quit'], 'init'],
+    [new ScriptedDayloomCore({ world: published({ phase: 'idle' }) }), 'published', ['daily', 'revise', 'status', 'help', 'quit'], 'daily'],
+    [new ScriptedDayloomCore({ world: published({ phase: 'planned', day: 'day1' }) }), 'published', ['play', 'abandon-day', 'status', 'help', 'quit'], 'play'],
+    [new ScriptedDayloomCore({ world: published({ phase: 'awaiting-settle', day: 'day1' }) }), 'published', ['settle', 'abandon-day', 'status', 'help', 'quit'], 'settle'],
+    [new ScriptedDayloomCore({ world: invalid('broken') }), 'invalid', ['status', 'help', 'quit'], 'status'],
+  ];
+  for (const [core, status, actions, selected] of cases) {
+    const driver = await driverFor(core);
+    assert.equal(driver.getState().world.status, status);
+    assert.deepEqual(driver.getState().hubActions.map((action) => action.id), actions);
+    assert.equal(driver.getState().selectedHubActionId, selected);
+    await driver.dispose();
+  }
+});
 
-  await driver.runHubAction('init');
-  assert.equal(driver.getState().page.kind, 'session');
-  assert.equal(driver.getState().snapshot.world.phase, 'initializing');
-  assert.equal(driver.getState().recent, null);
+test('tui-daily-maps-to-startSession-planning and all business actions map exactly once', async () => {
+  const cases = [
+    [new ScriptedDayloomCore(), 'init', ['startSession', 'init']],
+    [new ScriptedDayloomCore({ world: published() }), 'daily', ['startSession', 'planning']],
+    [new ScriptedDayloomCore({ world: published() }), 'revise', ['startSession', 'revise']],
+    [new ScriptedDayloomCore({ world: published({ phase: 'planned', day: 'day1' }) }), 'play', ['startSession', 'play']],
+    [new ScriptedDayloomCore({ world: published({ phase: 'awaiting-settle', day: 'day1' }) }), 'settle', ['settle']],
+    [new ScriptedDayloomCore({ world: published({ phase: 'planned', day: 'day1' }) }), 'abandon-day', ['abandonDay']],
+  ];
+  for (const [core, action, expected] of cases) {
+    const driver = await driverFor(core); await driver.runHubAction(action);
+    assert.deepEqual(core.calls.filter((call) => call[0] !== 'dispose'), [expected]);
+    assert.equal('command' in driver.getState().hubActions[0], false);
+    await driver.dispose();
+  }
+});
 
-  await driver.submitSessionText('hello');
-  await waitFor(() => driver.getState().snapshot.session.status === 'waiting-input');
-  assert.equal(driver.getState().page.kind, 'session');
-  assert.equal(driver.getState().snapshot.world.phase, 'initializing');
-  assert.deepEqual(driver.getState().messages.map((message) => [message.role, message.text]), [
-    ['user', 'hello'],
-    ['assistant', 'ok'],
-  ]);
-
-  await driver.submitSessionText('/submit');
+test('tui-pending-hub-request freezes topology and startSession switches only after result', async () => {
+  const gate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: {
+    async startSession(instance, kind) {
+      instance.session = { id: 'pending-session', kind, status: 'ready' };
+      instance.changed();
+      await gate.promise;
+      return success();
+    },
+  } });
+  const driver = await driverFor(core);
+  const pending = driver.runHubAction('init');
   assert.equal(driver.getState().page.kind, 'hub');
-  assert.equal(driver.getState().snapshot.world.phase, 'idle');
-
+  assert.equal(driver.getState().page.busy.actionId, 'init');
+  assert.deepEqual(driver.getState().hubActions.map((action) => action.id), ['init', 'status', 'help', 'quit']);
+  gate.resolve(); await pending;
+  assert.equal(driver.getState().page.kind, 'session');
+  assert.deepEqual(driver.getState().messages.map((message) => [message.role, message.text]), [['system', '你想从什么样的世界开始？']]);
   await driver.dispose();
 });
 
-test('runtime driver intercepts session-local slash commands', async (t) => {
-  const { createRuntimeDriver } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory(),
-  });
+test('tui-selection-persists-while-visible and falls back to recommendation', async () => {
+  const core = new ScriptedDayloomCore({ world: published() });
+  const driver = await driverFor(core);
+  driver.selectHubAction('revise'); assert.equal(driver.getState().selectedHubActionId, 'revise');
+  core.setState({ world: published({ phase: 'planned', day: 'day1' }) });
+  assert.equal(driver.getState().selectedHubActionId, 'play');
+  await driver.dispose();
+});
 
-  await driver.runHubAction('init');
-  await driver.submitSessionText('/next');
+test('tui user text, delta aggregation, and send success preserve one transcript', async () => {
+  const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['one', ' two'] }] });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  await driver.submitSessionText(' hello ');
+  assert.deepEqual(core.calls.filter((call) => call[0] === 'send'), [['send', 'hello']]);
+  assert.deepEqual(driver.getState().messages.map((message) => [message.role, message.text, message.status]), [
+    ['system', '你想从什么样的世界开始？', 'complete'], ['user', 'hello', 'complete'], ['assistant', 'one two', 'complete'],
+  ]);
+  assert.equal(driver.getState().session.status, 'ready');
+  await driver.dispose();
+});
 
-  assert.equal(driver.getState().page.kind, 'session');
-  assert.equal(driver.getState().snapshot.world.phase, 'initializing');
-  assert.equal(
-    driver.getState().messages.some((message) => message.text.includes('tui 不提供 /next')),
-    true,
-  );
-
+test('tui-partial-output-survives terminal send failure and failed dismiss preserves failure truth', async () => {
+  const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['partial'], failure: { code: 'AGENT_FAILED', message: 'agent failed' } }] });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  await driver.submitSessionText('hello');
+  assert.equal(driver.getState().session.status, 'failed');
+  assert.equal(driver.getState().messages.some((message) => message.role === 'assistant' && message.text === 'partial' && message.status === 'error'), true);
+  assert.equal(driver.getState().recent.kind, 'failed');
+  const cancelCalls = core.calls.filter((call) => call[0] === 'cancel').length;
   await driver.submitSessionText('/exit');
   assert.equal(driver.getState().page.kind, 'hub');
-  assert.equal(driver.getState().snapshot.world.phase, 'uninitialized');
-  assert.equal(driver.getState().loading, null);
-  assert.deepEqual(driver.getState().recent, {
-    kind: 'cancelled',
-    label: '会话已取消',
-    detail: null,
-  });
-
+  assert.equal(driver.getState().recent.kind, 'failed');
+  assert.equal(core.calls.filter((call) => call[0] === 'cancel').length, cancelCalls);
+  assert.deepEqual(driver.getState().messages, []);
   await driver.dispose();
 });
 
-test('view model forwards the Hub quit action to the application lifecycle', async (t) => {
-  const { createRuntimeDriver, createViewModel } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory(),
-  });
-  let exitRequests = 0;
-  const vm = createViewModel(driver, {
-    onExitRequest: () => {
-      exitRequests += 1;
-    },
-  });
-
-  vm.selectHubAction('quit');
-  await vm.submitHubSelection();
-
-  assert.equal(exitRequests, 1);
-  await vm.dispose();
-});
-
-test('runtime driver clears Hub busy state after an unexpected command failure', async () => {
-  const { createRuntimeDriver } = await import('../dist/index.js');
-  const { getCommandAvailability } = await import('@dayloom/core');
-  const world = {
-    worldRoot: '/tmp/world',
-    phase: 'awaiting-settle',
-    day: 'day_0001',
-    initialized: true,
-    invalidReason: null,
-  };
-  const session = {
-    active: false,
-    id: null,
-    kind: null,
-    status: 'none',
-    input: null,
-    loading: null,
-    error: null,
-  };
-  let disposeCalls = 0;
-  const runtime = {
-    getSnapshot: () => ({ world, session }),
-    getAvailableCommands: () => getCommandAvailability(world, session),
-    sendInput: async () => {
-      throw new Error('not used');
-    },
-    executeCommand: async () => {
-      throw new Error('disk unavailable');
-    },
-    subscribe: () => () => {},
-    dispose: async () => {
-      disposeCalls += 1;
-    },
-  };
-  const driver = await createRuntimeDriver({ worldRoot: world.worldRoot, runtime });
-
-  assert.equal(driver.getState().selectedHubActionId, 'settle');
-  await driver.runHubAction('settle');
-
-  assert.equal(driver.getState().loading, null);
-  assert.equal(driver.getState().page.kind, 'hub');
-  assert.equal(driver.getState().page.busy, null);
-  assert.deepEqual(driver.getState().recent, {
-    kind: 'failed',
-    label: '操作失败',
-    detail: 'disk unavailable',
-  });
-
+test('tui-nonterminal-send-failure keeps active Session', async () => {
+  const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['partial'], terminal: false, failure: { code: 'CONVERSATION_FAILED', message: 'retry later' } }] });
+  const driver = await driverFor(core); await driver.runHubAction('init'); await driver.submitSessionText('hello');
+  assert.equal(driver.getState().page.kind, 'session'); assert.equal(driver.getState().session.status, 'ready');
+  assert.equal(driver.getState().messages.at(-1).text, 'retry later');
   await driver.dispose();
-  await driver.dispose();
-  assert.equal(disposeCalls, 1);
 });
 
-test('view model disables input while streaming without forcing a scrolled message list to bottom', async (t) => {
-  const { createRuntimeDriver, createViewModel } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory({
-      deltas: ['one', 'two'],
-      delayMs: 20,
-    }),
-  });
-  const vm = createViewModel(driver);
+test('tui submit success discards transcript and terminal failure preserves failed presentation', async () => {
+  const successCore = new ScriptedDayloomCore(); const successDriver = await driverFor(successCore);
+  await successDriver.runHubAction('init'); await successDriver.submitSessionText('/submit');
+  assert.equal(successDriver.getState().page.kind, 'hub'); assert.deepEqual(successDriver.getState().messages, []);
+  assert.equal(successDriver.getState().recent.kind, 'completed'); await successDriver.dispose();
 
-  await driver.runHubAction('init');
-  assert.equal(vm.inputEnabled.get(), true);
-  vm.setMessageScrollOffset(3);
-  assert.equal(vm.stickToBottom.get(), false);
-
-  await driver.submitSessionText('hello');
-  assert.equal(vm.inputEnabled.get(), false);
-  assert.equal(vm.loadingLabel.get(), 'AI 正在回复...');
-  assert.equal(vm.stickToBottom.get(), false);
-
-  await waitFor(() => driver.getState().snapshot.session.status === 'waiting-input');
-  assert.equal(vm.inputEnabled.get(), true);
-  assert.equal(vm.loadingLabel.get(), null);
-  assert.equal(vm.stickToBottom.get(), false);
-
-  await vm.dispose();
+  const failedCore = new ScriptedDayloomCore({ handlers: { async submit(instance) {
+    instance.session = { ...instance.session, status: 'submitting' }; instance.changed();
+    instance.session = null; instance.changed(); return failure('SUBMISSION_INVALID', 'invalid submission');
+  } } });
+  const failedDriver = await driverFor(failedCore); await failedDriver.runHubAction('init'); await failedDriver.submitSessionText('/submit');
+  assert.equal(failedDriver.getState().session.status, 'failed');
+  assert.equal(failedDriver.getState().messages.at(-1).text, 'invalid submission');
+  await failedDriver.dispose();
 });
 
-test('view model exposes a cancel recovery hint after an AI failure', async (t) => {
-  const { createRuntimeDriver, createViewModel } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory({
-      deltas: ['partial'],
-      failAtDeltaIndex: 1,
-    }),
-  });
-  const vm = createViewModel(driver);
-
-  await driver.runHubAction('init');
-  await driver.submitSessionText('hello');
-  await waitFor(() => driver.getState().snapshot.session.status === 'failed');
-
-  assert.equal(vm.inputEnabled.get(), false);
-  assert.equal(vm.inputControlEnabled.get(), true);
-  assert.equal(vm.inputHint.get(), '/exit 或 /cancel 返回 Hub');
-  assert.equal(driver.getState().messages.some((message) => message.status === 'error'), true);
-
-  await vm.dispose();
-});
-
-test('view model keeps input history without losing the current draft', async (t) => {
-  const { createRuntimeDriver, createViewModel } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory({ deltas: ['ok'] }),
-  });
-  const vm = createViewModel(driver);
-  await driver.runHubAction('init');
-
-  vm.inputValue.set('first message');
-  vm.submitTextInput();
-  await waitFor(() => driver.getState().snapshot.session.status === 'waiting-input');
-  vm.inputValue.set('unfinished draft');
-  vm.navigateInputHistory(-1);
-  assert.equal(vm.inputValue.get(), 'first message');
-  vm.navigateInputHistory(1);
-  assert.equal(vm.inputValue.get(), 'unfinished draft');
-
-  await vm.dispose();
-});
-
-test('autofocus follows Hub and Session page transitions', async (t) => {
-  const { mountAutofocus } = await import('../dist/app.js');
-  const { HUB_SELECT_ID, TEXTAREA_ID } = await import('../dist/components/constants.js');
-  const { createRuntimeDriver, createViewModel } = await import('../dist/index.js');
-  const { createFakeSessionFactory } = await import('@dayloom/core');
-  const worldRoot = createTempWorld(t);
-  const driver = await createRuntimeDriver({
-    worldRoot,
-    sessionFactory: createFakeSessionFactory(),
-  });
-  const vm = createViewModel(driver);
-  const scheduled = [];
-  const focused = [];
-  const stop = mountAutofocus(
-    vm,
-    {
-      focus(id) {
-        focused.push(id);
-        return { handled: true, dirtyNodes: [] };
-      },
+test('tui running cancel suppresses late send ownership and cancel owns Hub transition', async () => {
+  const sendGate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: {
+    async send(instance, text) {
+      instance.calls.push(['send-handler', text]); const id = instance.session.id;
+      instance.session = { ...instance.session, status: 'running' }; instance.changed();
+      instance.delta(id, 'partial'); await sendGate.promise; return failure('CANCELLED', 'cancelled');
     },
-    (callback) => scheduled.push(callback),
-  );
+    async cancel(instance) { instance.session = null; instance.changed(); sendGate.resolve(); return success(); },
+  } });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const sending = driver.submitSessionText('hello'); await waitFor(() => driver.getState().session.status === 'running');
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
+  await driver.submitSessionText('/exit'); await sending;
+  assert.equal(driver.getState().page.kind, 'hub'); assert.equal(driver.getState().recent.kind, 'cancelled');
+  assert.equal(driver.getState().recent.label, '会话已取消');
+  await driver.dispose();
+});
 
-  drainCallbacks(scheduled);
-  assert.equal(focused.at(-1), HUB_SELECT_ID);
+test('tui-running-cancel-failure restores status, suppression, and future delta rendering', async () => {
+  const sendGate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: {
+    async send(instance) {
+      const { id } = instance.session; instance.session = { ...instance.session, status: 'running' }; instance.changed();
+      instance.delta(id, 'before'); await sendGate.promise; instance.delta(id, ' after');
+      instance.session = { ...instance.session, status: 'ready' }; instance.changed(); return success();
+    },
+    async cancel() { return failure('INTERNAL_ERROR', 'cancel rejected'); },
+  } });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const sending = driver.submitSessionText('hello'); await waitFor(() => driver.getState().session.status === 'running');
+  await driver.submitSessionText('/cancel');
+  assert.equal(driver.getState().session.status, 'running');
+  assert.equal(driver.getState().messages.at(-1).text, 'cancel rejected');
+  sendGate.resolve(); await sending;
+  assert.equal(driver.getState().messages.some((message) => message.role === 'assistant' && message.text === 'before after'), true);
+  assert.equal(driver.getState().session.status, 'ready'); await driver.dispose();
+});
 
-  await driver.runHubAction('init');
-  drainCallbacks(scheduled);
-  assert.equal(focused.at(-1), TEXTAREA_ID);
+test('tui running normal text, submit, and unknown slash never enter Core', async () => {
+  const gate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: { async send(instance) {
+    instance.session = { ...instance.session, status: 'running' }; instance.changed(); await gate.promise;
+    instance.session = { ...instance.session, status: 'ready' }; instance.changed(); return success();
+  } } });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const sending = driver.submitSessionText('first'); await waitFor(() => driver.getState().session.status === 'running');
+  await driver.submitSessionText('second'); await driver.submitSessionText('/submit');
+  assert.equal(core.calls.filter((call) => call[0] === 'send').length, 1);
+  assert.equal(core.calls.filter((call) => call[0] === 'submit').length, 0);
+  gate.resolve(); await sending; await driver.submitSessionText('/unknown');
+  assert.equal(core.calls.filter((call) => call[0] === 'send').length, 1);
+  await driver.dispose();
+});
 
-  await driver.submitSessionText('/exit');
-  drainCallbacks(scheduled);
-  assert.equal(focused.at(-1), HUB_SELECT_ID);
+test('tui ViewModel preserves history, scroll choice, controls, and autofocus state inputs', async () => {
+  const { createViewModel } = await import('../dist/index.js');
+  const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['ok'] }] });
+  const driver = await driverFor(core); const vm = createViewModel(driver);
+  await driver.runHubAction('init'); assert.equal(vm.inputEnabled.get(), true);
+  vm.inputValue.set('first'); vm.submitTextInput(); await waitFor(() => driver.getState().session.status === 'ready');
+  vm.inputValue.set('draft'); vm.navigateInputHistory(-1); assert.equal(vm.inputValue.get(), 'first');
+  vm.navigateInputHistory(1); assert.equal(vm.inputValue.get(), 'draft');
+  vm.setMessageScrollOffset(3); assert.equal(vm.stickToBottom.get(), false);
+  await driver.submitSessionText('/exit'); assert.equal(vm.page.get().kind, 'hub'); assert.equal(vm.messageScrollOffset.get(), 0);
+  await vm.dispose(); assert.equal(core.calls.filter((call) => call[0] === 'dispose').length, 1);
+});
 
-  stop();
-  await vm.dispose();
+test('tui-dispose is idempotent, discards transcript, and prevents late presentation writes', async () => {
+  const gate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: { async send(instance) {
+    instance.session = { ...instance.session, status: 'running' }; instance.changed(); await gate.promise; return success();
+  } } });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const sending = driver.submitSessionText('hello'); await waitFor(() => driver.getState().session.status === 'running');
+  const before = driver.getState(); const first = driver.dispose(); const second = driver.dispose(); gate.resolve();
+  await sending; await first; await second;
+  assert.equal(core.calls.filter((call) => call[0] === 'dispose').length, 1);
+  assert.deepEqual(driver.getState().messages, []); assert.equal(driver.getState().page.kind, before.page.kind);
 });
 
 async function waitFor(predicate, timeoutMs = 1000) {
-  const startedAt = Date.now();
+  const started = Date.now();
   while (!predicate()) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error('Timed out waiting for predicate.');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    if (Date.now() - started > timeoutMs) throw new Error('Timed out waiting for predicate.');
+    await new Promise((resolve) => setTimeout(resolve, 2));
   }
-}
-
-function drainCallbacks(callbacks) {
-  while (callbacks.length > 0) {
-    callbacks.shift()();
-  }
-}
-
-function createTempWorld(t) {
-  const worldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-driver-'));
-  t.after(() => fs.rmSync(worldRoot, { recursive: true, force: true }));
-  return worldRoot;
 }

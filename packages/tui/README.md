@@ -1,48 +1,36 @@
 # @dayloom/tui
 
-`@dayloom/tui` 是基于 `@dayloom/core` Runtime 的 Dayloom 全屏终端界面。
+`@dayloom/tui` 是由 `@dayloom/core2` application semantics 驱动的 Dayloom 全屏终端界面。TUI 只负责 Hub/Session 展示、输入、流式 transcript、焦点与滚动；World、Session、publication 和 cancellation truth 均由 Core2 持有。
 
 ## 使用
 
-先在 monorepo 根目录构建：
+需要 Node.js 20+、一个 World 目录和 caller-owned Promptpile TOML：
 
 ```bash
-npm run build -w @dayloom/core -w @dayloom/tui
+npm run build -w @dayloom/archive-protocol -w @dayloom/core2 -w @dayloom/tui
+node packages/tui/dist/main.js ./path/to/world --llm-config ./llm.toml
 ```
 
-打开指定 World：
+也可以通过环境变量提供配置路径：
 
 ```bash
-node packages/tui/dist/main.js ./path/to/world
+DAYLOOM_LLM_CONFIG=./llm.toml npm run tui -- ./path/to/world
 ```
 
-也可以使用根脚本：
+`--llm-config` 优先于 `DAYLOOM_LLM_CONFIG`。配置由 Core2/Promptpile 解释；TUI 不解析 provider topology。`--help` 不需要配置，也不会创建 Core。
+
+Hub 使用选择框进入业务流程。Session 中输入自然语言，使用 `/submit` 提交，使用 `/exit` 或 `/cancel` 取消；AI 正在回复时仍可用这两个指令中断。
+
+## 验证
 
 ```bash
-npm run tui -- ./path/to/world
+npm run test -w @dayloom/tui
 ```
 
-未传路径时使用当前工作目录。AI 对话默认通过 Promptpile 调用 DeepSeek，需要设置：
-
-```text
-DEEPSEEK_API_KEY=...
-```
-
-可选 provider 配置：
-
-```text
-DAYLOOM_LLM_API_NAME=deepseek
-DAYLOOM_LLM_MODEL=deepseek-chat
-DAYLOOM_LLM_BASE_URL=https://api.deepseek.com/v1
-DAYLOOM_LLM_API_KEY_ENV=DEEPSEEK_API_KEY
-PROMPTPILE_BIN=/optional/path/to/promptpile
-```
-
-Hub 使用选择框进入业务流程；Session 中输入自然语言，使用 `/submit` 提交、`/exit` 或 `/cancel` 返回 Hub。
+该命令执行 build、architecture guard、unit 和 PTY tests。生产源码禁止旧 Core、Core2 deep import、backend facade、operation queue 和 cancellation manager。
 
 ## 文档
 
-- [快速开始](../../doc/guide/GETTING_STARTED.md)
 - [TUI 使用指南](../../doc/guide/TUI.md)
 - [TUI 包文档](../../doc/packages/TUI.md)
 - [TUI E2E](../../doc/testing/TUI_E2E.md)

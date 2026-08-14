@@ -1,34 +1,12 @@
-import type { RuntimeMessage } from '@dayloom/core';
+import type { TuiMessage } from './types.js';
 
-export type TuiMessageRole = RuntimeMessage['role'] | 'warn';
+export type TuiMessageRole = TuiMessage['role'];
+export type { TuiMessage } from './types.js';
 
-export interface TuiMessage {
-  id: string;
-  role: TuiMessageRole;
-  text: string;
-}
-
-export function runtimeMessageToTui(message: RuntimeMessage): TuiMessage {
-  return {
-    id: message.id,
-    role: message.role,
-    text: message.text,
-  };
-}
-
-export function createLocalMessage(
-  role: TuiMessageRole,
-  text: string,
-  id: string,
-): TuiMessage {
-  return {
-    id,
-    role,
-    text: normalizeText(text),
-  };
+export function createLocalMessage(role: TuiMessageRole, text: string, id: string): TuiMessage {
+  return { id, role, text: normalizeText(text), status: 'complete' };
 }
 
 export function normalizeText(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '');
 }
-

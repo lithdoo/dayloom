@@ -17,7 +17,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
+    "guard": "node scripts/check-architecture.mjs",
+    "test": "npm run build && npm run guard && node --test --test-concurrency=1 test/*.test.js"
   },
   "files": [
     "dist",
@@ -30,7 +31,7 @@
     "@bindtty/terminal": "^0.1.0-beta.6",
     "@bindtty/vnode": "^0.1.0-beta.6",
     "@bindtty/widgets": "^0.1.0-beta.6",
-    "@dayloom/core": "*",
+    "@dayloom/core2": "*",
     "bindtty": "^0.1.0-beta.6"
   },
   "devDependencies": {
@@ -39,5 +40,6 @@
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
-  }
+  },
+  "engines": { "node": ">=20" }
 }

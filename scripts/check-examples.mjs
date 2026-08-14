@@ -6,11 +6,13 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const examplesRoot = path.join(repoRoot, 'examples');
 const expectedFiles = new Set([
   'dayloom-tui/.gitignore',
+  'dayloom-tui/.env.example',
   'dayloom-tui/README.md',
-  'dayloom-tui/init-world.mjs',
   'dayloom-tui/llm.example.toml',
   'dayloom-tui/open-world.bat',
   'dayloom-tui/open-world.sh',
+  'dayloom-tui/scripts/ensure-dayloom.bat',
+  'dayloom-tui/scripts/ensure-dayloom.sh',
   'dayloom-tui/verify-resize.bat',
 ]);
 const forbiddenContent = [
@@ -56,8 +58,11 @@ const launchers = ['dayloom-tui/open-world.sh', 'dayloom-tui/open-world.bat', 'd
 for (const launcher of launchers) {
   const source = await readFile(path.join(examplesRoot, ...launcher.split('/')), 'utf8');
   if (!source.includes('--llm-config')) violations.push(`examples/${launcher}: current TUI must receive --llm-config`);
+}
+for (const ensure of ['dayloom-tui/scripts/ensure-dayloom.sh', 'dayloom-tui/scripts/ensure-dayloom.bat']) {
+  const source = await readFile(path.join(examplesRoot, ...ensure.split('/')), 'utf8');
   if (!source.includes('@dayloom/archive-protocol') || !source.includes('@dayloom/core2') || !source.includes('@dayloom/tui')) {
-    violations.push(`examples/${launcher}: required current packages are not built`);
+    violations.push(`examples/${ensure}: required current packages are not built in order`);
   }
 }
 

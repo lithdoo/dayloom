@@ -1,6 +1,6 @@
 import { computed, createSignal, type ReadableSignal, type Signal } from 'bindtty';
-import { formatHubHelp, formatHubStatus } from './hub/content.js';
-import { runtimeMessageToTui, type TuiMessage } from './message-history.js';
+import { hubMessageFor } from './hub/content.js';
+import type { TuiMessage } from './message-history.js';
 import { phaseLabel, sessionKindLabel, sessionStatusLabel } from './theme.js';
 import type { TuiRuntimeDriver } from './runtime-driver/index.js';
 import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage } from './types.js';
@@ -80,45 +80,36 @@ export function createViewModel(
 
   const loadingLabel = computed(() => {
     const current = state.get();
-    if (current.loading) return current.loading.label;
+    if (current.page.kind === 'hub') return current.page.busy?.label ?? null;
     if (current.page.kind !== 'session') return null;
-    switch (current.snapshot.session.status) {
-      case 'created':
-        return '正在启动会话...';
-      case 'streaming':
-        return 'AI 正在回复...';
-      case 'loading':
-        return current.snapshot.session.loading?.detail ?? '正在处理...';
-      case 'submitting':
-        return '正在提交会话...';
-      default:
-        return null;
-    }
+    if (current.session?.status === 'running') return 'AI 正在回复...';
+    if (current.session?.status === 'cancelling') return '正在取消会话...';
+    if (current.session?.status === 'submitting') return '正在提交会话...';
+    return null;
   });
   const inputEnabled = computed(() => {
     const current = state.get();
-    return current.page.kind === 'session'
-      && current.snapshot.session.status === 'waiting-input'
-      && loadingLabel.get() === null;
+    return current.page.kind === 'session' && current.sessionControls.input;
   });
   const inputControlEnabled = computed(() => {
     const current = state.get();
     if (current.page.kind !== 'session') return false;
-    return current.snapshot.session.status !== 'submitting'
-      && current.snapshot.session.status !== 'completed'
-      && current.snapshot.session.status !== 'cancelled';
+    const controls = current.sessionControls;
+    return controls.input || controls.submit || controls.cancel || controls.dismiss;
   });
   const inputHint = computed(() => {
     const current = state.get();
     if (current.page.kind !== 'session') return '';
-    const status = current.snapshot.session.status;
+    const status = current.session?.status;
+    if (!status) return '';
     if (status === 'failed') return '/exit 或 /cancel 返回 Hub';
-    if (!inputEnabled.get()) return `${sessionStatusLabel(status)} · /exit 取消`;
+    if (status === 'submitting' || status === 'cancelling') return sessionStatusLabel(status);
+    if (!inputEnabled.get()) return `${sessionStatusLabel(status)} · /exit 中断`;
     return '/submit 提交 · /exit 取消';
   });
 
   const vm: ViewModel = {
-    worldRoot: driver.getState().snapshot.world.worldRoot,
+    worldRoot: driver.getState().world.worldRoot,
     driver,
     state,
     page: computed(() => state.get().page),
@@ -127,37 +118,32 @@ export function createViewModel(
     visibleMessages: computed(() => {
       const current = state.get();
       if (current.page.kind === 'hub') {
-        const text = current.page.mode === 'help'
-          ? formatHubHelp({ commands: current.commands, actions: current.hubActions })
-          : formatHubStatus({
-            snapshot: current.snapshot,
-            actions: current.hubActions,
-            commands: current.commands,
-            recent: current.recent,
-          });
+        const text = hubMessageFor(current);
         return [{
-          id: `hub:${current.page.mode}:${current.snapshot.world.phase}:${current.snapshot.world.day ?? '-'}`,
+          id: `hub:${current.page.mode}:${current.world.status}:${current.world.status === 'published' ? current.world.revision : '-'}`,
           role: 'system',
           text,
+          status: 'complete',
         }];
       }
-      return current.messages.map(runtimeMessageToTui);
+      return current.messages;
     }),
     headerPrimary: computed(() => {
-      const snapshot = state.get().snapshot;
-      return `World: ${snapshot.world.worldRoot}`;
+      return `World: ${state.get().world.worldRoot}`;
     }),
     headerSecondary: computed(() => {
       const current = state.get();
-      const world = current.snapshot.world;
-      const parts = [world.day ?? null, `${phaseLabel(world.phase)} (${world.phase})`];
+      const world = current.world;
+      const phase = world.status === 'published' ? world.phase : world.status;
+      const parts = [world.status === 'published' ? world.day : null, `${phaseLabel(phase)} (${phase})`];
       if (current.page.kind === 'session') {
         parts.push(
           sessionKindLabel(current.page.sessionKind),
-          sessionStatusLabel(current.snapshot.session.status),
+          current.session ? sessionStatusLabel(current.session.status) : null,
         );
       }
-      if (current.loading) parts.push(current.loading.label);
+      const loading = loadingLabel.get();
+      if (loading) parts.push(loading);
       return parts.filter(Boolean).join(' · ');
     }),
     loadingLabel,

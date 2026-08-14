@@ -2,25 +2,18 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-cd "$SCRIPT_DIR"
+DAY_LOOM_DIR="$SCRIPT_DIR/../.."
+WORLD_DIR="$SCRIPT_DIR/world"
+LLM_CONFIG="$SCRIPT_DIR/llm.toml"
 
-if [[ -f ".env" ]]; then
-  while IFS='=' read -r key value; do
-    [[ -z "${key// }" || "${key:0:1}" == "#" ]] && continue
-    case "$key" in
-      DEEPSEEK_API_KEY|DAYLOOM_LLM_API_NAME|DAYLOOM_LLM_MODEL|DAYLOOM_LLM_BASE_URL|DAYLOOM_LLM_API_KEY_ENV|PROMPTPILE_BIN)
-        [[ -n "${value:-}" ]] && export "$key=$value"
-        ;;
-    esac
-  done < ".env"
+if [[ ! -f "$LLM_CONFIG" ]]; then
+  echo "[ERROR] Copy llm.example.toml to llm.toml and configure the caller LLM." >&2
+  exit 1
 fi
 
-WORLD_DIR="$SCRIPT_DIR/world2"
-export DAY_LOOM_DIR="$SCRIPT_DIR/../.."
-
-"$SCRIPT_DIR/scripts/ensure-dayloom.sh"
+export DAY_LOOM_DIR
+bash "$SCRIPT_DIR/scripts/ensure-dayloom.sh"
 mkdir -p "$WORLD_DIR"
 
 echo "Opening dayloom-tui on: $WORLD_DIR"
-echo
-node "$DAY_LOOM_DIR/packages/tui/dist/main.js" "$WORLD_DIR"
+node "$DAY_LOOM_DIR/packages/tui/dist/main.js" "$WORLD_DIR" --llm-config "$LLM_CONFIG"

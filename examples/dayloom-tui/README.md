@@ -1,41 +1,35 @@
 # Dayloom TUI example
 
-通过 `@dayloom/tui` 的 Hub / Session 全屏界面使用正式 `@dayloom/core` Runtime。标准入口不会预置业务状态；空 World 目录会以 `uninitialized` 打开，并由 Hub 提供 `init`。
+通过 `@dayloom/tui` 使用正式 `@dayloom/core2`。示例从被忽略的空 `world/` 开始，由真实 Init Session 创建 World；脚本不预写 Archive、canon、plan、day 或 phase。
 
 ## 前置条件
 
-- Node.js 18+
-- 浏览 Hub 不需要 API key；进入自然语言 Session 需要 `DEEPSEEK_API_KEY`
+- Node.js 20+
 - Windows 建议使用 Windows Terminal
+- caller-owned `llm.toml` 和其中引用的 provider credential
 
-可将 `.env.example` 复制为 `.env`，或直接在环境中设置凭证。不要把 secret 提交到仓库。
-
-## 启动
-
-不传参数时，脚本使用当前示例目录下的空 `world2` 目录：
+首次使用：
 
 ```bash
+cp llm.example.toml llm.toml
+export DEEPSEEK_API_KEY=...
 ./open-world.sh
 ```
 
+Windows：
+
 ```bat
+copy llm.example.toml llm.toml
+set DEEPSEEK_API_KEY=...
 open-world.bat
 ```
 
-入口脚本只创建目录、构建 `@dayloom/core` 与 `@dayloom/tui`，然后启动 TUI；它不会预写 canon、plan、day 或 phase。
+launcher 只检查配置、创建空目录、按 `archive-protocol → core2 → tui` 构建并运行：
 
-Session 支持自然语言多轮输入。使用 `/submit` 提交，使用 `/exit` 或 `/cancel` 取消并退出。
-
-## 配置
-
-标准 TUI 支持 `.env.example` 中列出的 `DAYLOOM_LLM_*` 和 `PROMPTPILE_BIN` 可选环境变量。详细交互说明见 [`packages/tui/README.md`](../../packages/tui/README.md)。
-
-## Windows resize smoke
-
-在 Windows Terminal 或经典 Console Host 中运行：
-
-```bat
-verify-resize.bat
+```text
+node packages/tui/dist/main.js <world> --llm-config <llm.toml>
 ```
 
-该脚本使用与标准入口相同的 Core/TUI 启动契约，并将诊断日志写入本目录的 `.runtime\diagnostics`。resize checklist 是人工 smoke，不属于自动化测试。
+Session 支持自然语言多轮输入。`/submit` 提交，`/exit` 或 `/cancel` 取消；AI 回复中也可用后两者中断。
+
+`verify-resize.bat` 使用同一生产启动契约，并把诊断写入 `.runtime/diagnostics`。

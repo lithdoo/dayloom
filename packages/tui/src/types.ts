@@ -1,42 +1,66 @@
-import type {
-  CommandAvailability,
-  RuntimeMessage,
-  RuntimeSnapshot,
-  SessionKind,
-  SessionStatus,
-  WorldCommand,
-} from '@dayloom/core';
+export type TuiBusinessActionId =
+  | 'init' | 'daily' | 'revise' | 'play' | 'settle' | 'abandon-day';
 
+export type TuiLocalActionId = 'status' | 'help' | 'quit';
 export type HubMode = 'status' | 'help';
+
+interface TuiActionBase {
+  label: string;
+  summary: string;
+  shortcut: string | null;
+  recommended: boolean;
+}
+
+export type TuiHubAction =
+  | (TuiActionBase & { id: TuiBusinessActionId; kind: 'business' })
+  | (TuiActionBase & { id: TuiLocalActionId; kind: 'local' });
+
+export interface TuiBusyState {
+  actionId: TuiBusinessActionId;
+  label: string;
+}
+
+export type TuiWorldView =
+  | { status: 'uninitialized'; worldRoot: string }
+  | { status: 'invalid'; worldRoot: string; error: string }
+  | {
+      status: 'published';
+      worldRoot: string;
+      worldId: string;
+      title: string;
+      revision: number;
+      commitId: string;
+      phase: 'idle' | 'planned' | 'awaiting-settle';
+      day: string | null;
+      lastSettledDay: string | null;
+    };
+
+export type TuiSessionPresentationStatus =
+  | 'ready' | 'running' | 'submitting' | 'cancelling' | 'failed';
+
+export interface TuiSessionPresentation {
+  id: string;
+  kind: 'init' | 'planning' | 'play' | 'revise';
+  status: TuiSessionPresentationStatus;
+  error: { code: string; message: string } | null;
+}
 
 export type TuiPage =
   | { kind: 'hub'; mode: HubMode; busy: TuiBusyState | null }
-  | { kind: 'session'; sessionId: string; sessionKind: SessionKind };
+  | { kind: 'session'; sessionId: string; sessionKind: 'init' | 'planning' | 'play' | 'revise' };
 
-export interface TuiBusyState {
-  operation: string;
-  label: string;
+export interface TuiSessionControls {
+  input: boolean;
+  submit: boolean;
+  cancel: boolean;
+  dismiss: boolean;
 }
 
-export type TuiHubAction = TuiLocalHubAction | TuiCoreHubAction;
-
-export interface TuiLocalHubAction {
-  id: 'status' | 'help' | 'quit';
-  kind: 'local';
-  label: string;
-  summary: string;
-  shortcut: string | null;
-  recommended: boolean;
-}
-
-export interface TuiCoreHubAction {
-  id: WorldCommand;
-  kind: 'core-command';
-  command: WorldCommand;
-  label: string;
-  summary: string;
-  shortcut: string | null;
-  recommended: boolean;
+export interface TuiMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
+  text: string;
+  status: 'streaming' | 'complete' | 'error';
 }
 
 export interface TuiRecentResult {
@@ -47,24 +71,13 @@ export interface TuiRecentResult {
 
 export interface TuiDriverState {
   page: TuiPage;
-  snapshot: RuntimeSnapshot;
-  commands: CommandAvailability[];
-  hubActions: TuiHubAction[];
+  world: TuiWorldView;
+  session: TuiSessionPresentation | null;
+  sessionControls: TuiSessionControls;
+  hubActions: readonly TuiHubAction[];
   selectedHubActionId: string | null;
   recent: TuiRecentResult | null;
-  loading: TuiBusyState | null;
-  messages: RuntimeMessage[];
-}
-
-export interface TuiSessionView {
-  sessionId: string;
-  sessionKind: SessionKind;
-  status: SessionStatus;
-  inputEnabled: boolean;
-  inputPrompt: string;
-  loading: TuiBusyState | null;
-  messages: RuntimeMessage[];
+  messages: readonly TuiMessage[];
 }
 
 export type TuiInputMode = 'hidden' | 'text';
-
