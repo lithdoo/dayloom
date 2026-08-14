@@ -7,6 +7,7 @@ const forbidden = [
   /^@dayloom\/(?:core|core-old|tui|tui-old)(?:\/|$)/,
   /^@dayloom\/archive-protocol\/(?:src|dist)\//,
   /^promptpile(?:-react)?\/(?:src|dist)\//,
+  /^promptpile-compress\/(?:src|dist)\//,
   /^promptpile-protocol(?:\/|$)/,
 ];
 const specifier = /(?:from\s+|import\s*(?:\(|)|require\s*\()\s*['"]([^'"]+)['"]/g;

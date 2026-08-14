@@ -5,21 +5,58 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const TOML = require('@iarna/toml');
-const { readCallerConfig, writeDerivedConfigs } = require('../dist/promptpile/config');
+const { deriveSummaryConfig, readCallerConfig, writeDerivedConfigs } = require('../dist/promptpile/config');
 const { runReact } = require('../dist/promptpile/react-runner');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
-const { eventStream } = require('./helpers');
+const { createPlayWorkspace, WRITABLE_SUMMARY_AUTHORITY_NOTE } = require('../dist/session/play');
+const { readPublishedWorld } = require('../dist/world/read');
+const { archiveFixture, eventStream } = require('./helpers');
 
 test('derived config preserves profiles and owns max-step and prompt paths', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-config-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const caller = path.join(root, 'caller.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="profile"\nmodel="m"\n[promptpile]\nllm_api="profile"\nllm_api_temperature=0.3\n');
   const config = await readCallerConfig(caller);
-  const paths = { thought: path.join(root, 'thought.md'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml') };
+  const paths = { thought: path.join(root, 'thought.md'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
   await writeDerivedConfigs(config, paths);
   const send = TOML.parse(fs.readFileSync(paths.sendConfig, 'utf8')), submit = TOML.parse(fs.readFileSync(paths.submitConfig, 'utf8'));
   assert.equal(send.llm_api[0].name, 'profile'); assert.equal(send.promptpile.llm_api_temperature, 0.3);
   assert.deepEqual(send['promptpile-react'], { max_step: 1, thought_prompt: paths.thought, final_prompt: paths.sendFinal });
   assert.equal(submit['promptpile-react'].final_prompt, paths.submitFinal);
+});
+test('summary config preserves only provider identity and LLM selection', () => {
+  const profile = [{ name: 'profile', model: 'model', api_key_env: 'KEY' }];
+  const summary = deriveSummaryConfig({
+    llm_api: profile,
+    unrelated: { value: true },
+    promptpile: {
+      llm_api: 'profile', llm_api_key: 'secret', llm_api_key_env: 'KEY', llm_api_model: 'override',
+      llm_api_base_url: 'https://example.invalid', llm_api_temperature: 0.7, llm_api_extra_body: { reasoning: 'low' },
+      dir: 'wrong', dirs: ['wrong'], output_dir: 'wrong', output: 'wrong', receipt: 'wrong', quiet: true,
+      input: 'wrong', continue: true, tools_file: 'wrong', disable_tool: false, tool_choice: 'required',
+      after_hook: 'wrong', after_hook_failure: 'continue', insert_files: ['wrong'], append_files: ['wrong'],
+      output_pile_file: 'wrong', output_pile_fd: 3, output_pile_format: 'json', missing_tool_results: 'ignore',
+    },
+  });
+  assert.deepEqual(summary, {
+    llm_api: profile,
+    promptpile: {
+      llm_api: 'profile', llm_api_key: 'secret', llm_api_key_env: 'KEY', llm_api_model: 'override',
+      llm_api_base_url: 'https://example.invalid', llm_api_temperature: 0.7, llm_api_extra_body: { reasoning: 'low' },
+    },
+  });
+});
+test('play workspace isolates compression requests and marks summaries as untrusted history', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-workspace-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
+  const session = await createPlayWorkspace(runtime, 'session', await readPublishedWorld(fixture.root), await readCallerConfig(fixture.config));
+  assert.equal(path.dirname(session.requestsDir), path.join(session.root, 'compression'));
+  assert.equal(fs.statSync(session.requestsDir).isDirectory(), true);
+  assert.equal(fs.readFileSync(session.summaryPromptPath, 'utf8').includes('Return exactly one JSON object'), true);
+  assert.equal(TOML.parse(fs.readFileSync(session.summaryConfigPath, 'utf8')).llm_api[0].name, 'test');
+  for (const prompt of ['thought.md', 'final-send.md', 'final-submit.md']) {
+    assert.equal(fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8').includes(WRITABLE_SUMMARY_AUTHORITY_NOTE), true);
+  }
+  assert.deepEqual(fs.readdirSync(session.contextDir), []);
 });
 test('React runner rejects malformed, schema-invalid, gaps, session changes and Final mismatch', async () => {
   const boundaries = await resolvePackagedBoundaries();
@@ -71,8 +108,8 @@ test('React invocation keeps the frozen context/output topology and enables no i
 test('architecture guard rejects legacy and deep imports', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-guard-'));
   try {
-    fs.writeFileSync(path.join(root, 'bad.ts'), "import '@dayloom/core';\nimport 'promptpile-react/dist/runtime';\n");
+    fs.writeFileSync(path.join(root, 'bad.ts'), "import '@dayloom/core';\nimport 'promptpile-react/dist/runtime';\nimport 'promptpile-compress/dist/compress';\n");
     const result = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'check-architecture.mjs')], { env: { ...process.env, CORE2_ARCHITECTURE_ROOT: root }, encoding: 'utf8' });
-    assert.notEqual(result.status, 0); assert.match(result.stderr, /forbidden import @dayloom\/core/);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /forbidden import @dayloom\/core/); assert.match(result.stderr, /forbidden import promptpile-compress\/dist\/compress/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

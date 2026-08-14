@@ -10,6 +10,7 @@ import { readPublishedWorld, type PublishedWorld } from './world/read';
 import { resolvePackagedBoundaries, type PackagedBoundaries } from './promptpile/binaries';
 import { readCallerConfig, type CallerConfig } from './promptpile/config';
 import { appendUser, nodeProcessRunner, type ProcessRunner } from './promptpile/conversation';
+import { runCompressedCompletion } from './promptpile/compression';
 import { runReact } from './promptpile/react-runner';
 import { buildContextMessage, createPlayWorkspace, SUBMIT_MARKER, type PlaySession } from './session/play';
 import { parsePlaySubmissionV1, validateAndBuildPlayDocuments } from './session/submission';
@@ -39,6 +40,49 @@ class DayloomCoreImpl implements DayloomCore {
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: CoreEvent) { for (const listener of [...this.listeners]) try { listener(event); } catch { /* listener isolation */ } }
   private changed() { this.emit({ type: 'state.changed', state: this.getState() }); }
+  private childStarted(child: ChildProcess) { this.activeChild = child; }
+  private childEnded(child: ChildProcess) { if (this.activeChild === child) this.activeChild = null; }
+  private async appendConversation(directory: string, content: string): Promise<void> {
+    let child: ChildProcess | null = null;
+    try {
+      await appendUser(this.runner, this.boundaries.promptpileBin, directory, content, (started) => {
+        child = started;
+        this.childStarted(started);
+      });
+    } finally {
+      if (child) this.childEnded(child);
+    }
+  }
+  private compressAndComplete<T>(session: PlaySession, completion: () => Promise<T>): Promise<T> {
+    return runCompressedCompletion({
+      runner: this.runner,
+      promptpileBin: this.boundaries.promptpileBin,
+      conversationDir: session.conversationDir,
+      requestsDir: session.requestsDir,
+      summaryConfigPath: session.summaryConfigPath,
+      summaryPromptPath: session.summaryPromptPath,
+      onChildStart: (child) => this.childStarted(child),
+      onChildEnd: (child) => this.childEnded(child),
+      completion,
+    });
+  }
+  private async runSessionReact(session: PlaySession, config: string, onDelta?: (delta: string) => void): Promise<string> {
+    let child: ChildProcess | null = null;
+    try {
+      return await runReact({
+        runner: this.runner,
+        reactBin: this.boundaries.reactBin,
+        validate: this.boundaries.validateAgentEvent,
+        config,
+        context: session.contextDir,
+        conversation: session.conversationDir,
+        onChild: (started) => { child = started; this.childStarted(started); },
+        onDelta,
+      });
+    } finally {
+      if (child) this.childEnded(child);
+    }
+  }
   private begin(): CoreResult | null { if (this.disposed) return failure('DISPOSED', 'Core is disposed.'); if (this.mutation) return failure('BUSY', 'Another mutation is in flight.'); this.mutation = true; this.changed(); return null; }
   private end() { this.mutation = false; }
   private async operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
@@ -61,8 +105,7 @@ class DayloomCoreImpl implements DayloomCore {
     try { session = await createPlayWorkspace(this.runtimeRoot, id, this.world, this.config); }
     catch (error) { await rm(path.join(this.runtimeRoot, 'sessions', id), { recursive: true, force: true }); return failure('INTERNAL_ERROR', error instanceof Error ? error.message : 'Could not create Session workspace.'); }
     try {
-      await appendUser(this.runner, this.boundaries.promptpileBin, session.contextDir, buildContextMessage(this.world), (child) => { this.activeChild = child; });
-      this.activeChild = null;
+      await this.appendConversation(session.contextDir, buildContextMessage(this.world));
       if (this.disposed) return failure('DISPOSED', 'Core is disposed.');
       this.session = session; this.sessionStatus = { id, kind: 'play', status: 'ready' }; return success();
     } catch (error) { await rm(path.join(this.runtimeRoot, 'sessions', id), { recursive: true, force: true }); return failure('CONVERSATION_FAILED', error instanceof Error ? error.message : 'Could not start Conversation.'); }
@@ -72,30 +115,28 @@ class DayloomCoreImpl implements DayloomCore {
     if (typeof text !== 'string' || text.trim() === '') return failure('INVALID_INPUT', 'Input must be non-empty.');
     const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'running' }; this.changed();
     try {
-      await appendUser(this.runner, this.boundaries.promptpileBin, session.conversationDir, text, (child) => { this.activeChild = child; });
-      this.activeChild = null;
+      await this.appendConversation(session.conversationDir, text);
     } catch (error) {
       this.session = null; this.sessionStatus = null; this.changed(); return failure('CONVERSATION_FAILED', error instanceof Error ? error.message : 'Conversation append failed.');
     }
     try {
-      await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config: session.sendConfig, context: session.contextDir, conversation: session.conversationDir, onChild: (child) => { this.activeChild = child; }, onDelta: (delta) => this.emit({ type: 'output.delta', sessionId: session.id, text: delta }) });
+      await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig, (delta) => this.emit({ type: 'output.delta', sessionId: session.id, text: delta })));
       if (this.disposed) return failure('DISPOSED', 'Core is disposed.');
-      this.activeChild = null; this.sessionStatus = { id: session.id, kind: 'play', status: 'ready' }; return success();
-    } catch (error) { this.activeChild = null; this.session = null; this.sessionStatus = null; return failure('AGENT_FAILED', error instanceof Error ? error.message : 'Agent failed.'); }
+      this.sessionStatus = { id: session.id, kind: 'play', status: 'ready' }; return success();
+    } catch (error) { this.session = null; this.sessionStatus = null; throw error; }
   }); }
   submit() { return this.operation(async () => {
     if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
     const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'submitting' }; this.changed();
     try {
-      await appendUser(this.runner, this.boundaries.promptpileBin, session.conversationDir, SUBMIT_MARKER, (child) => { this.activeChild = child; });
-      this.activeChild = null;
+      await this.appendConversation(session.conversationDir, SUBMIT_MARKER);
     } catch (error) {
       this.session = null; this.sessionStatus = null; this.changed(); return failure('CONVERSATION_FAILED', error instanceof Error ? error.message : 'Conversation append failed.');
     }
     let final: string;
-    try { final = await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config: session.submitConfig, context: session.contextDir, conversation: session.conversationDir, onChild: (child) => { this.activeChild = child; } }); }
-    catch (error) { this.activeChild = null; this.session = null; this.sessionStatus = null; return failure('AGENT_FAILED', error instanceof Error ? error.message : 'Agent failed.'); }
-    this.activeChild = null;
+    try {
+      final = await this.compressAndComplete(session, () => this.runSessionReact(session, session.submitConfig));
+    } catch (error) { this.session = null; this.sessionStatus = null; throw error; }
     let documents;
     try { documents = validateAndBuildPlayDocuments(session.pinned.playContext!.plan, parsePlaySubmissionV1(final)); }
     catch (error) { this.session = null; this.sessionStatus = null; return failure('SUBMISSION_INVALID', error instanceof Error ? error.message : 'Submission is invalid.'); }
