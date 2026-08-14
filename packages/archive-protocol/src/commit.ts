@@ -1,0 +1,11 @@
+import { parseBlobHashV1 } from './blob';
+import { protocolError } from './errors';
+import { deepFreeze, exactKeys, integer, nullable, record, schemaVersion, stableId, timestamp } from './parse';
+export type PublishedWorldPhase='idle'|'planned'|'awaiting-settle';
+export interface ArchiveCommitV2{schemaVersion:2;id:string;revision:number;parentCommitId:string|null;operationId:string;createdAt:string;rootTreeHash:string;control:{phase:PublishedWorldPhase;day:string|null;lastSettledDay:string|null}}
+export function parseArchiveCommitV2(value:unknown):Readonly<ArchiveCommitV2>{
+ const o=record(value,'ArchiveCommitV2','ARCHIVE_PROTOCOL_COMMIT_INVALID');exactKeys(o,['schemaVersion','id','revision','parentCommitId','operationId','createdAt','rootTreeHash','control'],'ArchiveCommitV2','ARCHIVE_PROTOCOL_COMMIT_INVALID');schemaVersion(o.schemaVersion,2,'ArchiveCommitV2');
+ const c=record(o.control,'ArchiveCommitV2.control','ARCHIVE_PROTOCOL_COMMIT_INVALID');exactKeys(c,['phase','day','lastSettledDay'],'ArchiveCommitV2.control','ARCHIVE_PROTOCOL_COMMIT_INVALID');if(c.phase!=='idle'&&c.phase!=='planned'&&c.phase!=='awaiting-settle')protocolError('ARCHIVE_PROTOCOL_COMMIT_INVALID','ArchiveCommitV2.control.phase is invalid.');
+ const day=nullable(c.day,v=>stableId(v,'ArchiveCommitV2.control','day','ARCHIVE_PROTOCOL_COMMIT_INVALID'));if((c.phase==='planned'||c.phase==='awaiting-settle')&&day===null)protocolError('ARCHIVE_PROTOCOL_COMMIT_INVALID',`${c.phase} requires a day.`);
+ return deepFreeze({schemaVersion:2,id:stableId(o.id,'ArchiveCommitV2','id','ARCHIVE_PROTOCOL_COMMIT_INVALID'),revision:integer(o.revision,'ArchiveCommitV2','revision',1,'ARCHIVE_PROTOCOL_COMMIT_INVALID'),parentCommitId:nullable(o.parentCommitId,v=>stableId(v,'ArchiveCommitV2','parentCommitId','ARCHIVE_PROTOCOL_COMMIT_INVALID')),operationId:stableId(o.operationId,'ArchiveCommitV2','operationId','ARCHIVE_PROTOCOL_COMMIT_INVALID'),createdAt:timestamp(o.createdAt,'ArchiveCommitV2','createdAt','ARCHIVE_PROTOCOL_COMMIT_INVALID'),rootTreeHash:parseBlobHashV1(o.rootTreeHash,'rootTreeHash'),control:{phase:c.phase,day,lastSettledDay:nullable(c.lastSettledDay,v=>stableId(v,'ArchiveCommitV2.control','lastSettledDay','ARCHIVE_PROTOCOL_COMMIT_INVALID'))}});
+}

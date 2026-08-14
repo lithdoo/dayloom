@@ -1,65 +1,81 @@
 #!/usr/bin/env node
-import { InitCancelledError, runGameShell } from '@dayloom/core';
-import { parseArgv, formatHelp } from './argv.js';
+import path from 'node:path';
+import { createDiagnosticLogger } from '@bindtty/terminal';
+import { parseArgv, usage } from './argv.js';
 import { mountApp } from './app.js';
-import { createTuiSessionIO } from './session-io.js';
+import { createRuntimeDriver } from './runtime-driver/index.js';
 import { createViewModel } from './view-model.js';
 
 async function main(): Promise<void> {
-  const parsed = parseArgv(process.argv);
-  if (parsed.help) {
-    process.stdout.write(`${formatHelp()}\n`);
-    return;
-  }
-
-  const vm = createViewModel({
-    worldDir: parsed.worldDir,
-    locale: parsed.locale,
+  const diagnostic = createDiagnosticLogger('dayloom-tui', {
+    path: process.env.DAYLOOM_DIAGNOSTIC_LOG_FILE ?? false,
+    runId:
+      process.env.DAYLOOM_DIAGNOSTIC_RUN_ID ??
+      process.env.BINDTTY_DIAGNOSTIC_RUN_ID,
   });
-  let mounted: ReturnType<typeof mountApp> | null = null;
-  const io = createTuiSessionIO(vm);
-
-  mounted = mountApp(vm, {
-    onExitRequest(): void {
+  if (diagnostic.enabled) {
+    process.on('uncaughtExceptionMonitor', (error, origin) => {
+      diagnostic.error('process-uncaught-exception', error, { origin });
+      diagnostic.flush();
+    });
+    process.on('unhandledRejection', (reason) => {
+      diagnostic.error('process-unhandled-rejection', reason);
+      diagnostic.flush();
+    });
+  }
+  try {
+    const parsed = parseArgv(process.argv);
+    if (parsed.help) {
+      process.stdout.write(`${usage()}\n`);
+      return;
+    }
+    const worldRoot = path.resolve(parsed.worldRoot);
+    const llmConfigPath = path.resolve(parsed.llmConfigPath!);
+    diagnostic.log('process-start', {
+      worldRoot,
+      llmConfigPath,
+      platform: process.platform,
+      nodeVersion: process.version,
+      terminalProgram: process.env.TERM_PROGRAM,
+      windowsTerminal: process.env.WT_SESSION !== undefined,
+      stdinIsTTY: process.stdin.isTTY === true,
+      stdoutIsTTY: process.stdout.isTTY === true,
+    });
+    const driver = await createRuntimeDriver({ worldRoot, llmConfigPath, diagnostic });
+    let mounted: ReturnType<typeof mountApp> | null = null;
+    let shutdownPromise: Promise<void> | null = null;
+    const shutdown = (): Promise<void> => {
+      if (shutdownPromise) return shutdownPromise;
       mounted?.dispose();
       mounted = null;
-      process.exit(0);
-    },
-  });
-
-  const onSigInt = (): void => {
-    mounted?.dispose();
-    mounted = null;
-    process.exit(0);
-  };
-  process.on('SIGINT', onSigInt);
-
-  try {
-    await runGameShell({
-      worldDir: parsed.worldDir,
-      io,
-      t: vm.t,
-      autoStart: parsed.autoStart,
-      ...parsed.shellOptions,
+      shutdownPromise = vm.dispose().finally(() => {
+        diagnostic.log('process-stop');
+        diagnostic.dispose();
+      });
+      return shutdownPromise;
+    };
+    const exitAfterShutdown = (): void => {
+      void shutdown().then(
+        () => process.exit(0),
+        (error) => {
+          process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+          process.exit(1);
+        },
+      );
+    };
+    const vm = createViewModel(driver, {
+      onExitRequest: exitAfterShutdown,
     });
-  } catch (err) {
-    // Keep failures inside the TUI message list — never write to stderr while
-    // the alt-screen session may still be active.
-    if (err instanceof InitCancelledError) {
-      io.error(`${err.message}\n`);
-    } else {
-      io.error(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
-      process.exitCode = 1;
-    }
-  } finally {
-    process.off('SIGINT', onSigInt);
-    mounted?.dispose();
-    mounted = null;
+    mounted = mountApp(vm, {
+      onExitRequest: exitAfterShutdown,
+      diagnostic,
+    });
+  } catch (error) {
+    diagnostic.error('process-fatal', error);
+    diagnostic.flush();
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
 }
 
-main().catch((err: unknown) => {
-  // Bootstrap-only path (argv / mount failures before or without a live TUI).
-  process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
-  process.exitCode = 1;
-});
+void main();

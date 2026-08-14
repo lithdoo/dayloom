@@ -1,7 +1,8 @@
 {
   "name": "@dayloom/cli",
   "version": "0.1.0-beta.5",
-  "description": "Command-line interface for Dayloom.",
+  "description": "Deprecated legacy command-line interface for Dayloom.",
+  "deprecated": "This legacy CLI depends on @dayloom/core-old and is no longer developed. Use @dayloom/tui (dayloom-tui) instead.",
   "main": "./dist/index.js",
   "bin": {
     "dayloom": "./dist/main.js"
@@ -12,7 +13,7 @@
     "test": "npm run build && node --test test/*.test.js"
   },
   "dependencies": {
-    "@dayloom/core": "*",
+    "@dayloom/core-old": "*",
     "commander": "^14.0.3"
   },
   "devDependencies": {

@@ -1,12 +1,13 @@
-import { createApp } from 'bindtty';
-import { createNodeTerminal, RawStdinInput, type TerminalKeyEvent } from '@bindtty/terminal';
+import { computed, createApp, type AppError, type BindTTYApp } from 'bindtty';
+import {
+  createNodeTerminal,
+  type DiagnosticLogger,
+  type TerminalKeyEvent,
+  type TerminalViewport,
+} from '@bindtty/terminal';
 import type { ViewModel } from './view-model.js';
-import { CHROME_ROWS } from './components/constants.js';
-import { Header } from './components/header.js';
-import { MessageList } from './components/message-list.js';
-import { LoadingBar } from './components/loading-bar.js';
-import { TextInputArea } from './components/text-input.js';
-import { Footer } from './components/footer.js';
+import { CHROME_ROWS, HUB_SELECT_ID, TEXTAREA_ID } from './components/constants.js';
+import { Footer, Header, HubSelect, LoadingBar, MessageList, TextInputArea } from './components/index.js';
 
 export interface MountedTuiApp {
   dispose(): void;
@@ -14,16 +15,16 @@ export interface MountedTuiApp {
 
 export interface MountAppOptions {
   onExitRequest?(): void;
+  onError?(error: AppError): void;
+  diagnostic?: DiagnosticLogger;
 }
 
 export function isCtrlC(event: TerminalKeyEvent): boolean {
-  return Boolean(
-    event.ctrl &&
-      (event.name === 'c' || event.input === '\x03' || event.input === 'c'),
-  );
+  return event.kind === 'key' && event.modifiers.ctrl && event.key === 'c';
 }
 
 export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedTuiApp {
+  const diagnostic = options.diagnostic;
   const terminal = createNodeTerminal({
     stdout: process.stdout,
     stdin: process.stdin,
@@ -31,18 +32,25 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     hideCursor: true,
     rawMode: true,
     exitOnCtrlC: false,
-    enhancedKeyboard: true,
-    stdinInputAdapter: new RawStdinInput(),
+    keyboardProtocol: 'auto',
   });
 
-  function syncLayout(): void {
-    vm.viewportWidth.set(terminal.viewport.width);
-    vm.listHeight.set(
-      Math.max(3, terminal.viewport.height - CHROME_ROWS - vm.inputViewportRows.get()),
-    );
+  function syncLayout(viewport: TerminalViewport = terminal.viewport): void {
+    vm.viewportWidth.set(viewport.width);
+    const inputRows = vm.inputViewportRows.get();
+    const listHeight = Math.max(3, viewport.height - CHROME_ROWS - inputRows);
+    vm.listHeight.set(listHeight);
+    if (diagnostic?.enabled) {
+      diagnostic.log('layout-viewport-sync', {
+        width: viewport.width,
+        height: viewport.height,
+        chromeRows: CHROME_ROWS,
+        inputRows,
+        listHeight,
+        page: vm.page.get().kind,
+      });
+    }
   }
-
-  syncLayout();
 
   const originalSetInputViewportRows = vm.setInputViewportRows.bind(vm);
   vm.setInputViewportRows = (rows: number) => {
@@ -50,31 +58,100 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     syncLayout();
   };
 
-  const unsubscribeResize = terminal.onResize(syncLayout);
   const unsubscribeExitKey = terminal.onKey((event) => {
     if (isCtrlC(event)) {
+      diagnostic?.log('exit-key');
       options.onExitRequest?.();
     }
   });
+
+  const showHubSelect = computed(() => {
+    const page = vm.page.get();
+    return page.kind === 'hub';
+  });
+  const showSessionInput = computed(() => vm.page.get().kind === 'session');
 
   const app = createApp(
     <screen gap={0} alignItems="stretch">
       <Header vm={vm} />
       <MessageList vm={vm} />
       <LoadingBar vm={vm} />
-      <TextInputArea vm={vm} />
+      <show when={showHubSelect}>
+        <HubSelect vm={vm} />
+      </show>
+      <show when={showSessionInput}>
+        <TextInputArea vm={vm} />
+      </show>
       <Footer vm={vm} />
     </screen>,
-    { terminal },
+    {
+      terminal,
+      onViewportChange: syncLayout,
+      onError(error) {
+        diagnostic?.error('bindtty-error', error.error, {
+          phase: error.phase,
+          width: error.viewport.width,
+          height: error.viewport.height,
+          intentKind: error.intent.kind,
+          intentReasons: error.intent.reasons,
+          revision: error.revision,
+          schedulerState: error.schedulerState,
+          recoverable: error.recoverable,
+        });
+        options.onError?.(error);
+      },
+    },
   );
 
+  diagnostic?.log('mount-start', {
+    width: terminal.viewport.width,
+    height: terminal.viewport.height,
+  });
   app.start();
+  const unsubscribeInputFocus = mountAutofocus(vm, app);
 
   return {
     dispose(): void {
-      unsubscribeResize();
+      diagnostic?.log('mount-dispose', {
+        width: terminal.viewport.width,
+        height: terminal.viewport.height,
+      });
+      unsubscribeInputFocus();
       unsubscribeExitKey();
       app.dispose();
     },
+  };
+}
+
+export function mountAutofocus(
+  vm: ViewModel,
+  app: Pick<BindTTYApp, 'focus'>,
+  schedule: (callback: () => void) => void = queueMicrotask,
+): () => void {
+  let disposed = false;
+  let ticket = 0;
+
+  function scheduleFocus(): void {
+    const currentTicket = ++ticket;
+    schedule(() => {
+      if (disposed || currentTicket !== ticket) return;
+      const page = vm.page.get();
+      if (page.kind === 'session') {
+        app.focus(TEXTAREA_ID);
+      } else {
+        app.focus(HUB_SELECT_ID);
+      }
+    });
+  }
+
+  const unsubscribePage = vm.page.subscribe(scheduleFocus);
+  const unsubscribeInput = vm.inputMode.subscribe(scheduleFocus);
+  scheduleFocus();
+
+  return () => {
+    disposed = true;
+    ticket += 1;
+    unsubscribePage();
+    unsubscribeInput();
   };
 }

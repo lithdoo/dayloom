@@ -1,232 +1,234 @@
-import {
-  createSignal,
-  computed,
-  type ReadableSignal,
-  type Signal,
-} from 'bindtty';
-import {
-  createTranslator,
-  inspectTuiHeader,
-  normalizeLocale,
-  type InputOptions,
-  type Translator,
-} from '@dayloom/core';
-import { STREAM_THROTTLE_MS } from './components/constants.js';
-
-export type TuiInputMode = 'hidden' | 'text' | 'confirm';
-export type TuiMessageRole = 'output' | 'warn' | 'error' | 'system';
-
-export interface TuiMessage {
-  id: string;
-  role: TuiMessageRole;
-  text: string;
-  ts: number;
-}
+import { computed, createSignal, type ReadableSignal, type Signal } from 'bindtty';
+import { formatHubHelp, formatHubStatus } from './hub/content.js';
+import { driverMessageToTui, type TuiDisplayMessage } from './message-history.js';
+import { phaseLabel, sessionKindLabel, sessionStatusLabel } from './theme.js';
+import type { TuiRuntimeDriver } from './runtime-driver/index.js';
+import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage } from './types.js';
 
 export interface ViewModel {
-  worldDir: string;
-  t: Translator;
-
-  messages: Signal<readonly TuiMessage[]>;
-  visibleMessages: ReadableSignal<readonly TuiMessage[]>;
-  streamBuffer: Signal<string>;
-  loadingLabel: Signal<string | null>;
-
+  worldRoot: string;
+  driver: TuiRuntimeDriver;
+  state: Signal<TuiDriverState>;
+  page: ReadableSignal<TuiPage>;
+  hubActions: ReadableSignal<readonly TuiHubAction[]>;
+  selectedHubActionId: ReadableSignal<string | null>;
+  visibleMessages: ReadableSignal<readonly TuiDisplayMessage[]>;
+  headerPrimary: ReadableSignal<string>;
+  headerSecondary: ReadableSignal<string>;
+  loadingLabel: ReadableSignal<string | null>;
+  /** 当前 Session 是否接受普通自然语言输入。 */
+  inputEnabled: ReadableSignal<boolean>;
+  /** Textarea 是否可用于输入，包括高优先级 cancel 指令。 */
+  inputControlEnabled: ReadableSignal<boolean>;
   inputMode: Signal<TuiInputMode>;
-  inputInstruction: Signal<string>;
-  inputPrompt: Signal<string>;
-  inputHint: Signal<string>;
   inputValue: Signal<string>;
-  confirmQuestion: Signal<string>;
-
-  headerPrimary: Signal<string>;
-  headerSecondary: Signal<string>;
-  headerActions: Signal<readonly string[]>;
-
+  inputInstruction: ReadableSignal<string>;
+  inputPrompt: Signal<string>;
+  inputHint: ReadableSignal<string>;
+  inputResetToken: Signal<number>;
   viewportWidth: Signal<number>;
   listHeight: Signal<number>;
+  messageScrollOffset: Signal<number>;
   stickToBottom: Signal<boolean>;
   inputViewportRows: Signal<number>;
-  inputResetToken: Signal<number>;
-
-  appendMessage(role: TuiMessageRole, text: string): void;
-  appendStream(chunk: string): void;
-  flushStream(): void;
-  refreshHeader(): void;
-
-  beginInput(options: InputOptions, resolve: (value: string) => void): void;
-  beginConfirm(question: string, resolve: (value: boolean) => void): void;
-  clearInput(): void;
+  submitHubSelection(actionId?: string): Promise<void>;
+  moveHubSelection(delta: number): void;
+  selectHubAction(id: string): void;
   submitTextInput(): void;
-  submitConfirm(answer: boolean): void;
-
+  navigateInputHistory(delta: -1 | 1): void;
+  setMessageScrollOffset(value: number): void;
   setStickToBottom(value: boolean): void;
   setInputViewportRows(rows: number): void;
+  dispose(): Promise<void>;
 }
 
 export interface CreateViewModelOptions {
-  worldDir: string;
-  locale?: string;
+  onExitRequest?(): void | Promise<void>;
 }
 
-export function createViewModel(options: CreateViewModelOptions): ViewModel {
-  const t = createTranslator(normalizeLocale(options.locale));
-  const messages = createSignal<readonly TuiMessage[]>([]);
-  const streamBuffer = createSignal('');
-  const loadingLabel = createSignal<string | null>(null);
+export function createViewModel(
+  driver: TuiRuntimeDriver,
+  options: CreateViewModelOptions = {},
+): ViewModel {
+  const state = createSignal(driver.getState());
   const inputMode = createSignal<TuiInputMode>('hidden');
-  const inputInstruction = createSignal('');
-  const inputPrompt = createSignal('>');
-  const inputHint = createSignal('');
   const inputValue = createSignal('');
-  const confirmQuestion = createSignal('');
-  const headerPrimary = createSignal('');
-  const headerSecondary = createSignal('');
-  const headerActions = createSignal<readonly string[]>([]);
+  const inputPrompt = createSignal('> ');
+  const inputResetToken = createSignal(0);
   const viewportWidth = createSignal(80);
   const listHeight = createSignal(12);
+  const messageScrollOffset = createSignal(0);
   const stickToBottom = createSignal(true);
   const inputViewportRows = createSignal(1);
-  const inputResetToken = createSignal(0);
-  let messageId = 0;
-  let pendingInput: ((value: string) => void) | null = null;
-  let pendingConfirm: ((value: boolean) => void) | null = null;
-  let pendingStream = '';
-  let streamTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  let previousPageKey = pageKey(state.get().page);
+  const inputHistory: string[] = [];
+  let inputHistoryIndex = 0;
+  let inputHistoryDraft = '';
 
-  function publishPendingStream(): void {
-    if (pendingStream === '') return;
-    const next = pendingStream;
-    pendingStream = '';
-    streamBuffer.set(streamBuffer.get() + next);
-    stickToBottom.set(true);
-  }
+  const unsubscribe = driver.subscribe((nextState) => {
+    const nextPageKey = pageKey(nextState.page);
+    state.set(nextState);
+    inputMode.set(nextState.page.kind === 'session' ? 'text' : 'hidden');
+    if (nextPageKey !== previousPageKey) {
+      previousPageKey = nextPageKey;
+      messageScrollOffset.set(0);
+      stickToBottom.set(true);
+    }
+  });
 
-  function clearStreamTimer(): void {
-    if (streamTimer === null) return;
-    clearTimeout(streamTimer);
-    streamTimer = null;
-  }
+  const loadingLabel = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session') return null;
+    switch (current.session?.status) {
+      case 'running':
+        return 'AI 正在回复...';
+      case 'submitting':
+        return '正在提交会话...';
+      default:
+        return null;
+    }
+  });
+  const inputEnabled = computed(() => {
+    const current = state.get();
+    return current.page.kind === 'session'
+      && current.sessionControls.input;
+  });
+  const inputControlEnabled = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session') return false;
+    return current.sessionControls.input
+      || current.sessionControls.submit
+      || current.sessionControls.cancel;
+  });
+  const inputHint = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session') return '';
+    const status = current.session?.status;
+    if (!status) return '';
+    if (!inputControlEnabled.get()) return sessionStatusLabel(status);
+    const controls = [];
+    if (current.sessionControls.submit) controls.push('/submit 提交');
+    if (current.sessionControls.cancel) controls.push('/exit 取消');
+    return controls.join(' · ');
+  });
+  const inputInstruction = computed(() => {
+    const current = state.get();
+    if (current.page.kind !== 'session' || !current.session) return '';
+    const actions: string[] = [];
+    if (current.sessionControls.input) actions.push('输入消息');
+    if (current.sessionControls.submit) actions.push('输入 /submit 提交');
+    if (current.sessionControls.cancel) actions.push('输入 /exit 取消');
+    return actions.length > 0
+      ? `${actions.join('，或')}。`
+      : `${sessionStatusLabel(current.session.status)}。`;
+  });
 
   const vm: ViewModel = {
-    worldDir: options.worldDir,
-    t,
-    messages,
+    worldRoot: driver.getState().world.worldRoot,
+    driver,
+    state,
+    page: computed(() => state.get().page),
+    hubActions: computed(() => state.get().hubActions),
+    selectedHubActionId: computed(() => state.get().selectedHubActionId),
     visibleMessages: computed(() => {
-      const stream = streamBuffer.get();
-      if (stream === '') return messages.get();
-      return [
-        ...messages.get(),
-        {
-          id: 'stream',
-          role: 'output' as const,
-          text: stream,
-          ts: Date.now(),
-        },
-      ];
+      const current = state.get();
+      if (current.page.kind === 'hub') {
+        const text = current.page.mode === 'help'
+          ? formatHubHelp({ actions: current.hubActions })
+          : formatHubStatus({
+            world: current.world,
+            actions: current.hubActions,
+            recent: current.recent,
+          });
+        return [{
+          id: `hub:${current.page.mode}:${current.world.revision}:${current.world.phase}`,
+          role: 'system',
+          text,
+        }];
+      }
+      return current.messages.map(driverMessageToTui);
     }),
-    streamBuffer,
+    headerPrimary: computed(() => {
+      const world = state.get().world;
+      return `World: ${world.title} · ${world.worldRoot}`;
+    }),
+    headerSecondary: computed(() => {
+      const current = state.get();
+      const world = current.world;
+      const parts = [world.day ?? null, `${phaseLabel(world.phase)} (${world.phase})`];
+      if (current.page.kind === 'session') {
+        parts.push(
+          sessionKindLabel(),
+          ...(current.session ? [sessionStatusLabel(current.session.status)] : []),
+        );
+      }
+      return parts.filter(Boolean).join(' · ');
+    }),
     loadingLabel,
+    inputEnabled,
+    inputControlEnabled,
     inputMode,
+    inputValue,
     inputInstruction,
     inputPrompt,
     inputHint,
-    inputValue,
-    confirmQuestion,
-    headerPrimary,
-    headerSecondary,
-    headerActions,
+    inputResetToken,
     viewportWidth,
     listHeight,
+    messageScrollOffset,
     stickToBottom,
     inputViewportRows,
-    inputResetToken,
-    appendMessage(role, text): void {
-      if (text === '') return;
-      const normalized = text.endsWith('\n') ? text.slice(0, -1) : text;
-      messages.set([
-        ...messages.get(),
-        {
-          id: String(++messageId),
-          role,
-          text: normalized,
-          ts: Date.now(),
-        },
-      ]);
-    },
-    appendStream(chunk): void {
-      if (chunk === '') return;
-      pendingStream += chunk;
-      // Leading edge: show the first chunk immediately, then coalesce for ~50ms.
-      if (streamTimer !== null) return;
-      publishPendingStream();
-      streamTimer = setTimeout(() => {
-        streamTimer = null;
-        publishPendingStream();
-      }, STREAM_THROTTLE_MS);
-    },
-    flushStream(): void {
-      clearStreamTimer();
-      publishPendingStream();
-      const text = streamBuffer.get();
-      if (text === '') return;
-      streamBuffer.set('');
-      vm.appendMessage('output', text);
-    },
-    refreshHeader(): void {
-      try {
-        const snapshot = inspectTuiHeader(options.worldDir);
-        const phase = snapshot.phase ? ` · ${snapshot.phase}` : '';
-        headerPrimary.set(`World: ${snapshot.worldRoot}${phase}`);
-        headerSecondary.set(
-          [snapshot.day, snapshot.eventTitle].filter(Boolean).join(' · '),
-        );
-        headerActions.set(snapshot.suggestedActions);
-      } catch (err) {
-        headerPrimary.set(`World: ${options.worldDir}`);
-        headerSecondary.set(err instanceof Error ? err.message : '');
-        headerActions.set([]);
+    async submitHubSelection(requestedActionId): Promise<void> {
+      const actionId = requestedActionId ?? state.get().selectedHubActionId;
+      if (!actionId) return;
+      const result = await driver.runHubAction(actionId);
+      if (result === 'exit') {
+        await options.onExitRequest?.();
       }
     },
-    beginInput(inputOptions, resolve): void {
-      assertNoPending(pendingInput, pendingConfirm);
-      pendingInput = resolve;
-      inputInstruction.set(inputOptions.instruction);
-      inputPrompt.set(inputOptions.userPrompt);
-      inputHint.set(inputOptions.commandHint ?? '');
-      inputValue.set('');
-      inputResetToken.set(inputResetToken.get() + 1);
-      inputMode.set('text');
+    moveHubSelection(delta): void {
+      const actions = state.get().hubActions;
+      if (actions.length === 0) return;
+      const currentId = state.get().selectedHubActionId;
+      const currentIndex = Math.max(0, actions.findIndex((action) => action.id === currentId));
+      const nextIndex = Math.max(0, Math.min(actions.length - 1, currentIndex + delta));
+      driver.selectHubAction(actions[nextIndex]!.id);
     },
-    beginConfirm(question, resolve): void {
-      assertNoPending(pendingInput, pendingConfirm);
-      pendingConfirm = resolve;
-      confirmQuestion.set(question);
-      inputValue.set('');
-      inputMode.set('confirm');
-    },
-    clearInput(): void {
-      inputMode.set('hidden');
-      inputInstruction.set('');
-      inputPrompt.set('>');
-      inputHint.set('');
-      inputValue.set('');
-      confirmQuestion.set('');
+    selectHubAction(id): void {
+      driver.selectHubAction(id);
     },
     submitTextInput(): void {
-      const resolve = pendingInput;
-      if (!resolve) return;
-      pendingInput = null;
-      const value = inputValue.get();
-      vm.clearInput();
-      resolve(value);
+      const text = inputValue.get();
+      if (text.trim() !== '' && inputHistory.at(-1) !== text) {
+        inputHistory.push(text);
+        if (inputHistory.length > 100) inputHistory.shift();
+      }
+      inputHistoryIndex = inputHistory.length;
+      inputHistoryDraft = '';
+      inputValue.set('');
+      inputResetToken.set(inputResetToken.get() + 1);
+      void driver.submitSessionText(text);
     },
-    submitConfirm(answer): void {
-      const resolve = pendingConfirm;
-      if (!resolve) return;
-      pendingConfirm = null;
-      vm.clearInput();
-      resolve(answer);
+    navigateInputHistory(delta): void {
+      if (inputHistory.length === 0) return;
+      if (inputHistoryIndex === inputHistory.length && delta === -1) {
+        inputHistoryDraft = inputValue.get();
+      }
+      inputHistoryIndex = Math.max(
+        0,
+        Math.min(inputHistory.length, inputHistoryIndex + delta),
+      );
+      inputValue.set(
+        inputHistoryIndex === inputHistory.length
+          ? inputHistoryDraft
+          : inputHistory[inputHistoryIndex] ?? '',
+      );
+      inputResetToken.set(inputResetToken.get() + 1);
+    },
+    setMessageScrollOffset(value): void {
+      messageScrollOffset.set(Math.max(0, Math.floor(value)));
+      stickToBottom.set(false);
     },
     setStickToBottom(value): void {
       stickToBottom.set(value);
@@ -234,17 +236,17 @@ export function createViewModel(options: CreateViewModelOptions): ViewModel {
     setInputViewportRows(rows): void {
       inputViewportRows.set(Math.max(1, Math.min(6, Math.floor(rows))));
     },
+    async dispose(): Promise<void> {
+      if (disposed) return;
+      disposed = true;
+      unsubscribe();
+      await driver.dispose();
+    },
   };
 
-  vm.refreshHeader();
   return vm;
 }
 
-function assertNoPending(
-  pendingInput: unknown,
-  pendingConfirm: unknown,
-): void {
-  if (pendingInput || pendingConfirm) {
-    throw new Error('TUI input request already pending.');
-  }
+function pageKey(page: TuiPage): string {
+  return page.kind === 'hub' ? `hub:${page.mode}` : `session:${page.sessionId}`;
 }

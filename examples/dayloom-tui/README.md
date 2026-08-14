@@ -1,109 +1,52 @@
-# dayloom TUI example
+# Dayloom TUI example
 
-通过 `@dayloom/tui` 的全屏界面体验 `runGameShell`：从 shell 提示符进入 init / daily / play / settle，无需在多个 CLI 子命令之间切换。
+这是当前 `@dayloom/tui` + `@dayloom/core2` 的最小可运行示例。它连接一个已有的 Archive V2 World 和 Promptpile caller LLM 配置；示例不会创建或修改 World，也不包含 provider 或业务逻辑。
 
-布局为五行全屏：Header → MessageList → LoadingBar → TextInput → Footer。详见 [`packages/tui/README.md`](../../packages/tui/README.md)。
+## 前置条件
 
-## Prerequisites
+- Node.js 20+
+- 一个有效且处于 `planned` phase 的 Archive V2 World
+- 一个 Promptpile caller LLM TOML 配置
 
-- Node.js
-- 脚本会在 [monorepo 根目录](../../) 安装依赖并构建 `@dayloom/core`、`@dayloom/cli`、`@dayloom/tui`
-- **Quick 演示**无需 API key
-- **完整 AI 流程**需要 `DEEPSEEK_API_KEY` 与可用的 `promptpile-mcp`（或 MCP 网关）
-- **Windows** 建议使用 Windows Terminal，以获得更好的全屏 alt-screen 支持
+复制 [`llm.example.toml`](./llm.example.toml)，填写 provider 的 model、base URL 和凭证环境变量名，然后在环境中设置对应的 API key。不要把 secret 写入 TOML。
 
-从 `.env.example` 复制为 `.env`（仅 `run-tui.*` 需要）：
+## 启动
 
-```text
-DEEPSEEK_API_KEY=sk-...
-# PROMPTPILE_MCP_BASE_URL=http://127.0.0.1:8765
-# PROMPTPILE_MCP_TOKEN=...
+不传参数时，脚本默认使用当前示例目录下的 `world` 和 `llm.toml`：
+
+```bash
+./open-world.sh
 ```
 
-## 1. Quick TUI Smoke（无需 API key）
+```bat
+open-world.bat
+```
 
-创建空 World 骨架并在 TUI shell 中浏览界面（`--no-auto-start`，不会自动进入 init 会话）：
+脚本会在 `world` 目录不存在时自动创建，并在首次构建后初始化为最小的有效 Archive V2 World；在 `llm.toml` 不存在时，会从 `llm.example.toml` 自动复制一份。默认配置使用 DeepSeek，启动前需设置 `DEEPSEEK_API_KEY`；使用其他 provider 时再修改 `llm.toml`。
+也可以继续显式指定路径：
 
 macOS/Linux：
 
 ```bash
-./run-quick.sh
+./open-world.sh /absolute/path/to/world /absolute/path/to/llm.toml
 ```
 
 Windows：
 
 ```bat
-run-quick.bat
+open-world.bat C:\path\to\world C:\path\to\llm.toml
 ```
 
-退出 TUI 后脚本会验证 `output/world-quick`。在 shell 中输入 `/next` 或自然语言触发 quick init 即可落盘。
+也可以省略第二个参数，通过 `DAYLOOM_LLM_CONFIG` 提供配置路径。参数、环境变量和默认值的优先级依次为：命令行参数、`DAYLOOM_LLM_CONFIG`、示例目录下的 `llm.toml`。入口脚本会依次构建 `@dayloom/archive-protocol`、`@dayloom/core2` 和 `@dayloom/tui`，再启动当前 TUI。
 
-## 2. Full Game Shell（需要 API key）
+Session 支持自然语言多轮输入。使用 `/submit` 提交，使用 `/exit` 或 `/cancel` 取消并退出。
 
-使用相邻示例已创建的 World，在 TUI 中连续体验 daily → play → settle：
+## Windows resize smoke
 
-```text
-../dayloom-init-revise/output/world-interactive   # 源 World
-output/world-tui-interactive                      # 本示例副本（首次自动复制）
-```
-
-先创建源 World：
-
-```bash
-cd ../dayloom-init-revise
-./run-interactive.sh
-```
-
-再启动 TUI：
-
-macOS/Linux：
-
-```bash
-./run-tui.sh
-```
-
-Windows：
+在 Windows Terminal 或经典 Console Host 中运行：
 
 ```bat
-run-tui.bat
+verify-resize.bat C:\path\to\planned-world C:\path\to\llm.toml
 ```
 
-默认 `--lang zh`、`--keep-session`（结算服务保持会话）。启动后会根据 World 阶段自动推荐下一步（`--auto-start` 为默认行为）。
-
-### 输入快捷键
-
-| 操作 | 快捷键 |
-|------|--------|
-| 换行 | Enter |
-| 发送 | Ctrl+Enter |
-| 确认 | Y / Enter = 是，N = 否 |
-
-斜杠命令（`/status`、`/next`、`/revise` 等）仍可作为调试后备。
-
-## Reset
-
-删除本示例副本后重新从源 World 复制：
-
-```bash
-rm -rf output/world-tui-interactive
-```
-
-Windows：
-
-```bat
-rmdir /s /q output\world-tui-interactive
-```
-
-Quick 演示重置：
-
-```bash
-rm -rf output/world-quick
-```
-
-## 与 CLI 示例的关系
-
-| 示例 | 入口 | 说明 |
-|------|------|------|
-| `dayloom-init-revise` | `dayloom init` / `revise` | 创建源 World |
-| `dayloom-daily-play` | `dayloom daily` / `play` / `settle` | 分步 CLI 流程 |
-| `dayloom-tui` | `dayloom-tui <world>` | 统一 shell，同一界面贯穿全流程 |
+该脚本使用与标准入口相同的 World、LLM config、构建步骤和 TUI 启动契约，并将诊断日志写入本目录的 `.runtime\diagnostics`。resize checklist 是人工 smoke，不属于自动化测试。

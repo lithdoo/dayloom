@@ -4,7 +4,7 @@ import {
   createTranslator,
   type InputOptions,
   type SessionIO,
-} from '@dayloom/core';
+} from '@dayloom/core-old';
 import { askYesNo } from './ask-yes-no';
 import { withLoading } from './loading-spinner';
 import { readTerminalInput } from './terminal-input';

@@ -1,3 +1,3 @@
-output/
-.env
 .runtime/
+llm.toml
+world/

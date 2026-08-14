@@ -5,7 +5,7 @@ import {
   initWorldQuick,
   runInitInteractive,
   type Translator,
-} from '@dayloom/core';
+} from '@dayloom/core-old';
 import { createCliSessionIO } from '../session-io/cli-io';
 
 export function registerInitCommand(program: Command, t: Translator): void {

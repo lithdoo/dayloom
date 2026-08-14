@@ -1,0 +1,32 @@
+{
+  "name": "@dayloom/core2",
+  "version": "0.0.0",
+  "description": "Minimal Archive V2 Dayloom Play runtime.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "commonjs",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "package.json", "README.md"],
+  "scripts": {
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && tsc",
+    "guard": "node scripts/check-architecture.mjs",
+    "test": "npm run build && npm run guard && node scripts/run-tests.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@dayloom/archive-protocol": "0.0.0",
+    "@iarna/toml": "^2.2.5",
+    "ajv": "^8.17.1",
+    "promptpile": "0.1.0-beta.2",
+    "promptpile-compress": "0.1.0-beta.2",
+    "promptpile-react": "0.1.0-beta.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  }
+}

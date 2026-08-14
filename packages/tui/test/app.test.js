@@ -3,10 +3,19 @@ import test from 'node:test';
 
 import { isCtrlC } from '../dist/app.js';
 
-test('isCtrlC matches legacy control sequence and kitty-style ctrl+c', () => {
-  assert.equal(isCtrlC({ input: 'c', name: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: '\x03', name: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: 'c', ctrl: true }), true);
-  assert.equal(isCtrlC({ input: 'c', name: 'c', ctrl: false }), false);
-  assert.equal(isCtrlC({ input: 'a', name: 'a', ctrl: true }), false);
+function key(name, ctrl) {
+  return {
+    kind: 'key',
+    key: name,
+    modifiers: { ctrl, alt: false, shift: false, meta: false },
+    repeat: 1,
+    protocol: 'legacy-vt',
+  };
+}
+
+test('isCtrlC matches semantic ctrl+c key events only', () => {
+  assert.equal(isCtrlC(key('c', true)), true);
+  assert.equal(isCtrlC(key('c', false)), false);
+  assert.equal(isCtrlC(key('a', true)), false);
+  assert.equal(isCtrlC({ kind: 'text', text: 'c', protocol: 'legacy-vt' }), false);
 });

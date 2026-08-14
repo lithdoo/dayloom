@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { addLangOption, createTranslator, detectLocale } from '@dayloom/core';
+import { addLangOption, createTranslator, detectLocale } from '@dayloom/core-old';
 import { registerDailyCommand } from './daily';
 import { registerInitCommand } from './init';
 import { registerNextCommand } from './next';

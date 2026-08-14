@@ -1,57 +1,20 @@
-import type { Translator } from '@dayloom/core';
-import type { TuiMessageRole } from './view-model.js';
+import type { TuiMessageRole } from './message-history.js';
+import type { TuiSessionStatus, TuiWorldState } from './types.js';
+
+export function phaseLabel(phase: TuiWorldState['phase']): string {
+  return ({ idle: '空闲', planned: '已计划', 'awaiting-settle': '待结算' })[phase];
+}
+
+export function sessionKindLabel(): string { return '行动'; }
+
+export function sessionStatusLabel(status: TuiSessionStatus): string {
+  return ({ ready: '等待输入', running: 'AI 回复中', submitting: '提交中' })[status];
+}
 
 export function roleLabel(role: TuiMessageRole): string {
-  switch (role) {
-    case 'warn':
-      return 'WARN';
-    case 'error':
-      return 'ERR ';
-    case 'system':
-      return 'SYS ';
-    case 'output':
-      return 'OUT ';
-    default: {
-      const _exhaustive: never = role;
-      return String(_exhaustive);
-    }
-  }
+  return ({ user: 'YOU ', assistant: 'AI  ', system: 'SYS ', error: 'ERR ', warn: 'WARN' })[role];
 }
 
 export function roleColor(role: TuiMessageRole): string {
-  switch (role) {
-    case 'warn':
-      return 'yellow';
-    case 'error':
-      return 'red';
-    case 'system':
-      return 'cyan';
-    case 'output':
-      return 'white';
-    default: {
-      const _exhaustive: never = role;
-      return String(_exhaustive);
-    }
-  }
-}
-
-/** Platform-aware Textarea submit hint (Windows/Linux vs macOS Meta+Enter). */
-export function multilineInputHint(
-  t: Translator,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  return platform === 'darwin'
-    ? t('tui.input.multilineHint.darwin')
-    : t('tui.input.multilineHint');
-}
-
-export function footerHint(
-  t: Translator,
-  loading: string | null,
-  hint: string,
-): string {
-  if (loading) {
-    return t('tui.footer.loadingDisabled');
-  }
-  return hint || t('tui.footer.idle');
+  return ({ user: 'green', assistant: 'white', system: 'cyan', error: 'red', warn: 'yellow' })[role];
 }
