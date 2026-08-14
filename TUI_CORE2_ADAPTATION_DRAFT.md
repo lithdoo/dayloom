@@ -5,7 +5,8 @@
 > Target package: `@dayloom/tui`  
 > Backend target: `@dayloom/core2`  
 > Core2 accepted baseline before Gate 0: `bc74d3fcf3205695ef3386cfeef539beeb996a59`  
-> Gate 1 prerequisite: §5 的 Core2 `running` interrupt-cancel amendment 必须先落地、测试通过、同步回 `CORE2_FUNCTIONAL_COMPLETION_DRAFT.md`，并以该落地提交的新 SHA 取代上述 baseline 作为 Gate 1 的唯一 Core2 acceptance baseline。
+> Gate 0 accepted amendment: `64dc4c5521c320db79859b91c1c15f6fcbdab503`  
+> Gate 1 Core2 acceptance baseline: `64dc4c5521c320db79859b91c1c15f6fcbdab503`
 
 本文档取代此前所有 Play-only、兼容层式或功能残缺的 TUI → Core2 适配方案。
 
