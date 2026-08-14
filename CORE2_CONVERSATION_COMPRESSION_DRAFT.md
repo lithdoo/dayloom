@@ -1,11 +1,11 @@
 # Dayloom Core2 Conversation Compression 实现冻结
 
-> Status: Implementation Freeze / Upstream Blocked  
+> Status: Implementation Freeze / 可直接实施  
 > Date: 2026-08-14  
 > Target: `@dayloom/core2`  
-> Dependency baseline: `promptpile-compress@0.1.0-beta.1`  
-> Upstream gate: `promptpile-compress` 必须先实现 `packages/promptpile-compress/LIVE_TRIGGER_RECOMPRESSION_DRAFT.md`  
-> Implementation base: `445fcc8d61caec9250ac26ae1105394553f9229f`
+> Dependency: `promptpile-compress@0.1.0-beta.2`  
+> Verified upstream release commit: `lithdoo/promptpile@52bbc0dbdfce266ed4a22b4818d2a0bda927eb18`  
+> Implementation base: `aef21dde3abfc1e7a98e1739b77e4bab80f48b8b`
 
 ## 1. 目标
 
@@ -20,7 +20,7 @@ writable Promptpile Conversation
         ↓
 append current user/application turn
         ↓
-Promptpile Compress live-trigger lifecycle
+promptpile-compress live-trigger lifecycle
         ↓
 validated semantic summary + recent turns
         ↓
@@ -53,11 +53,12 @@ Promptpile
 → Conversation artifact I/O
 → provider/profile/model/API completion semantics
 
-Promptpile Compress
-→ live Conversation trigger 判断
-→ compression planning
+promptpile-compress
+→ current live Conversation trigger 判断
+→ compression planning / decision
+→ lifecycle inspection / recovery
 → lifecycle lock
-→ archive / restore / recovery
+→ archive / restore / recompress
 → token estimation
 → semantic-summary document validation/rendering
 
@@ -77,17 +78,17 @@ Consumer / TUI
 → 不知道 compression 存在
 ```
 
-Core2 不解析 Promptpile Compress archive 格式，不自行扫描 live token、不自行判断 archive 是否存在、不自行 restore/recompress。
+Core2 不解析 promptpile-compress archive 格式，不自行扫描 live token、不自行判断 archive 是否存在、不自行 restore/recompress。
 
-`runCompressionBeforeCompletion()` 是唯一 compression lifecycle orchestrator。Core2 production code 不组合 `compressDirectory()` + `restoreArchivedTurns()` 自建第二套流程。
+`runCompressionBeforeCompletion()` 是唯一 production compression lifecycle orchestrator。Core2 production code 不组合 `compressDirectory()` + `restoreArchivedTurns()` 自建第二套流程。
 
-## 3. Upstream implementation gate
+## 3. Upstream live-trigger contract 已满足
 
-当前 `promptpile-compress@0.1.0-beta.1` 在已有 archive 时会先 restore 完整历史，再做 threshold 判断；这会导致第一次 compression 后的后续 completion 反复 full restore + semantic summary。
+本 Freeze 之前阻塞于 `promptpile-compress@0.1.0-beta.1` 的 restore-first automatic trigger 语义。
 
-Core2 不在自身绕过这个问题。
+该阻塞已由 `promptpile-compress@0.1.0-beta.2` 关闭。
 
-实施 Core2 compression 前，`promptpile-compress` 必须先满足：
+beta.2 的 automatic orchestrator 已冻结为：
 
 ```text
 trigger basis
@@ -97,39 +98,75 @@ summary source after trigger
 = restored original Conversation
 ```
 
-目标行为：
+production 行为：
 
 ```text
-compact live < threshold
-→ 不 restore
+acquire lifecycle ownership
+→ inspect authoritative current lifecycle state
+→ inspect current live Conversation
+→ decide from current live tokens
+
+healthy compact live < threshold
+→ 不 restore existing archive
 → 不调用 semantic provider
+→ 不修改 Conversation/archive
+→ release lock
 → completion
 
-compact live >= threshold
-→ exclusive lifecycle
+healthy compact live >= threshold
 → restore previous archive
-→ remove previous live summary
-→ fresh summary from original history
+→ remove previous live summary through restore lifecycle
+→ obtain full original Conversation
+→ fresh selection
+→ fresh semantic summary from original turns
 → recompress
 → release lock
 → completion
 ```
 
-该语义以 upstream 文档为准：
+因此 lifecycle 具有以下性质：
+
+```text
+summary + recent turns
+→ 继续增长
+→ 未达到 threshold 时不重复 summary
+
+再次达到 threshold
+→ restore originals
+→ fresh summary from originals + newer original turns
+```
+
+不会形成：
+
+```text
+summary1 + new turns → summary2
+```
+
+而是：
+
+```text
+original turns 0..N → summary1
+original turns 0..M → summary2
+```
+
+所以同时满足：
+
+- compact steady state 不反复 full-history summarize；
+- recompression 仍基于原始 history；
+- 不产生 summary-of-summary 漂移。
+
+`promptpile-compress` 的 authoritative lifecycle inspection / recovery 仍优先于 healthy-state skip；staging、invalid archive state、missing-summary recovery 等不能因为 live token 很小而被跳过。
+
+Core2 不复制 beta.2 的 `CompressionDecisionReport` 或 lifecycle inspection 逻辑，只消费 public orchestrator result。
+
+历史 upstream 设计说明仍可参考：
 
 ```text
 lithdoo/promptpile
 packages/promptpile-compress/LIVE_TRIGGER_RECOMPRESSION_DRAFT.md
 ```
 
-Core2 的 `threshold = 32_000` 只有在上述 live-trigger contract 落地后才具有本冻结文档所声明的语义。
-
-因此：
-
-- 当前 Freeze 的 Core2 设计已定；
-- 当前实现被 upstream contract 阻塞；
-- upstream 落地并发布后，Step 0 必须把 dependency pin 更新为第一个满足该 contract 的确切版本；
-- 不允许在 Core2 增加 live-token scanner 或 archive-aware shortcut 作为临时补丁。
+但从本 Freeze 起，implementation dependency 以已发布的 `0.1.0-beta.2` public contract 为准。
 
 ## 4. Workspace authority
 
@@ -176,21 +213,21 @@ compression/
 = 不进入 compression lifecycle
 ```
 
-`promptpile-compress` 在 `conversation/` 内创建的 summary/archive/staging/recovery/lock artifacts 全部由 Promptpile Compress ownership 管理。Core2 不依赖其文件名或目录布局。
+`promptpile-compress` 在 `conversation/` 内创建的 summary/archive/staging/recovery/lock artifacts 全部由 promptpile-compress ownership 管理。Core2 不依赖其文件名或目录布局。
 
 ## 5. Dependency 与 architecture guard
 
-upstream live-trigger contract 发布后，`packages/core2/package.json` 增加其**确切发布版本**：
+`packages/core2/package.json` 增加精确版本：
 
 ```json
 {
   "dependencies": {
-    "promptpile-compress": "<first-version-with-live-trigger-contract>"
+    "promptpile-compress": "0.1.0-beta.2"
   }
 }
 ```
 
-在版本发布前不得把当前 `0.1.0-beta.1` 当作已满足本 Freeze 的 implementation dependency。
+不得使用 range 替代该 Freeze pin。
 
 production code 只允许从 package public root import：
 
@@ -214,9 +251,15 @@ promptpile-compress/dist/*
 
 Core2 public root 不 re-export `promptpile-compress` 类型或函数。
 
+Core2 不依赖：
+
+- `CompressionDecisionReport` 的内部决策字段来做 application legality；
+- archive/staging/live-summary path vocabulary；
+- promptpile-compress private inspection helpers。
+
 ## 6. 为什么必须使用 semantic summary
 
-Promptpile Compress 默认 `archive-pointer` summary 只声明历史已归档；原文读取依赖 caller 提供额外 read-only consumer。
+promptpile-compress 默认 `archive-pointer` summary 只声明历史已归档；原文读取依赖 caller 提供额外 read-only consumer。
 
 Core2 v1 不向 React 开放 archive retrieval tool，因此：
 
@@ -278,12 +321,12 @@ export const CORE2_COMPRESSION_POLICY = {
 - `strategy = sliding-window`；
 - `heuristicTokenizer`：显式 deterministic fallback；
 - 不启用 `tiktoken`；
-- 不使用 Promptpile Compress 默认 `modelContextTokens = 128000`；
+- 不使用 promptpile-compress 默认 `modelContextTokens = 128000`；
 - 不从 `llmConfigPath` 推断模型 context window；
 - 不向 `CreateDayloomCoreOptions` 暴露 compression threshold/budget；
 - 不读取环境变量控制 compression policy。
 
-真正 recompression 时仍由 Promptpile Compress restore 原历史后生成 fresh semantic summary，因此不会 summary 套 summary。
+真正 recompression 时仍由 promptpile-compress restore 原历史后生成 fresh semantic summary，因此不会 summary 套 summary。
 
 ## 8. Semantic summary provider identity
 
@@ -400,11 +443,11 @@ Use empty arrays for sections with nothing worth preserving.
 At least one sourced item must be present.
 ```
 
-Promptpile Compress owns normative semantic-summary schema/source-index/output-budget validation。Core2 不复制 validator。
+promptpile-compress owns normative semantic-summary schema/source-index/output-budget validation。Core2 不复制 validator。
 
 ## 11. Writable semantic summary 的 authority
 
-Promptpile Compress 会把 semantic summary 写成 writable Conversation 中的 live `[idx]system.md`。
+promptpile-compress 会把 semantic summary 写成 writable Conversation 中的 live `[idx]system.md`。
 
 Core2 必须在 `THOUGHT_PROMPT`、`SEND_FINAL_PROMPT`、`SUBMIT_FINAL_PROMPT` 中追加同一段固定 authority note：
 
@@ -426,7 +469,7 @@ Core2 不解析 summary 内容来决定 World/business legality。
 
 ## 12. Summary request lifecycle
 
-每次 `SemanticSummaryProvider.summarize(request, signal)` 真正被 Promptpile Compress 调用时：
+每次 `SemanticSummaryProvider.summarize(request, signal)` 真正被 promptpile-compress 调用时：
 
 ```text
 compression/requests/
@@ -527,7 +570,9 @@ Core dispose kills child
 
 > `runCompressedCompletion()` settle 时，不得残留由本次 semantic provider 启动但仍未结束的 Promptpile child，也不得残留本次 request directory cleanup task。
 
-原因：Promptpile Compress 的 timeout 可能先通过 `AbortSignal` 结束 lifecycle wait，而 concrete provider 的 child `close` / `finally` cleanup 稍后才完成。Core2 必须显式 drain 自己拥有的 concrete provider task。
+`promptpile-compress@0.1.0-beta.2` 的 semantic-summary timeout 仍以 `AbortSignal` + timeout race 结束 lifecycle wait；它不替 concrete provider 保证 child `close` 与 caller-owned temporary workspace cleanup 已完成。
+
+因此该收尾仍属于 Core2 concrete provider ownership。
 
 ### 13.1 Abort 规则
 
@@ -556,12 +601,6 @@ Core2 继续只维护：
 activeChild: ChildProcess | null
 ```
 
-但不再使用无身份的：
-
-```ts
-onActiveChild(child | null)
-```
-
 compression helper 固定接收：
 
 ```ts
@@ -584,6 +623,12 @@ private childEnded(child: ChildProcess): void {
 ```
 
 因此旧 child 的迟到 close 永远不能清掉后来 child 的 ownership。
+
+禁止退回无身份的：
+
+```ts
+onActiveChild(child | null)
+```
 
 不新增 child registry、task manager、AbortController registry。
 
@@ -760,7 +805,7 @@ missing report.error
      ?? "Conversation compression lifecycle failed.")
 ```
 
-compression report code 不进入 public API。
+compression report/version/decision code 不进入 public API。
 
 `retryable` 不产生 retry；Core2 v1 没有 retry state machine。
 
@@ -836,9 +881,9 @@ ready
 时序约束：
 
 1. 当前 user turn 必须先 append；
-2. current live Conversation 才进入 upstream live trigger；
+2. current live Conversation 才进入 beta.2 lock-held live trigger；
 3. compact live below threshold 时不得 restore / semantic summarize；
-4. threshold reached 时 upstream restore 原历史并 fresh summarize；
+4. threshold reached 时 promptpile-compress restore 原历史并 fresh summarize；
 5. summary request/output 永远 private；
 6. compression lifecycle lock 释放后才执行 completion callback；
 7. React child spawn 只能发生在 completion callback 内；
@@ -875,9 +920,9 @@ ready
 
 固定约束：
 
-- submit marker 在 live-trigger planning 之前 append；
+- submit marker 在 live-trigger inspection 之前 append；
 - compact live below threshold 时不因为已有 archive 而强制 recompress；
-- triggered summary provider 只总结 upstream restore/select 后的原始历史 turns；
+- triggered summary provider 只总结 promptpile-compress restore/select 后的原始历史 turns；
 - submit Final JSON 永远由 React submit phase 产生；
 - summary stdout 不成为 submit Final；
 - compression failure 时 publication 不开始；
@@ -905,7 +950,7 @@ compression 或 React completion 失败
 - resumable Session state；
 - user-facing recovery command。
 
-Promptpile Compress recovery 只属于它自己的 Conversation lifecycle。
+promptpile-compress recovery 只属于它自己的 Conversation lifecycle。
 
 ## 21. Public API 完全不变
 
@@ -974,14 +1019,22 @@ compressionLifecycle?: typeof runCompressionBeforeCompletion
 必须覆盖：
 
 ```text
-dependency / upstream gate
---------------------------
-core2-pins-promptpile-compress-version-with-live-trigger-contract
+dependency / architecture
+-------------------------
+core2-pins-promptpile-compress-0.1.0-beta.2
 core2-does-not-implement-live-token-scanner
 core2-does-not-inspect-compression-archive-layout
 core2-compression-imports-public-root-only
 core2-guard-rejects-promptpile-compress-deep-import
 core2-public-api-has-no-compression-controls
+
+upstream live-trigger integration
+---------------------------------
+core2-healthy-compacted-below-threshold-does-not-call-semantic-provider
+core2-healthy-compacted-below-threshold-does-not-restore-archive
+core2-triggered-compacted-conversation-restores-originals-before-summary
+core2-triggered-recompression-does-not-feed-previous-summary-to-provider
+core2-triggered-recompression-calls-semantic-provider-once
 
 policy
 ------
@@ -1010,8 +1063,6 @@ semantic provider
 -----------------
 core2-summary-request-is-appended-via-promptpile-cli
 core2-summary-request-serializes-semantic-request-json
-core2-below-live-threshold-does-not-call-semantic-provider
-core2-triggered-recompression-calls-semantic-provider-once
 core2-summary-json-is-private
 core2-summary-rejects-empty-malformed-or-nonobject-json
 core2-summary-provider-honors-abort
@@ -1080,11 +1131,9 @@ old child end callback arrives after another child became active
 
 ## 25. 实施顺序
 
-### Step 0 — upstream / dependency / guard
+### Step 0 — dependency / guard
 
-- upstream 实现 `LIVE_TRIGGER_RECOMPRESSION_DRAFT.md`；
-- 发布满足 contract 的 promptpile-compress 版本；
-- Core2 pin 该确切版本；
+- pin `promptpile-compress@0.1.0-beta.2`；
 - 更新 lockfile；
 - guard 禁止 deep import；
 - public API snapshot 保持不变。
@@ -1136,7 +1185,7 @@ old child end callback arrives after another child became active
 ### Step 6 — tests / hardening
 
 - layering byte invariant；
-- live-trigger integration；
+- beta.2 live-trigger integration；
 - summary config/argv；
 - timeout drain；
 - identity-safe activeChild；
@@ -1149,34 +1198,36 @@ old child end callback arrives after another child became active
 只有同时满足以下条件，才认为 Core2 compression 已闭环：
 
 ```text
-1. upstream automatic orchestrator 以 current compact live Conversation 判断 trigger。
-2. below threshold 且 lifecycle healthy 时不 restore existing archive、不调用 semantic provider。
-3. threshold reached 时 restore 原历史并 fresh summarize，不 summary 套 summary。
-4. compression 只作用于 session conversation/。
-5. immutable context/ byte-for-byte 不变。
-6. react/ 与 compression/ 永远不进入 compression lifecycle。
-7. live Conversation 使用 Promptpile Compress validated semantic summary。
-8. semantic provider 使用 Promptpile public CLI 和 caller provider/profile。
-9. Core2 不实现 provider HTTP client。
-10. Core2 不推断 model context window。
-11. semantic summary request/output 完全 private。
-12. semantic summary artifacts 明确降格为 untrusted historical data。
-13. lifecycle lock 释放后才开始 React completion。
-14. timeout/abort 后 runCompressedCompletion settle 前 provider child 与 request cleanup 已 drain。
-15. activeChild clear 必须 identity-safe。
-16. React Final streaming 行为不退化。
-17. send / submit 共用同一个 runCompressedCompletion boundary。
-18. compression pre-completion failure = CONVERSATION_FAILED。
-19. compression fixed-policy invalidity = INTERNAL_ERROR。
-20. React completion failure = AGENT_FAILED，并保留原 React error message。
-21. send / submit 不把 CoreOperationError 重新压成 AGENT_FAILED。
-22. compression failure 时 Session terminal、World unchanged。
-23. compression failure 时 submit publication 不开始。
-24. Core2 public API 无 compression-specific surface。
-25. TUI 零修改。
-26. Core2 不新增 compression lifecycle DI/provider/backend abstraction。
-27. 无 scheduler / retry queue / maintenance framework / archive reader tool。
-28. 所有 acceptance tests 通过。
+1. dependency 精确 pin promptpile-compress@0.1.0-beta.2。
+2. automatic orchestrator 以 current compact live Conversation 判断 trigger。
+3. below threshold 且 lifecycle healthy 时不 restore existing archive、不调用 semantic provider。
+4. threshold reached 时 restore 原历史并 fresh summarize，不 summary 套 summary。
+5. Core2 不自行扫描 live token、archive 或 staging 来复制上述 decision。
+6. compression 只作用于 session conversation/。
+7. immutable context/ byte-for-byte 不变。
+8. react/ 与 compression/ 永远不进入 compression lifecycle。
+9. live Conversation 使用 promptpile-compress validated semantic summary。
+10. semantic provider 使用 Promptpile public CLI 和 caller provider/profile。
+11. Core2 不实现 provider HTTP client。
+12. Core2 不推断 model context window。
+13. semantic summary request/output 完全 private。
+14. semantic summary artifacts 明确降格为 untrusted historical data。
+15. lifecycle lock 释放后才开始 React completion。
+16. timeout/abort 后 runCompressedCompletion settle 前 provider child 与 request cleanup 已 drain。
+17. activeChild clear 必须 identity-safe。
+18. React Final streaming 行为不退化。
+19. send / submit 共用同一个 runCompressedCompletion boundary。
+20. compression pre-completion failure = CONVERSATION_FAILED。
+21. compression fixed-policy invalidity = INTERNAL_ERROR。
+22. React completion failure = AGENT_FAILED，并保留原 React error message。
+23. send / submit 不把 CoreOperationError 重新压成 AGENT_FAILED。
+24. compression failure 时 Session terminal、World unchanged。
+25. compression failure 时 submit publication 不开始。
+26. Core2 public API 无 compression-specific surface。
+27. TUI 零修改。
+28. Core2 不新增 compression lifecycle DI/provider/backend abstraction。
+29. 无 scheduler / retry queue / maintenance framework / archive reader tool。
+30. 所有 acceptance tests 通过。
 ```
 
 ## 27. 最终目标形态
@@ -1200,40 +1251,40 @@ conversation/ (only writable layer)
 runCompressedCompletion
         │
         ▼
-runCompressionBeforeCompletion
+runCompressionBeforeCompletion  [promptpile-compress@0.1.0-beta.2]
         │
-        ├─ compact live < threshold ─────────────────┐
-        │                                            │
-        └─ compact live >= threshold                 │
-              │                                      │
-              ▼                                      │
-        restore original history                     │
-              │                                      │
-              ▼                                      │
-      Core2 semantic provider                        │
-              │                                      │
-      Promptpile public CLI                          │
-              │                                      │
-      validated fresh semantic summary               │
-              │                                      │
-      lifecycle lock released                        │
-              └──────────────────────────────────────┤
-                                                     ▼
-                                              Promptpile React
-                                                     │
-                                          Final delta / Final JSON
-                                                     │
-                               ┌─────────────────────┴─────────────────────┐
-                               ▼                                           ▼
-                            send                                        submit
-                               │                                           │
-                         ready Session                              PlaySubmissionV1
-                                                                           │
-                                                                           ▼
-                                                                    Archive publication
-                                                                           │
-                                                                           ▼
-                                                                    Published World
+        ├─ healthy compact live < threshold ───────────────┐
+        │                                                  │
+        └─ healthy compact live >= threshold               │
+              │                                            │
+              ▼                                            │
+        restore original history                           │
+              │                                            │
+              ▼                                            │
+      Core2 semantic provider                              │
+              │                                            │
+      Promptpile public CLI                                │
+              │                                            │
+      validated fresh semantic summary                     │
+              │                                            │
+      lifecycle lock released                              │
+              └────────────────────────────────────────────┤
+                                                           ▼
+                                                    Promptpile React
+                                                           │
+                                                Final delta / Final JSON
+                                                           │
+                                     ┌─────────────────────┴─────────────────────┐
+                                     ▼                                           ▼
+                                  send                                        submit
+                                     │                                           │
+                               ready Session                              PlaySubmissionV1
+                                                                                 │
+                                                                                 ▼
+                                                                          Archive publication
+                                                                                 │
+                                                                                 ▼
+                                                                          Published World
 ```
 
 核心原则：
