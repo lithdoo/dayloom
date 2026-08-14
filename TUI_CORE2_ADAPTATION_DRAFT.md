@@ -4,8 +4,10 @@
 > Date: 2026-08-14  
 > Target package: `@dayloom/tui`  
 > Backend target: `@dayloom/core2`  
-> Core2 accepted baseline before Gate 0: `bc74d3fcf3205695ef3386cfeef539beeb996a59`  
-> Gate 0 accepted amendment: `64dc4c5521c320db79859b91c1c15f6fcbdab503`  
+> Core2 accepted baseline before Gate 0: `bc74d3fcf3205695ef3386cfeef539beeb996a59`
+>
+> Gate 0 accepted amendment: `64dc4c5521c320db79859b91c1c15f6fcbdab503`
+>
 > Gate 1 Core2 acceptance baseline: `64dc4c5521c320db79859b91c1c15f6fcbdab503`
 
 本文档取代此前所有 Play-only、兼容层式或功能残缺的 TUI → Core2 适配方案。
