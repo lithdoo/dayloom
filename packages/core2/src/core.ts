@@ -51,6 +51,8 @@ class DayloomCoreImpl implements DayloomCore {
   private disposed = false;
   private activeChild: ChildProcess | null = null;
   private currentOperationDone: Promise<void> | null = null;
+  private cancelRequestedSessionId: string | null = null;
+  private interruptCancelPromise: Promise<CoreResult> | null = null;
   private disposal: Promise<void> | null = null;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   constructor(
@@ -60,27 +62,30 @@ class DayloomCoreImpl implements DayloomCore {
     private readonly mutationPublisher: typeof publishMutation, private readonly remove: typeof rm,
     private readonly classifier: typeof classifyWorld,
   ) { this.world = classified.published; this.worldState = classified.state; }
-  getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed); }
+  getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed, this.cancelRequestedSessionId); }
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: CoreEvent) { if (this.disposed) return; for (const listener of [...this.listeners]) try { listener(event); } catch { /* listener isolation */ } }
   private changed() { this.emit({ type: 'state.changed', state: this.getState() }); }
-  private childStarted(child: ChildProcess) { this.activeChild = child; }
+  private childStarted(child: ChildProcess, sessionId?: string) {
+    this.activeChild = child;
+    if (sessionId !== undefined && this.cancelRequestedSessionId === sessionId) child.kill();
+  }
   private childEnded(child: ChildProcess) { if (this.activeChild === child) this.activeChild = null; }
-  private async appendConversation(directory: string, content: string): Promise<void> {
+  private async appendConversation(directory: string, content: string, sessionId?: string): Promise<void> {
     let child: ChildProcess | null = null;
-    try { await appendUser(this.runner, this.boundaries.promptpileBin, directory, content, (started) => { child = started; this.childStarted(started); }); }
+    try { await appendUser(this.runner, this.boundaries.promptpileBin, directory, content, (started) => { child = started; this.childStarted(started, sessionId); }); }
     finally { if (child) this.childEnded(child); }
   }
   private compressAndComplete<T>(session: CoreSession, completion: () => Promise<T>): Promise<T> {
     return runCompressedCompletion({
       runner: this.runner, promptpileBin: this.boundaries.promptpileBin, conversationDir: session.conversationDir,
       requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
-      onChildStart: (child) => this.childStarted(child), onChildEnd: (child) => this.childEnded(child), completion,
+      onChildStart: (child) => this.childStarted(child, session.id), onChildEnd: (child) => this.childEnded(child), completion,
     });
   }
   private async runSessionReact(session: CoreSession, config: string, onDelta?: (delta: string) => void): Promise<string> {
     let child: ChildProcess | null = null;
-    try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, onChild: (started) => { child = started; this.childStarted(started); }, onDelta }); }
+    try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, onChild: (started) => { child = started; this.childStarted(started, session.id); }, onDelta }); }
     finally { if (child) this.childEnded(child); }
   }
   private operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
@@ -143,12 +148,22 @@ class DayloomCoreImpl implements DayloomCore {
     const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'running' }; this.changed();
     try {
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      try { await this.appendConversation(session.conversationDir, text); }
-      catch (error) { throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error)); }
-      await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig, (delta) => this.emit({ type: 'output.delta', sessionId: session.id, text: delta })));
+      try { await this.appendConversation(session.conversationDir, text, session.id); }
+      catch (error) {
+        if (this.isCancelRequested(session)) return this.cancelledResult();
+        throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error));
+      }
+      if (this.isCancelRequested(session)) return this.cancelledResult();
+      await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig, (delta) => {
+        if (!this.isCancelRequested(session)) this.emit({ type: 'output.delta', sessionId: session.id, text: delta });
+      }));
+      if (this.isCancelRequested(session)) return this.cancelledResult();
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
       this.sessionStatus = { id: session.id, kind: session.kind, status: 'ready' }; return success();
-    } catch (error) { await this.terminalize(session); throw error; }
+    } catch (error) {
+      if (this.isCancelRequested(session)) return this.cancelledResult();
+      await this.terminalize(session); throw error;
+    }
   }); }
   submit() { return this.operation(async () => {
     if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
@@ -165,11 +180,21 @@ class DayloomCoreImpl implements DayloomCore {
       return success();
     } catch (error) { await this.terminalize(session); throw error; }
   }); }
-  cancel() { return this.operation(async () => {
-    if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
-    const cleanupError = await this.terminalize(this.session);
-    return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
-  }); }
+  cancel(): Promise<CoreResult> {
+    if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
+    const session = this.session;
+    if (session && this.cancelRequestedSessionId === session.id && this.interruptCancelPromise) {
+      return this.interruptCancelPromise;
+    }
+    if (session && this.sessionStatus?.id === session.id && this.sessionStatus.status === 'running') {
+      return this.beginInterruptCancel(session);
+    }
+    return this.operation(async () => {
+      if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
+      const cleanupError = await this.terminalize(this.session);
+      return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
+    });
+  }
   settle() { return this.operation(async () => {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
     const base = this.world, day = base.commit.control.day;
@@ -210,6 +235,28 @@ class DayloomCoreImpl implements DayloomCore {
     return this.worldState.phase === 'planned' && kind === 'play';
   }
   private installPublished(world: PublishedWorld) { this.world = world; this.worldState = world.view; }
+  private isCancelRequested(session: CoreSession): boolean { return this.cancelRequestedSessionId === session.id; }
+  private cancelledResult(): CoreResult { return failure('CANCELLED', 'The active Session operation was cancelled.'); }
+  private beginInterruptCancel(session: CoreSession): Promise<CoreResult> {
+    this.cancelRequestedSessionId = session.id;
+    const operation = this.currentOperationDone;
+    let cancelPromise!: Promise<CoreResult>;
+    cancelPromise = (async () => {
+      try {
+        if (operation) await operation;
+        const cleanupError = await this.terminalize(session);
+        return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
+      } finally {
+        if (this.cancelRequestedSessionId === session.id) this.cancelRequestedSessionId = null;
+        if (this.interruptCancelPromise === cancelPromise) this.interruptCancelPromise = null;
+        this.changed();
+      }
+    })();
+    this.interruptCancelPromise = cancelPromise;
+    this.changed();
+    this.activeChild?.kill();
+    return cancelPromise;
+  }
   private async terminalize(session: CoreSession): Promise<Error | null> {
     if (this.session === session) { this.session = null; this.sessionStatus = null; this.changed(); }
     return this.cleanupSessionRoot(session.root);
@@ -221,7 +268,14 @@ class DayloomCoreImpl implements DayloomCore {
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.disposed = true; this.listeners.clear(); this.activeChild?.kill();
-    this.disposal = (async () => { const operation = this.currentOperationDone; if (operation) await operation; this.activeChild = null; this.session = null; this.sessionStatus = null; await this.remove(this.runtimeRoot, { recursive: true, force: true }); })();
+    const interruptCancel = this.interruptCancelPromise;
+    this.disposal = (async () => {
+      const operation = this.currentOperationDone;
+      if (operation) await operation;
+      if (interruptCancel) await interruptCancel;
+      this.activeChild = null; this.session = null; this.sessionStatus = null;
+      await this.remove(this.runtimeRoot, { recursive: true, force: true });
+    })();
     return this.disposal;
   }
 }

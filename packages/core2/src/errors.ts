@@ -1,6 +1,7 @@
 export type CoreErrorCode =
   | 'NOT_AVAILABLE' | 'BUSY' | 'INVALID_INPUT' | 'CONVERSATION_FAILED'
-  | 'AGENT_FAILED' | 'SUBMISSION_INVALID' | 'WORLD_CONFLICT' | 'WORLD_INVALID' | 'DISPOSED' | 'INTERNAL_ERROR';
+  | 'AGENT_FAILED' | 'SUBMISSION_INVALID' | 'WORLD_CONFLICT' | 'WORLD_INVALID'
+  | 'CANCELLED' | 'DISPOSED' | 'INTERNAL_ERROR';
 export interface CoreError { code: CoreErrorCode; message: string }
 export type CoreResult = { ok: true } | { ok: false; error: CoreError };
 export type CoreInitializationErrorCode = 'INVALID_OPTIONS' | 'INTERNAL_ERROR';

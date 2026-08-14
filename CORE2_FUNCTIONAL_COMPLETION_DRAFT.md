@@ -748,7 +748,12 @@ ready
   submit = true
   cancel = true
 
-running / submitting
+running
+  send = false
+  submit = false
+  cancel = true
+
+submitting
   send = false
   submit = false
   cancel = false
@@ -756,7 +761,7 @@ running / submitting
 
 Disposed：全部 capability 为 false。
 
-Core2 不支持运行中的 cancel。
+同一 running Session 已登记 interrupt intent 后，`cancel = false`。running cancel 是唯一允许绕过普通 `BUSY` admission 的 public path；它只终止当前同一 Session 的 active send，不建立通用并发、queue 或 scheduler。
 
 ---
 
@@ -774,9 +779,12 @@ ready
   ├─ send()   → running → success → ready
   ├─ submit() → submitting → terminal
   └─ cancel() → terminal
+
+running
+  └─ cancel() → interrupt current send → terminal
 ```
 
-同一 Core instance 上任何第二个 mutation 在已有 mutation in flight 时返回 `BUSY`。无 queue / wait / retry。
+除同一 running Session 的 interrupt cancel 外，同一 Core instance 上任何第二个 mutation 在已有 mutation in flight 时返回 `BUSY`。无 queue / wait / retry。
 
 跨 Core instance World conflict 由 publication lock + pinned-base recheck 处理。
 
@@ -1393,7 +1401,7 @@ Publication success → new Published World。
 
 ### cancel()
 
-仅 ready 可用：
+ready：
 
 ```text
 terminalize Session
@@ -1403,6 +1411,21 @@ terminalize Session
 ```
 
 cleanup attempt 完成后 cancel Promise 才 settle；即使 cleanup 失败，Session 也保持 terminal 且不再引用 residue。
+
+running：
+
+```text
+原子登记当前 Session 的 interrupt intent
+→ capability cancel=false
+→ 停止公开该 Session 的后续 output.delta
+→ kill 当前 active child，并立即 kill intent 后启动的同 Session child
+→ 等待原 send lifecycle 与 provider drain 完整 unwind
+→ send 返回 CANCELLED，且不自行 terminalize
+→ cancel 独占 terminalize 与一次 workspace cleanup attempt
+→ World unchanged
+```
+
+intent 登记是唯一 linearization point。从该点起，即使 child 自然完成或 completion 已计算完成，同一 send 也不得返回成功。重复 `cancel()` join 同一 `interruptCancelPromise`，不得重复登记 intent、terminalize 或 cleanup。terminal outcome 与 cleanup attempt 完成后，interrupt state 必须在 `finally` 清零，不得影响后续 Session。
 
 不保留 failed/cancelled/completed Session 供 retry。
 
@@ -1488,6 +1511,7 @@ send() 开始 React 前 → running state 已发布
 send success Promise settle 前 → ready state 已发布
 submit 开始 React 前 → submitting state 已发布
 submit/cancel/failure Promise settle 前 → terminal state 已发布
+running cancel intent 成立后 → 同一 send 只能 settle 为 CANCELLED
 stable mutation Promise settle 前 → new World state 或 unchanged failure state 已发布
 ```
 
@@ -1511,6 +1535,7 @@ export type CoreErrorCode =
   | 'SUBMISSION_INVALID'
   | 'WORLD_CONFLICT'
   | 'WORLD_INVALID'
+  | 'CANCELLED'
   | 'DISPOSED'
   | 'INTERNAL_ERROR';
 ```
@@ -1523,6 +1548,7 @@ export type CoreErrorCode =
 用户 text 非 string / trim 后为空          → INVALID_INPUT
 Promptpile append/compression failure      → CONVERSATION_FAILED
 React completion/event-stream failure      → AGENT_FAILED
+成功登记的 running cancel 中断当前 send     → CANCELLED
 submit JSON / business relation invalid    → SUBMISSION_INVALID
 publication lock 已占用 / pinned base改变  → WORLD_CONFLICT
 operation 中 visible World 已损坏          → WORLD_INVALID
@@ -1846,6 +1872,13 @@ submit publication success
 
 cancel ready
   → terminal Session
+  → Published World unchanged
+  → await one complete Session workspace cleanup attempt before Promise settles
+
+cancel running
+  → interrupt intent wins the current send completion race
+  → interrupted send returns CANCELLED and never terminalizes independently
+  → cancel terminalizes exactly once after send/provider unwind
   → Published World unchanged
   → await one complete Session workspace cleanup attempt before Promise settles
 ```
@@ -2249,6 +2282,24 @@ core2-visible-world-damage-maps-world-invalid-not-conflict
 core2-concurrent-init-conflict-refreshes-winning-world
 core2-stale-play-conflict-refreshes-latest-world
 core2-stale-child-end-cannot-clear-new-child
+core2-running-session-exposes-cancel-capability
+core2-running-cancel-linearizes-once
+core2-running-cancel-intent-wins-send-completion-race
+core2-running-cancel-kills-active-child
+core2-running-cancel-kills-child-started-after-intent
+core2-running-cancel-stops-future-output-delta
+core2-interrupted-send-returns-cancelled
+core2-interrupted-send-never-restores-ready
+core2-interrupted-send-does-not-terminalize-independently
+core2-running-cancel-leaves-world-unchanged
+core2-running-cancel-terminalizes-session-once
+core2-running-cancel-awaits-provider-drain
+core2-running-cancel-cleanup-failure-does-not-resurrect-session
+core2-repeated-running-cancel-joins-one-terminal-intent
+core2-interrupt-state-clears-after-terminal-outcome
+core2-new-session-is-not-affected-by-old-cancel-state
+core2-submitting-cancel-remains-unavailable
+core2-dispose-awaits-pending-interrupt-cancel
 ```
 
 ### Publication primitive
@@ -2299,7 +2350,7 @@ idle          → Planning + Revise discoverable
 planned       → Play + Abandon discoverable
 awaiting      → Settle + Abandon discoverable
 session ready → send + submit + cancel
-running       → loading projectable from status
+running       → loading + interrupt cancel projectable from status/capability
 submitting    → loading projectable from status
 send          → output.delta available
 ```
@@ -2350,8 +2401,10 @@ Core2 只有全部满足才算完整：
 38. 每个合法 stable state都有合法下一步；invalid是明确 fail-closed diagnostic terminal，不存在意外业务死路。
 39. Core2 package metadata不再宣称 Play-only runtime。
 40. Core2 tests在 Linux/Windows × Node 20/22全绿。
-41. 只有以上全部满足，才允许重新迁移 TUI。
-42. 后续 TUI migration以 interaction capability closure为验收标准，不要求旧 Core API/data/event compatibility。
+41. running cancel 以 intent 登记为唯一 linearization point；同一 send 此后只返回 CANCELLED，cancel 独占 terminalization，重复 cancel join，interrupt state 最终清零。
+42. `dispose()` 等待 pending interrupt cancel，settle 后不存在 cancel continuation、child、provider、operation 或 workspace access。
+43. 只有以上全部满足，才允许重新迁移 TUI。
+44. 后续 TUI migration以 interaction capability closure为验收标准，不要求旧 Core API/data/event compatibility。
 
 ---
 

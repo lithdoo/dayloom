@@ -23,7 +23,13 @@ export interface CoreState {
   };
 }
 
-export function buildState(world: CoreWorldState, session: CoreState['session'], mutationInFlight: boolean, disposed = false): CoreState {
+export function buildState(
+  world: CoreWorldState,
+  session: CoreState['session'],
+  mutationInFlight: boolean,
+  disposed = false,
+  cancelRequestedSessionId: string | null = null,
+): CoreState {
   const available = !disposed && session === null && !mutationInFlight;
   let startSessions: readonly CoreSessionKind[] = [];
   let settle = false, abandonDay = false;
@@ -34,12 +40,16 @@ export function buildState(world: CoreWorldState, session: CoreState['session'],
     else { settle = true; abandonDay = true; }
   }
   const ready = !disposed && session?.status === 'ready' && !mutationInFlight;
+  const cancellable = !disposed
+    && session !== null
+    && (session.status === 'ready' ? !mutationInFlight : session.status === 'running')
+    && cancelRequestedSessionId !== session.id;
   return Object.freeze({
     world: Object.freeze({ ...world }) as CoreWorldState,
     session: session === null ? null : Object.freeze({ ...session }),
     capabilities: Object.freeze({
       startSessions: Object.freeze([...startSessions]), settle, abandonDay,
-      send: ready, submit: ready, cancel: ready,
+      send: ready, submit: ready, cancel: cancellable,
     }),
   });
 }
