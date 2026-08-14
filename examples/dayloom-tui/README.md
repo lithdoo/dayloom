@@ -8,10 +8,9 @@
 - Windows 建议使用 Windows Terminal
 - caller-owned `llm.toml` 和其中引用的 provider credential
 
-首次使用：
+首次使用时，启动脚本会自动从 `llm.example.toml` 生成 `llm.toml`：
 
 ```bash
-cp llm.example.toml llm.toml
 export DEEPSEEK_API_KEY=...
 ./open-world.sh
 ```
@@ -19,7 +18,6 @@ export DEEPSEEK_API_KEY=...
 Windows：
 
 ```bat
-copy llm.example.toml llm.toml
 set DEEPSEEK_API_KEY=...
 open-world.bat
 ```

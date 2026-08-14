@@ -2,7 +2,14 @@ import type { ValidateFunction } from 'ajv';
 import type { ChildProcess } from 'node:child_process';
 import type { ProcessRunner } from './conversation';
 
-interface AgentEvent { type: string; session_id: string; sequence: number; content?: string; final?: { status: string; content?: string } }
+interface AgentEvent {
+  type: string;
+  session_id: string;
+  sequence: number;
+  content?: string;
+  final?: { status: string; content?: string };
+  error?: { code: string; message: string };
+}
 export async function runReact(input: {
   runner: ProcessRunner; reactBin: string; validate: ValidateFunction; config: string; context: string; conversation: string;
   onDelta?: (text: string) => void; onChild?: (child: ChildProcess) => void;
@@ -21,7 +28,10 @@ export async function runReact(input: {
     if (sessionId === null) sessionId = event.session_id;
     else if (event.session_id !== sessionId) throw new Error('React event session_id changed.');
     if (event.type === 'final.delta') { deltas += event.content!; input.onDelta?.(event.content!); }
-    if (event.type === 'session.failed') { terminal = true; throw new Error('React session failed.'); }
+    if (event.type === 'session.failed') {
+      terminal = true;
+      throw new Error(event.error?.message ?? 'React session failed.');
+    }
     if (event.type === 'session.completed') {
       terminal = true;
       if (event.final?.status !== 'completed') throw new Error('React Final was skipped.');

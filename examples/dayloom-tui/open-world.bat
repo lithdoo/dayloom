@@ -7,8 +7,12 @@ set "WORLD_DIR=%~dp0world"
 set "LLM_CONFIG=%~dp0llm.toml"
 
 if not exist "%LLM_CONFIG%" (
-  echo [ERROR] Copy llm.example.toml to llm.toml and configure the caller LLM.
-  exit /b 1
+  echo Creating default LLM config: %LLM_CONFIG%
+  copy /y "%~dp0llm.example.toml" "%LLM_CONFIG%" >nul
+  if errorlevel 1 (
+    echo [ERROR] Failed to create default LLM config: %LLM_CONFIG%
+    exit /b 1
+  )
 )
 
 call "%~dp0scripts\ensure-dayloom.bat"

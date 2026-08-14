@@ -58,7 +58,7 @@ export function mountApp(vm: ViewModel, options: MountAppOptions = {}): MountedT
     syncLayout();
   };
 
-  const unsubscribeExitKey = terminal.onKey((event) => {
+  const unsubscribeExitKey = terminal.onKey((event: TerminalKeyEvent) => {
     if (isCtrlC(event)) {
       diagnostic?.log('exit-key');
       options.onExitRequest?.();

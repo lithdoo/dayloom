@@ -129,6 +129,18 @@ test('React runner rejects truncated JSONL at EOF', async () => {
   const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
   await assert.rejects(() => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' }), /truncated JSONL/);
 });
+test('React runner preserves the concrete session failure message', async () => {
+  const boundaries = await resolvePackagedBoundaries(), id = 'react-session';
+  const stdout = [
+    { schema_version: 1, type: 'session.started', session_id: id, sequence: 0, max_steps: 1 },
+    { schema_version: 1, type: 'session.failed', session_id: id, sequence: 1, phase: 'thought', steps_completed: 0, error: { code: 'promptpile_exit_nonzero', message: 'provider rejected the API key' } },
+  ].map(JSON.stringify).join('\n') + '\n';
+  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 1, stdout, stderr: '' }; } };
+  await assert.rejects(
+    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' }),
+    /provider rejected the API key/,
+  );
+});
 test('React invocation keeps the frozen context/output topology and enables no input, tools, or hook', async () => {
   const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('ok'); let captured;
   const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };

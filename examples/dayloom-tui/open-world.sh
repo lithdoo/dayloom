@@ -7,8 +7,8 @@ WORLD_DIR="$SCRIPT_DIR/world"
 LLM_CONFIG="$SCRIPT_DIR/llm.toml"
 
 if [[ ! -f "$LLM_CONFIG" ]]; then
-  echo "[ERROR] Copy llm.example.toml to llm.toml and configure the caller LLM." >&2
-  exit 1
+  echo "Creating default LLM config: $LLM_CONFIG"
+  cp "$SCRIPT_DIR/llm.example.toml" "$LLM_CONFIG"
 fi
 
 export DAY_LOOM_DIR
