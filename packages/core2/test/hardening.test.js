@@ -85,6 +85,28 @@ test('core2-dispose-removes-terminal-cleanup-residue-with-runtime-root', async (
   await core.dispose();
   assert.equal(fs.existsSync(residue), false);
 });
+test('core2-failed-session-install-cleanup-residue-is-private-and-disposed', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup); let residue = null; let failSessionCleanup = true;
+  const runner = { async run(_bin, args) {
+    if (args[0] === 'conversation') return { code: 1, stdout: '', stderr: 'context append failed' };
+    throw new Error('React must not start.');
+  } };
+  const remove = async (target, options) => {
+    if (failSessionCleanup && target.includes(`${path.sep}sessions${path.sep}`)) {
+      failSessionCleanup = false; residue = target; throw new Error('session cleanup denied');
+    }
+    return fs.promises.rm(target, options);
+  };
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries(), remove });
+  const before = core.getState().world;
+  assert.deepEqual(await core.startSession('play'), { ok: false, error: { code: 'CONVERSATION_FAILED', message: 'context append failed' } });
+  assert.equal(core.getState().session, null);
+  assert.deepEqual(core.getState().world, before);
+  assert.notEqual(residue, null);
+  assert.equal(fs.existsSync(residue), true);
+  await core.dispose();
+  assert.equal(fs.existsSync(residue), false);
+});
 test('successful terminal operation removes its Session workspace before settling', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); let terminalRootRemoved = false;
   const remove = async (target, options) => {

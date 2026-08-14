@@ -912,7 +912,9 @@ workspace/config/prompt/context build → INTERNAL_ERROR
 Promptpile context append             → CONVERSATION_FAILED
 ```
 
-两者均：Session 不可见、World 不变、session root 删除完成后 operation 才 settle。
+两者均：Session 不可见、World 不变，operation settle 前必须 await 一次完整的 session-root cleanup attempt。
+
+cleanup failure 不改变原始 `INTERNAL_ERROR` / `CONVERSATION_FAILED`；residue 无 public owner，并由 `dispose()` 删除整个 `runtimeRoot` 时兜底。
 
 ---
 
@@ -1334,7 +1336,7 @@ validate capability
 
 Workspace/config/prompt/context build failure：`INTERNAL_ERROR`。Promptpile context append failure：`CONVERSATION_FAILED`。
 
-两者均：Session 不可见、World 不变、session root 删除后 operation 才 settle。
+两者均：Session 不可见、World 不变，operation settle 前必须 await 一次完整的 session-root cleanup attempt。cleanup failure 不改变原始 error；residue 无 public owner，并由 `dispose()` 删除整个 `runtimeRoot` 时兜底。
 
 ### send(text)
 
@@ -2228,7 +2230,8 @@ core2-abandoned-content-remains-reachable-from-parent
 ```text
 core2-all-session-kinds-use-one-conversation-per-session
 core2-start-session-installs-session-only-after-context-success
-core2-start-session-failure-removes-session-root-before-settlement
+core2-start-session-failure-attempts-session-root-cleanup-before-settlement
+core2-failed-session-install-cleanup-residue-is-private-and-disposed
 core2-all-session-kinds-stream-send-final
 core2-all-session-kinds-keep-submit-final-private
 core2-all-session-kinds-use-compression-lifecycle
