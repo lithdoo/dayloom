@@ -97,13 +97,13 @@ class DayloomCoreImpl implements DayloomCore {
         return await action();
       }
       catch (error) {
-        if (error instanceof CoreOperationError) return failure(error.code, error.message);
         const code = codeOf(error);
-        if (code === 'WORLD_INVALID') {
+        if (code === 'WORLD_INVALID' || code === 'WORLD_CONFLICT') {
           await this.recoverWorldState();
-          return failure('WORLD_INVALID', messageOf(error));
+          return failure(code, messageOf(error));
         }
-        if (['SUBMISSION_INVALID', 'WORLD_CONFLICT'].includes(code)) return failure(code as 'SUBMISSION_INVALID' | 'WORLD_CONFLICT', messageOf(error));
+        if (error instanceof CoreOperationError) return failure(error.code, error.message);
+        if (code === 'SUBMISSION_INVALID') return failure('SUBMISSION_INVALID', messageOf(error));
         await this.recoverWorldState();
         return failure('INTERNAL_ERROR', messageOf(error));
       } finally {
@@ -117,7 +117,8 @@ class DayloomCoreImpl implements DayloomCore {
   private async recoverWorldState(): Promise<void> {
     try {
       const classified = await this.classifier(this.worldRoot);
-      if (classified.state.status === 'invalid') { this.world = null; this.worldState = classified.state; }
+      this.world = classified.published;
+      this.worldState = classified.state;
     } catch { /* error recovery must not replace the original operation result */ }
   }
   startSession(kind: CoreSessionKind) { return this.operation(async () => {

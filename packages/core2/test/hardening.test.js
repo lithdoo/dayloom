@@ -68,6 +68,23 @@ test('terminal cleanup failure never leaves an invalid submission in submitting 
   assert.equal(core.getState().session, null);
   assert.deepEqual(core.getState().capabilities.startSessions, ['play']);
 });
+test('core2-dispose-removes-terminal-cleanup-residue-with-runtime-root', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup); let residue = null; let failSessionCleanup = true;
+  const remove = async (target, options) => {
+    if (failSessionCleanup && target.includes(`${path.sep}sessions${path.sep}`)) {
+      failSessionCleanup = false; residue = target; throw new Error('session cleanup denied');
+    }
+    return fs.promises.rm(target, options);
+  };
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner(), boundaries: await resolvePackagedBoundaries(), remove });
+  await core.startSession('play');
+  assert.equal((await core.cancel()).error.code, 'INTERNAL_ERROR');
+  assert.equal(core.getState().session, null);
+  assert.notEqual(residue, null);
+  assert.equal(fs.existsSync(residue), true);
+  await core.dispose();
+  assert.equal(fs.existsSync(residue), false);
+});
 test('successful terminal operation removes its Session workspace before settling', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); let terminalRootRemoved = false;
   const remove = async (target, options) => {
@@ -88,6 +105,35 @@ test('recovery classification failure cannot reject a public operation', async (
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), publisher, classifier }); t.after(() => core.dispose());
   await core.startSession('play');
   assert.deepEqual(await core.submit(), { ok: false, error: { code: 'INTERNAL_ERROR', message: 'disk failed' } });
+});
+test('core2-concurrent-init-conflict-refreshes-winning-world', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-concurrent-init-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, 'llm.toml'); fs.writeFileSync(config, '[[llm_api]]\nname="test"\nmodel="test"\n');
+  const submission = JSON.stringify({ version: 1, title: 'Winning World', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' } });
+  const boundaries = await resolvePackagedBoundaries();
+  const winner = await createDayloomCoreInternal({ worldRoot: root, llmConfigPath: config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => winner.dispose());
+  const stale = await createDayloomCoreInternal({ worldRoot: root, llmConfigPath: config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => stale.dispose());
+  await winner.startSession('init'); await stale.startSession('init');
+  assert.deepEqual(await winner.submit(), { ok: true });
+  assert.equal((await stale.submit()).error.code, 'WORLD_CONFLICT');
+  assert.equal(stale.getState().world.status, 'published');
+  assert.equal(stale.getState().world.revision, 1);
+  assert.equal(stale.getState().world.title, 'Winning World');
+  assert.deepEqual(stale.getState().capabilities.startSessions, ['planning', 'revise']);
+});
+test('core2-stale-play-conflict-refreshes-latest-world', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const boundaries = await resolvePackagedBoundaries();
+  const winner = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => winner.dispose());
+  const stale = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => stale.dispose());
+  await winner.startSession('play'); await stale.startSession('play');
+  assert.deepEqual(await winner.submit(), { ok: true });
+  assert.equal((await stale.submit()).error.code, 'WORLD_CONFLICT');
+  assert.equal(stale.getState().world.revision, 2);
+  assert.equal(stale.getState().world.phase, 'awaiting-settle');
+  assert.equal(stale.getState().capabilities.settle, true);
+  assert.deepEqual(stale.getState().capabilities.startSessions, []);
 });
 test('generic publication I/O failure is INTERNAL_ERROR, not AGENT_FAILED', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);

@@ -956,13 +956,18 @@ Terminal resource theorem：
 submit success/failure
 cancel
 send terminal failure
+→ wait for child/compression provider completion
+→ publish terminal Session state before workspace cleanup
+→ await one complete Session-root cleanup attempt before the public Promise settles
 ```
 
-都必须在 child/compression provider 已结束后删除该 Session root。删除完成后才允许对应 public operation Promise settle。
+cleanup success → Session root 已删除。
+
+cleanup failure 不得 resurrect Session，不得覆盖更 specific 的 business error，也不得 downgrade 已发布的 World truth；private residue 不再被任何 Session 引用。`dispose()` 最终再次删除整个 `runtimeRoot`，并吞掉其中未被前次 cleanup 删除的 residue。
 
 普通 `send success → ready` 不删除 workspace，因为同一 Session 仍继续使用同一 Conversation。
 
-因此长生命周期 Core instance 不会因已结束 Session 累积临时 Conversation workspace。
+正常 cleanup 成功时，长生命周期 Core instance 不会因已结束 Session 累积临时 Conversation workspace；cleanup I/O 失败时，残留仅是无 public owner 的 private artifact，并由 `dispose()` 兜底。
 
 ---
 
@@ -1353,7 +1358,7 @@ React/event-stream failure → `AGENT_FAILED` + Session terminal。
 
 已经发出的 `output.delta` 不回滚。
 
-任何 terminal failure 必须完成 Session root 删除后 operation 才 settle。
+任何 terminal failure 必须先发布 terminal Session state，并在 operation settle 前 await 一次完整的 Session root cleanup attempt。
 
 ### submit()
 
@@ -1369,7 +1374,7 @@ require session ready
 → business validation / document construction
 → publication
 → Session terminal
-→ remove Session root
+→ attempt to remove Session root
 ```
 
 Submit marker append failure → `CONVERSATION_FAILED`。
@@ -1382,7 +1387,7 @@ Pre-publication failure → Published World unchanged。
 
 Publication success → new Published World。
 
-无论成功或失败，terminal Session root 删除完成后 submit Promise 才 settle。
+无论成功或失败，terminal state 必须先成立，且一次完整的 Session root cleanup attempt 完成后 submit Promise 才 settle。cleanup failure 不推翻更 specific 的 submission error，也不推翻已经成立的 publication success。
 
 ### cancel()
 
@@ -1390,12 +1395,12 @@ Publication success → new Published World。
 
 ```text
 terminalize Session
-→ remove Session root
+→ attempt to remove Session root
 → World unchanged
-→ success
+→ success，或仅在 cleanup failure 时返回 INTERNAL_ERROR
 ```
 
-删除完成后 cancel Promise 才 settle。
+cleanup attempt 完成后 cancel Promise 才 settle；即使 cleanup 失败，Session 也保持 terminal 且不再引用 residue。
 
 不保留 failed/cancelled/completed Session 供 retry。
 
@@ -1543,6 +1548,8 @@ visible graph 自身无法通过 Protocol/Profile read → WORLD_INVALID
 ```
 
 不得把损坏 World 伪装成普通 conflict。
+
+`WORLD_CONFLICT` 同时证明当前 Core instance 的 read snapshot 已失效。返回原始 `WORLD_CONFLICT` 前必须执行一次 one-shot `classifyWorld(worldRoot)`：若得到 `published`，安装最新 `PublishedWorld`；若得到 `invalid`，进入 invalid；若 classification 自身失败，保留 best-known snapshot。不得为此引入 watcher、sync manager 或 recovery coordinator。
 
 ---
 
@@ -1823,25 +1830,36 @@ send success
 send append/compression/agent failure
   → terminal Session
   → Published World unchanged
-  → delete Session workspace before Promise settles
+  → await one complete Session workspace cleanup attempt before Promise settles
 
 submit parse/business/pre-publication failure
   → terminal Session
   → Published World unchanged
-  → delete Session workspace before Promise settles
+  → await one complete Session workspace cleanup attempt before Promise settles
 
 submit publication success
   → terminal Session
   → new Published World
-  → delete Session workspace before Promise settles
+  → await one complete Session workspace cleanup attempt before Promise settles
 
 cancel ready
   → terminal Session
   → Published World unchanged
-  → delete Session workspace before Promise settles
+  → await one complete Session workspace cleanup attempt before Promise settles
 ```
 
 失败 Session 不保留供 retry。
+
+Cleanup diagnostic服从统一优先级：
+
+```text
+terminal business state > cleanup diagnostic
+publication truth > cleanup diagnostic
+more specific business error > cleanup diagnostic
+public lifecycle > private temp artifact
+```
+
+因此 cleanup failure 不 resurrect Session、不覆盖更 specific 的 business error、不 downgrade 已发布 World truth；private residue 不再被任何 Session 引用。`dispose()` 删除整个 `runtimeRoot` 时再次收口这些 residue。
 
 Settle / Abandon：
 
@@ -2218,11 +2236,15 @@ core2-all-session-kinds-terminalize-on-conversation-failure
 core2-all-session-kinds-terminalize-on-agent-failure
 core2-all-session-kinds-terminalize-on-invalid-submission
 core2-all-session-kinds-drain-summary-provider-before-operation-settles
-core2-terminal-session-removes-workspace-before-operation-settles
+core2-terminal-session-attempts-workspace-cleanup-before-operation-settles
+core2-cleanup-failure-does-not-resurrect-terminal-session
+core2-postpublication-cleanup-failure-does-not-downgrade-world-truth
 core2-send-success-keeps-same-session-workspace
 core2-send-running-state-precedes-output-delta
 core2-operation-final-state-is-visible-before-promise-settles
 core2-visible-world-damage-maps-world-invalid-not-conflict
+core2-concurrent-init-conflict-refreshes-winning-world
+core2-stale-play-conflict-refreshes-latest-world
 core2-stale-child-end-cannot-clear-new-child
 ```
 
@@ -2251,6 +2273,7 @@ core2-dispose-waits-for-inflight-operation-finally
 core2-dispose-waits-for-summary-provider-drain
 core2-dispose-waits-for-terminal-session-cleanup
 core2-dispose-does-not-remove-runtime-root-before-operation-cleanup
+core2-dispose-removes-terminal-cleanup-residue-with-runtime-root
 core2-dispose-settlement-leaves-no-runtime-root-access-in-flight
 core2-dispose-does-not-rollback-postcurrent-publication
 ```
@@ -2307,12 +2330,12 @@ Core2 只有全部满足才算完整：
 21. Revise使用 full canon snapshot replacement，不引入 patch framework。
 22. Abandon只从 visible tree删除 Core2-owned current-day docs，parent history保留；replan复用同一未 settle day。
 23. 四类 conversational Session 从创建到 terminal使用一个持续 writable Conversation identity。
-24. Terminal Session必须在 Promise settle前删除自身 workspace；send success继续使用同一 workspace。
+24. Terminal business state必须先成立，并在 Promise settle前 await 一次完整的 workspace cleanup attempt；cleanup failure不 resurrect Session、不覆盖更 specific 的 business error、不 downgrade 已发布 World truth，private residue不再被任何 Session 引用并由 `dispose()` 删除整个 `runtimeRoot` 时兜底；send success继续使用同一 workspace。
 25. 四类 Session共用已验证 Promptpile / React / compression mechanics，不复制四套 runtime。
 26. Compression beta.2 live-trigger、restore-source、timeout/drain、error preservation theorem全部保持。
 27. 六类 publication使用一个 mechanical primitive；business caller只提供 base/initial manifest identity、WorldChange与 target control，不提供 hash/fileId/revision/commitId/timestamp。
 28. Publication primitive只做mechanics，不承担业务 document解析；固定path→mediaType映射是其结构性 guard。
-29. Publication lock内严格区分 WORLD_CONFLICT 与 WORLD_INVALID。
+29. Publication lock内严格区分 WORLD_CONFLICT 与 WORLD_INVALID；WORLD_CONFLICT 返回前 one-shot reclassify并安装成功读到的最新 World，classification failure保留 best-known snapshot。
 30. `current.json`始终是最终 World visibility switch；之后只允许不影响 World truth 的 diagnostic更新。
 31. Public operation Promise settle前最终 public state已发布；dispose开始后停止 listener delivery 是唯一例外。
 32. `dispose()` settle时不存在 Core2-owned child、provider cleanup、Session operation或 runtimeRoot filesystem access仍在 flight。
@@ -2332,12 +2355,12 @@ Core2 只有全部满足才算完整：
 ## 36. 最终架构 theorem
 
 ```text
-                         Consumer
-                  TUI / Web / CLI / GUI
-                           │
-                  application semantics
-                           │
-                           ▼
+                              Consumer
+                         TUI / Web / CLI / GUI
+                                 │
+                         application semantics
+                                 │
+                                 ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                           Core2                               │
 │                                                               │
@@ -2354,16 +2377,16 @@ Core2 只有全部满足才算完整：
 │    settle | abandonDay                                        │
 │                                                               │
 │  business legality + exact submission validation              │
-│  one mechanical Archive publication primitive                │
+│  one mechanical Archive publication primitive                 │
 │  one single-operation lifecycle + deterministic cleanup       │
-└──────────────┬─────────────────┬─────────────────┬─────────────┘
+└──────────────┬─────────────────┬─────────────────┬────────────┘
                │                 │                 │
                ▼                 ▼                 ▼
       promptpile-compress   Promptpile React   Archive Protocol
                │                 │                 │
-               └────── Conversation / Agent ──────┘
-                                   │
-                                   ▼
+               └────── Conversation / Agent ───────┘
+                                 │
+                                 ▼
                          Published Archive V2
 ```
 
@@ -2385,7 +2408,7 @@ new data model defines truth
 已有真实共同 mechanics → 只抽 mechanical helper
 模型产生业务内容 → Core2产生稳定结构 identity
 World truth只由 validated publication产生
-Session terminal → workspace先清理再settle
+Session terminal → terminal state先成立，完整workspace cleanup attempt再settle
 Dispose settle → Core2-owned async work全部结束
 失败先保证 World truth不被误改，再保证本 operation完全收尾
 ```
