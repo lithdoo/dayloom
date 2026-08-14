@@ -7,7 +7,7 @@
 > Data foundation: `@dayloom/archive-protocol` + Core2 Dayloom World Profile V0  
 > Consumer acceptance reference: restored full Dayloom TUI interaction capabilities
 
-本文冻结 Core2 的完整产品生命周期、public contract、数据关系、Conversation / Promptpile React 运行定理、publication theorem、失败语义、dispose 收尾语义与验收标准。
+本文冻结 Core2 的完整产品生命周期、public contract、数据关系、Conversation / Promptpile React 运行定理、publication theorem、失败语义、资源清理语义与验收标准。
 
 本文之后，实现者不应再为 lifecycle、数据 shape、Session topology、publication、错误映射或 consumer contract 做新的架构决策。若实际依赖 API 与本文存在真实冲突，应先修改 Freeze，再修改实现；不得在代码中静默创造第二套约定。
 
@@ -105,7 +105,7 @@ Abandon   → 从 visible tree 移除当前未完成 day
 
 不是从 legacy Runtime phase 表逐项复制。
 
-任意 consumer 至少能够表达：
+任意 consumer 必须能够表达以下全部产品意图；本 Freeze 不要求更多业务动作：
 
 ```text
 创建 World
@@ -318,6 +318,17 @@ days/<day>/summary.md
 
 Core2 不要求 root tree 只能包含这些路径；其它 domain-owned document 可以存在。Core2 只修改自己拥有的路径。所有路径必须经过 Archive Protocol public path contract。
 
+Core2-owned path 与 media type 固定映射：
+
+```text
+canon/*.md               → text/markdown
+days/<day>/plan.json     → application/json
+days/<day>/play.json     → application/json
+days/<day>/summary.md    → text/markdown
+```
+
+Read-side 必须验证 tree entry 的 mediaType 与该映射一致。
+
 ### 6.1 Canon
 
 任何 `published` World 必须存在：
@@ -329,7 +340,7 @@ canon/style.md
 canon/user-role.md
 ```
 
-四个文档必须是可 fatal UTF-8 decode 的 bytes；Markdown 内容允许为空。Core2 不新增任意长度 policy。
+四个文档必须通过 tree entry → blob hash/bytes verify，并可 fatal UTF-8 decode；Markdown 内容允许为空。Core2 不新增任意长度 policy。
 
 它们是当前 commit 的完整 canon snapshot。历史 canon 由 immutable commit/tree 自然保存，不创建 canon revision framework。
 
@@ -380,6 +391,8 @@ interface PlayPlanV0 {
 Parser 规则固定：
 
 ```text
+blob/mediaType/UTF-8 必须合法
+JSON 必须是单个 object
 exact top-level keys = intent, beats
 intent 是 string，trim 后非空
 beats 是 array，可为空
@@ -402,7 +415,7 @@ Planning 只补上 `PlayPlanV0` 的合法生产者，不改变其 schema。
 
 ### 6.4 PersistedPlayV1 固定
 
-`days/<day>/play.json` 的 persisted shape 固定为：
+`days/<day>/play.json`：
 
 ```ts
 interface PersistedPlayV1 {
@@ -422,10 +435,11 @@ interface PersistedPlayV1 {
 }
 ```
 
-Read-side parser 与 Play submit builder 使用同一业务关系：
+Read-side parser 与现有 Play submit builder 使用同一关系：
 
 ```text
-exact keys / unknown fields rejected
+blob/mediaType/UTF-8 必须合法
+JSON exact keys / unknown fields rejected
 version === 1
 persisted beats 数量 === 同日 PlayPlanV0 beats 数量
 persisted beats 顺序、id、intent 与 plan 一一相同
@@ -437,13 +451,14 @@ userInput / assistantOutput trim 后非空
 beat.eventId != null 时必须引用存在事件，且该事件 beatId === beat.id
 ```
 
-存在未被某个 beat.eventId 引用的 event 是允许的，只要其 `beatId` relation 合法；这保持现有 Play contract。
+存在未被某个 beat.eventId 引用的 event 是允许的，只要其 `beatId` relation 合法；这保持当前 Play contract。
 
 ### 6.5 summary.md 固定
 
 `days/<day>/summary.md`：
 
 ```text
+blob/mediaType 必须合法
 必须可 fatal UTF-8 decode
 trim 后必须非空
 builder 持久化为 submission.summary.trimEnd() + "\n"
@@ -539,12 +554,14 @@ export type CoreWorldState =
 ```text
 manifest.json 不存在
 current.json 不存在
-commits/ 下不存在 regular durable file
-objects/ 下不存在 regular durable file
-operations/ 下不存在 regular durable file
+commits/ 下不存在任何非 directory filesystem entry
+objects/ 下不存在任何非 directory filesystem entry
+operations/ 下不存在任何非 directory filesystem entry
 ```
 
-目录本身可以存在且为空。
+空目录本身允许存在。
+
+Symlink、regular file 或其它 unexpected entry 都算 durable Archive evidence；expected Archive files本身必须是 regular files，不能通过 symlink 接受。
 
 仅存在：
 
@@ -561,13 +578,14 @@ Core2 runtime housekeeping
 存在任何 partial / malformed durable Archive evidence，但不能得到合法 Published World时，fail-closed 为 `invalid`，包括：
 
 ```text
+manifest/current 不是 regular file
 manifest without current
 current without manifest
 current without commit
 current/commit relation mismatch
 tree hash mismatch
 blob identity mismatch
-required canon missing / invalid UTF-8
+required canon missing / invalid mediaType / invalid UTF-8
 planned current-day relation invalid
 awaiting-settle current-day relation invalid
 lastSettledDay relation invalid
@@ -586,7 +604,7 @@ manifest
 → current
 → commit relation
 → root tree identity
-→ required blob identities
+→ required blob identities/media types
 → Core2 World Profile relations
 ```
 
@@ -596,7 +614,7 @@ manifest
 
 ---
 
-## 9. Public state / API
+## 9. Public state / API / result
 
 ```ts
 export type CoreSessionKind =
@@ -626,6 +644,16 @@ export interface CoreState {
     cancel: boolean;
   };
 }
+
+export type CoreResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: {
+        code: CoreErrorCode;
+        message: string;
+      };
+    };
 ```
 
 Session identity 从创建成功开始持续到 submit / cancel / failure terminalize。同一 Session 始终只使用一个 writable Promptpile Conversation identity。
@@ -659,6 +687,15 @@ export function createDayloomCore(
 ```
 
 这是 consumer-neutral application API，不是 TUI API。
+
+Dispose 后：
+
+```text
+getState() 仍可调用，返回最后 World、session:null、全部 capabilities:false
+subscribe() 不再注册 listener，返回 noop unsubscribe
+所有 mutation method 返回 DISPOSED
+再次 dispose() 等待/复用同一个 disposal completion
+```
 
 不引入 `executeCommand`、command bus、backend interface、compatibility facade 或 consumer-specific adapter。
 
@@ -739,17 +776,11 @@ ready
   └─ cancel() → terminal
 ```
 
-同一 Core instance 上任何第二个 mutation 在已有 mutation in flight 时返回：
-
-```text
-BUSY
-```
-
-无 queue / wait / retry。
+同一 Core instance 上任何第二个 mutation 在已有 mutation in flight 时返回 `BUSY`。无 queue / wait / retry。
 
 跨 Core instance World conflict 由 publication lock + pinned-base recheck 处理。
 
-所有 public operation 在其 Promise settle 前，必须已经完成该 operation 自己的 synchronous/finally cleanup，并已经把最终 public state 通过 `state.changed` 发布；不存在“Promise 已成功但 CoreState 仍停留在旧 transient 状态”的窗口。
+除 `dispose()` 已开始、listener delivery 已被关闭的情况外，所有 public operation 在 Promise settle 前必须已完成本 operation 的 finally cleanup，并已发布最终 `state.changed`；不存在“Promise 已 settle 但 CoreState 仍停留旧 transient 状态”的窗口。
 
 ---
 
@@ -757,11 +788,11 @@ BUSY
 
 每个 Session 开始时 pin authoritative application state。Context layer 整个 Session immutable。
 
-Context 不是 JSON API；它是 Core2-owned deterministic UTF-8 Promptpile layer。Marker 和 section 顺序属于 V0 contract。
+Context 是 Core2-owned deterministic UTF-8 Promptpile layer。Marker 和 section 顺序属于 V0 contract。
 
 ### 12.1 Init
 
-Init 没有 Published World。
+Init 没有 Published World：
 
 ```text
 context/ directory exists
@@ -772,7 +803,7 @@ context/ contains no Promptpile message artifact
 
 ### 12.2 Planning
 
-Core2 生成且只 append 一个 immutable context message：
+Core2 只 append 一个 immutable context message：
 
 ```text
 [DAYLOOM_PLANNING_CONTEXT_V0]
@@ -795,7 +826,7 @@ last_settled_day: <none | dayN>
 <current user role>
 ```
 
-若 `lastSettledDay != null`，在末尾追加且只追加：
+若 `lastSettledDay != null`，末尾追加且只追加：
 
 ```text
 
@@ -807,7 +838,7 @@ last_settled_day: <none | dayN>
 
 ### 12.3 Play
 
-保持当前已落地 marker 和 sections，不改版本：
+保持当前已落地 V0，不改 marker/sections：
 
 ```text
 [DAYLOOM_PLAY_CONTEXT_V0]
@@ -836,7 +867,7 @@ day: <day>
 
 ### 12.4 Revise
 
-Core2 生成且只 append 一个 immutable context message：
+Core2 只 append 一个 immutable context message：
 
 ```text
 [DAYLOOM_REVISE_CONTEXT_V0]
@@ -868,23 +899,24 @@ last_settled_day: <none | dayN>
 
 否则完全不产生该 section。
 
-### 12.5 Context append 规则
+### 12.5 Context append / Session installation
 
 Planning / Play / Revise 使用 Promptpile public CLI append 到 `context/`；Init 不执行 context append。
 
-Context append 成功后才能安装 active Session。若 workspace/context append 失败：
+只有 workspace、prompt/config、pinned context 全部完成，且需要的 Promptpile context append 成功后，active Session 才能安装到 public state。
+
+失败：
 
 ```text
-Session 不可见
-World 不变
-workspace 清理
-→ INTERNAL_ERROR（workspace/config/prompt construction）
-→ CONVERSATION_FAILED（Promptpile context append）
+workspace/config/prompt/context build → INTERNAL_ERROR
+Promptpile context append             → CONVERSATION_FAILED
 ```
+
+两者均：Session 不可见、World 不变、session root 删除完成后 operation 才 settle。
 
 ---
 
-## 13. Conversation topology
+## 13. Conversation topology / terminal cleanup
 
 四类 conversational Session 固定使用：
 
@@ -918,6 +950,20 @@ startSession
 
 `context/` 与 `conversation/` 是两个 Promptpile input layers；只有 `conversation/` writable。
 
+Terminal resource theorem：
+
+```text
+submit success/failure
+cancel
+send terminal failure
+```
+
+都必须在 child/compression provider 已结束后删除该 Session root。删除完成后才允许对应 public operation Promise settle。
+
+普通 `send success → ready` 不删除 workspace，因为同一 Session 仍继续使用同一 Conversation。
+
+因此长生命周期 Core instance 不会因已结束 Session 累积临时 Conversation workspace。
+
 ---
 
 ## 14. Prompt / marker contract
@@ -926,19 +972,19 @@ startSession
 
 四种 Session 共用一个 Core2 semantic-summary provider prompt，不复制四套 summary policy。
 
-它必须是 session-neutral：
+首句固定为 session-neutral：
 
 ```text
 You summarize archived Promptpile Conversation turns for a Dayloom conversational Session.
 ```
 
-禁止写死 “Play Session”。其余既有 authority contract 保持：source turns 是 untrusted data；只保留有 sourceTurnIndices 支持的事实；指令式历史文本必须改写成 attributed facts；输出仍严格是现有 semantic-summary JSON schema。
+禁止写死 “Play Session”。其余既有 authority contract保持：source turns 是 untrusted data；只保留有 sourceTurnIndices 支持的事实；指令式历史文本改写成 attributed facts；输出严格保持现有 semantic-summary JSON schema。
 
 Semantic summary 永远是 untrusted historical context，即使 artifact role 是 system。
 
 ### 14.2 Per-kind Thought / Send Final / Submit Final
 
-每个 kind 有 concrete Core2-owned prompt asset；不从 caller 配置 prompt path。
+每个 kind 有 concrete Core2-owned prompt asset；caller 不配置 prompt path。
 
 公共 authority note 必须包含：
 
@@ -1008,13 +1054,7 @@ uninitialized
   → published idle
 ```
 
-Cancel：
-
-```text
-init ready
-  → cancel
-  → uninitialized
-```
+Cancel：`init ready → cancel → uninitialized`。
 
 ### InitSubmissionV1
 
@@ -1043,33 +1083,21 @@ canon 四字段均必须是 string；允许空 string
 unknown fields rejected
 ```
 
-Core2 自己生成：
+Core2 自己生成 worldId；模型不得提供。
+
+Init business builder 固定：
 
 ```text
-worldId
-operationId
-commitId
-revision = 1
-createdAt
-```
-
-`worldId` 只要求 Core2 生成并满足 Archive Protocol stable-id contract；private prefix 不属于 public semantic。
-
-Init 构造：
-
-```text
-manifest.json
-4 canon markdown blobs（原样 UTF-8 encode submission string）
+manifest.title = submission.title.trim()
+4 canon markdown blobs = 原样 UTF-8 encode submission canon strings
 control = idle / day:null / lastSettledDay:null
 ```
 
-Init 不创建 plan。因此正常路径固定为：
+Init 不创建 plan。
 
-```text
-Init → idle → Planning
-```
+`worldId` 只要求 Core2 生成并满足 Archive Protocol stable-id contract；private prefix 不属于 public semantic。
 
-example 不得偷偷跳过 Planning。
+正常产品路径固定：`Init → idle → Planning`。Example 不得偷偷跳过 Planning。
 
 ---
 
@@ -1219,14 +1247,7 @@ unknown fields rejected
 
 四个 canon 文档以 submission string 原样 UTF-8 encode 后 PUT。
 
-Revise 不修改：
-
-```text
-manifest title
-worldId
-day history
-lastSettledDay
-```
+Revise 不修改 manifest title、worldId、day history、lastSettledDay。
 
 Revise 使用 full canon snapshot replacement，不设计 patch DSL。
 
@@ -1262,14 +1283,7 @@ new commit / revision / control
 
 ## 20. Abandon Day
 
-仅从：
-
-```text
-published planned(dayN)
-published awaiting-settle(dayN)
-```
-
-可执行。
+仅从 `published planned(dayN)` 或 `published awaiting-settle(dayN)` 可执行。
 
 Candidate tree 删除：
 
@@ -1289,9 +1303,7 @@ day = null
 lastSettledDay unchanged
 ```
 
-Parent commit/tree 继续保存被 abandon 的历史内容。
-
-下一次 Planning 由 `nextDay(lastSettledDay)` 重新得到同一个未 settle day。
+Parent commit/tree 继续保存被 abandon 的历史内容。下一次 Planning 由 `nextDay(lastSettledDay)` 重新得到同一个未 settle day。
 
 不创建 abandoned marker document。
 
@@ -1315,15 +1327,15 @@ validate capability
 → status ready
 ```
 
-Workspace/config/prompt construction failure：`INTERNAL_ERROR`，Session 不可见，World 不变，workspace 清理。
+Workspace/config/prompt/context build failure：`INTERNAL_ERROR`。Promptpile context append failure：`CONVERSATION_FAILED`。
 
-Promptpile context append failure：`CONVERSATION_FAILED`，Session 不可见，World 不变，workspace 清理。
+两者均：Session 不可见、World 不变、session root 删除后 operation 才 settle。
 
 ### send(text)
 
 ```text
 require session ready
-require text.trim() non-empty
+require typeof text === string && text.trim() non-empty
 → status running + state.changed
 → append-user to writable conversation/
 → compression lifecycle
@@ -1337,9 +1349,11 @@ Append failure → `CONVERSATION_FAILED` + Session terminal。
 
 Compression failure → preserve compression mapping + Session terminal。
 
-React failure → `AGENT_FAILED` + Session terminal。
+React/event-stream failure → `AGENT_FAILED` + Session terminal。
 
 已经发出的 `output.delta` 不回滚。
+
+任何 terminal failure 必须完成 Session root 删除后 operation 才 settle。
 
 ### submit()
 
@@ -1355,6 +1369,7 @@ require session ready
 → business validation / document construction
 → publication
 → Session terminal
+→ remove Session root
 ```
 
 Submit marker append failure → `CONVERSATION_FAILED`。
@@ -1365,32 +1380,30 @@ Parse / candidate business relation failure → `SUBMISSION_INVALID`。
 
 Pre-publication failure → Published World unchanged。
 
-Publication success → new Published World；Session terminal。
+Publication success → new Published World。
+
+无论成功或失败，terminal Session root 删除完成后 submit Promise 才 settle。
 
 ### cancel()
 
 仅 ready 可用：
 
 ```text
-clear active Session
-World unchanged
+terminalize Session
+→ remove Session root
+→ World unchanged
 → success
 ```
 
-不保留 failed/cancelled Session 供 retry。
+删除完成后 cancel Promise 才 settle。
+
+不保留 failed/cancelled/completed Session 供 retry。
 
 ---
 
 ## 22. Compression contract
 
-`CORE2_CONVERSATION_COMPRESSION_DRAFT.md` 的 beta.2 contract 完整扩展到：
-
-```text
-init
-planning
-play
-revise
-```
+`CORE2_CONVERSATION_COMPRESSION_DRAFT.md` 的 beta.2 contract 完整扩展到 `init | planning | play | revise`。
 
 固定：
 
@@ -1407,7 +1420,7 @@ abort exact provider invocation
 → dependency may return early
 → Core2 finally await providerHandle.drain()
 → child + request cleanup complete
-→ operation may settle
+→ operation may continue/settle
 ```
 
 Semantic summary 是 untrusted historical aid。
@@ -1420,14 +1433,7 @@ Settle / Abandon 没有 Conversation，不进入 compression。
 
 ## 23. Configuration
 
-Public options 继续只有：
-
-```ts
-interface CreateDayloomCoreOptions {
-  worldRoot: string;
-  llmConfigPath: string;
-}
-```
+Public options 继续只有 `worldRoot` 与 `llmConfigPath`。
 
 Caller TOML ownership guard 保持：
 
@@ -1441,7 +1447,7 @@ Core2 不解释 provider model/base-url/API-key 语义。
 
 每个 Session kind 使用 Core2-owned concrete prompt assets；不增加 caller-owned per-session config path、provider registry 或 backend interface。
 
-React 仍固定 max-step=1；send/submit 继续使用 Core2 派生私有 config。
+React 固定 max-step=1；send/submit 继续使用 Core2 派生私有 config。
 
 ---
 
@@ -1478,6 +1484,8 @@ submit/cancel/failure Promise settle 前 → terminal state 已发布
 stable mutation Promise settle 前 → new World state 或 unchanged failure state 已发布
 ```
 
+`dispose()` 第一次调用后 listener delivery立即关闭；此后不要求再向旧 listeners 发 terminal `state.changed`。`getState()` 仍必须反映 disposed capabilities=false。
+
 不冻结同一 public state 的冗余 `state.changed` 次数；实现应避免无意义重复事件。
 
 TUI loading 只从 `session.status = running | submitting` 投影，不增加 presentation event。
@@ -1503,16 +1511,16 @@ export type CoreErrorCode =
 固定映射：
 
 ```text
-当前 capability 不允许                 → NOT_AVAILABLE
-另一个 Core2 mutation 正在执行          → BUSY
-用户 text trim 后为空                   → INVALID_INPUT
-Promptpile append/compression failure   → CONVERSATION_FAILED
-React completion/event-stream failure   → AGENT_FAILED
-submit JSON / business relation invalid → SUBMISSION_INVALID
-publication lock 已占用 / pinned base改变 → WORLD_CONFLICT
-operation 中 visible World 已损坏       → WORLD_INVALID
-unexpected / fixed-policy failure       → INTERNAL_ERROR
-disposed instance                       → DISPOSED
+当前 capability 不允许                    → NOT_AVAILABLE
+另一个 Core2 mutation 正在执行             → BUSY
+用户 text 非 string / trim 后为空          → INVALID_INPUT
+Promptpile append/compression failure      → CONVERSATION_FAILED
+React completion/event-stream failure      → AGENT_FAILED
+submit JSON / business relation invalid    → SUBMISSION_INVALID
+publication lock 已占用 / pinned base改变  → WORLD_CONFLICT
+operation 中 visible World 已损坏          → WORLD_INVALID
+unexpected / fixed-policy failure          → INTERNAL_ERROR
+disposed instance                          → DISPOSED
 ```
 
 Expected application failure 不 throw。
@@ -1540,16 +1548,7 @@ visible graph 自身无法通过 Protocol/Profile read → WORLD_INVALID
 
 ## 26. Mechanical publication primitive
 
-完整 lifecycle 有六个真实 publication caller：
-
-```text
-init
-planning
-play
-revise
-settle
-abandon-day
-```
+完整 lifecycle 有六个真实 publication caller：`init | planning | play | revise | settle | abandon-day`。
 
 必须从当前 `publishPlay()` 收敛出一个 **mechanical publication primitive**。
 
@@ -1579,10 +1578,10 @@ StagingManifestV1
 operationId
 commitId
 revision
-createdAt
+publication timestamp
 ```
 
-这些由 primitive 机械生成。
+这些全部由 primitive 机械生成。
 
 Private publication input：
 
@@ -1601,7 +1600,6 @@ interface PublishMutationInput {
   initialManifest?: {
     worldId: string;
     title: string;
-    createdAt: string;
   };
 
   changes: readonly WorldChange[];
@@ -1621,9 +1619,12 @@ base === null 只允许 operationType === init，且 initialManifest 必须存�
 base !== null 时 initialManifest 必须不存在
 changes path 必须是 Core2-owned path 且通过 Protocol path parser
 同一 path 不得出现两次
-put bytes 必须与 mediaType 对应 Core2 document contract
+put mediaType 必须匹配 path→mediaType 固定映射
 delete 不携带 bytes/mediaType
+business caller 在调用 primitive 前已完成 document semantic validation/construction
 ```
+
+Primitive 每次调用生成一个 `publicationTimestamp`；prepared operation、commit、current pointer 以及 Init manifest 的 createdAt 使用该 timestamp。Post-current operation diagnostic update可以使用新的 updatedAt。
 
 Primitive 只负责：
 
@@ -1641,24 +1642,14 @@ re-read exact visible World
 recheck exact base
 install immutable blobs/tree/commit
 install prepared operation record
-initial publication install manifest
+initial publication atomic-install manifest
 replace current.json as final World-visibility switch
 best-effort mark operation published after visibility
 release lock
 return visible PublishedWorld
 ```
 
-Primitive 不负责：
-
-```text
-Init legality
-Planning legality
-Play relation
-Revise canon policy
-Settle legality
-Abandon legality
-business document construction
-```
+Primitive 不负责 Init/Planning/Play/Revise/Settle/Abandon 业务合法性，也不解析业务 document bytes。
 
 不允许扩张成 transaction framework / command framework。
 
@@ -1683,55 +1674,50 @@ revision = 1
 正常顺序：
 
 ```text
-build + protocol/profile-validate complete candidate graph in memory
+build + protocol/profile-validate complete target in memory
 → acquire .locks/publish.lock
 → classify/recheck root still uninitialized
 → install immutable blobs/tree/commit
 → install prepared operation record
-→ install manifest.json
+→ atomic-install manifest.json
 → atomic create/replace current.json as final World-visibility switch
 → best-effort mark operation published
 ```
 
 只有 `current.json` 成功后才存在 Published World。
 
+Immutable install 必须能区分：
+
+```text
+created-by-this-attempt
+preexisting-identical
+```
+
+用于 Init cleanup；preexisting path 若 bytes 不同是 `INTERNAL_ERROR`。
+
 #### 同进程 pre-current failure
 
-Primitive 必须知道本 attempt 哪些 durable files 是“新建”而不是“已存在相同 bytes”。
-
-若 `current.json` 尚未成功且 operation 在同一进程失败：
+若 `current.json` 尚未成功：
 
 ```text
 remove manifest if this attempt created it
 remove only blob/tree/commit/operation files this attempt newly created
-never delete a pre-existing identical immutable object
+never delete pre-existing identical immutable object
 remove temp files
 release lock
 ```
 
-Cleanup 成功后 live Core state 回到 `uninitialized`，Init 可以重试。
+Cleanup 成功后 live Core reclassify 为 `uninitialized`，Init 可重试。
 
-若 cleanup 自身失败，则不得声称 uninitialized；Core 必须 reclassify root，通常得到 `invalid`，operation 返回 `INTERNAL_ERROR` 或更早已确定的 specific error。
+若 cleanup 自身失败：不得虚报 uninitialized；必须 reclassify root，通常得到 `invalid`。Operation 返回更早已确定的 specific error；若没有更 specific error则 `INTERNAL_ERROR`。
 
 #### 进程崩溃 / power loss residue
 
-Core2 不自动 recovery。下次启动若无 `current.json` 但有 durable Archive evidence：
-
-```text
-→ invalid
-```
-
-fail-closed，不允许 Init 覆盖。
+Core2 不自动 recovery。下次启动若无 `current.json` 但有 durable Archive evidence：`invalid`。
 
 #### post-current diagnostic failure
 
-一旦 `current.json` 成功：
-
-```text
-Published World 已经是 public truth
-```
-
-随后 operation status diagnostic failure：
+一旦 `current.json` 成功，Published World 已经是 public truth。随后 operation status diagnostic failure：
 
 ```text
 不回滚 current
@@ -1775,7 +1761,7 @@ candidateTreeHash === baseTreeHash
 
 ## 28. Dispose / child ownership 强闭环
 
-Core2 继续只拥有一个 `activeChild` identity；child start/end 必须 identity-safe：
+Core2 只拥有一个 `activeChild` identity；child start/end 必须 identity-safe：
 
 ```ts
 childStarted(child) {
@@ -1787,23 +1773,22 @@ childEnded(child) {
 }
 ```
 
-同时 Core2 必须保存**单一当前 public operation Promise/handle**，只用于 dispose 等待，不是 queue/manager。
+Core2 同时保存**单一当前 public operation handle**，只用于 dispose 等待，不是 queue/manager。
 
 `dispose()` 固定：
 
 ```text
 第一次调用同步标记 disposed
 → capabilities 立即全 false
-→ 后续 public mutation 立即 DISPOSED
 → listeners 立即停止接收新事件
+→ 后续 public mutation 立即 DISPOSED
 → kill exact activeChild if any
-→ await 当前唯一 in-flight public operation 的 finally / compression drain / child close
-→ await 该 operation 所拥有的 Session workspace cleanup
+→ await 当前唯一 in-flight public operation 的 finally / compression drain / child close / terminal Session cleanup
 → rm Core runtimeRoot
 → resolve dispose()
 ```
 
-多次 `dispose()` 必须幂等并共享同一个 disposal completion，不并行删除 runtimeRoot。
+多次 `dispose()` 幂等并共享同一个 disposal completion，不并行删除 runtimeRoot。
 
 强保证：
 
@@ -1826,34 +1811,39 @@ current.json 已完成 visibility switch 后才发生 dispose
 
 ---
 
-## 29. Business failure theorem
+## 29. Business failure / resource theorem
 
 四类 conversational Session统一：
 
 ```text
 send success
   → ready
+  → keep Session workspace
 
 send append/compression/agent failure
-  → Session terminal
+  → terminal Session
   → Published World unchanged
+  → delete Session workspace before Promise settles
 
 submit parse/business/pre-publication failure
-  → Session terminal
+  → terminal Session
   → Published World unchanged
+  → delete Session workspace before Promise settles
 
 submit publication success
-  → Session terminal
+  → terminal Session
   → new Published World
+  → delete Session workspace before Promise settles
 
 cancel ready
-  → Session terminal
+  → terminal Session
   → Published World unchanged
+  → delete Session workspace before Promise settles
 ```
 
 失败 Session 不保留供 retry。
 
-Settle / Abandon failure：
+Settle / Abandon：
 
 ```text
 pre-current failure → Published World unchanged
@@ -1864,9 +1854,9 @@ post-current success → new Published World is truth
 
 ## 30. Internal implementation boundary
 
-允许共享 concrete helper，因为已有真实重复 caller；禁止为了“未来扩展”抽象。
+允许共享 concrete helper，因为已有真实重复 caller；禁止为了未来扩展抽象。
 
-目标责任边界：
+责任边界：
 
 ```text
 world/read
@@ -1901,14 +1891,14 @@ session/submission
 core
   public state
   capability legality
-  single operation guard
+  single operation guard/handle
   Session lifecycle
   settle / abandon orchestration
   event publication
   dispose
 ```
 
-Exact filename可以因现有代码最小改动而合并，但责任不得重新混成 generic framework，也不得增加新的 backend/plugin/registry interface。
+Exact filename 可因现有代码最小改动而合并；责任不得重新混成 generic framework，也不得增加 backend/plugin/registry interface。
 
 ---
 
@@ -1937,13 +1927,7 @@ Core2 headless DoD 完成后，才允许重新评审 TUI migration。
 
 不是旧 Core API / DTO / event compatibility。
 
-禁止：
-
-```text
-Core2 TUI adapter
-fake old runtime
-OldCoreBackend/Core2Backend 双 backend framework
-```
+禁止 Core2 TUI adapter、fake old runtime、OldCoreBackend/Core2Backend 双 backend framework。
 
 ---
 
@@ -1983,9 +1967,7 @@ startSessions 只能是 play
 
 ### `TUI_CORE2_ADAPTATION_DRAFT.md`
 
-不再作为 completion 规范。
-
-恢复与未来迁移由 `TUI_RESTORATION_PLAN.md` 及未来独立 migration review 控制。
+不再作为 completion 规范。恢复与未来迁移由 `TUI_RESTORATION_PLAN.md` 及未来独立 migration review 控制。
 
 ### `@dayloom/core`
 
@@ -1999,15 +1981,16 @@ startSessions 只能是 play
 
 ### Step 0 — Protect restored TUI
 
-加入 branch/review guard：本阶段 Core2 completion commit 不修改 `packages/tui/**`。
+本阶段 Core2 completion commit 不修改 `packages/tui/**`。
 
 ### Step 1 — Read/Profile closure
 
-先实现：
+实现：
 
 ```text
 uninitialized / invalid / published
 Day ID V0 generator
+mediaType validators
 PersistedPlayV1 parser
 summary validator
 stable phase invariants
@@ -2032,14 +2015,15 @@ append
 React
 compression
 child ownership
-single in-flight operation handle for dispose
+single in-flight operation handle
+terminal workspace cleanup
 ```
 
 先保证 Play behavior不变。
 
 ### Step 4 — Init
 
-实现 exact context-empty contract、prompts/marker、InitSubmissionV1、initial publication、sync pre-current cleanup。
+实现 empty Context V0、prompts/marker、InitSubmissionV1、initial publication、sync pre-current cleanup。
 
 ### Step 5 — Planning
 
@@ -2095,7 +2079,7 @@ Windows Node 22
 
 ## 34. Acceptance tests
 
-以下名称是 normative acceptance checklist；可按现有测试文件组织，但语义不得省略。
+以下是 normative acceptance checklist；可按现有测试文件组织，但语义不得省略。
 
 ### Architecture / source
 
@@ -2113,12 +2097,13 @@ core2-package-no-longer-claims-play-only
 core2-empty-root-is-uninitialized
 core2-empty-directories-are-uninitialized
 core2-housekeeping-only-root-is-uninitialized
+core2-symlink-under-persistent-archive-is-not-uninitialized
 core2-empty-root-exposes-init-only
 core2-partial-archive-is-invalid-not-uninitialized
 core2-crashed-initial-publication-residue-is-invalid
 core2-valid-current-ignores-unreachable-immutable-objects
 core2-invalid-world-exposes-no-mutations
-core2-published-world-validates-four-canon-blobs
+core2-published-world-validates-four-canon-blobs-and-media-types
 core2-day-generator-produces-day1-day2
 core2-planned-validates-current-plan-relation
 core2-awaiting-settle-validates-persisted-play-relation
@@ -2126,7 +2111,7 @@ core2-awaiting-settle-validates-nonempty-summary
 core2-idle-validates-last-settled-day-relation
 ```
 
-### Context / prompt contracts
+### Context / prompt
 
 ```text
 core2-init-context-layer-is-empty
@@ -2148,12 +2133,13 @@ core2-init-starts-only-from-uninitialized
 core2-init-cancel-keeps-uninitialized
 core2-init-parser-rejects-unknown-fields
 core2-init-allows-empty-canon-strings
-core2-init-requires-nonempty-title
+core2-init-trims-title-for-manifest
 core2-init-submit-publishes-revision-1-idle
 core2-init-generates-world-id-in-core
 core2-init-does-not-create-plan
 core2-init-current-json-is-final-world-visibility-switch
 core2-init-sync-precurrent-failure-cleans-only-created-files
+core2-init-sync-precurrent-failure-preserves-preexisting-identical-object
 core2-init-sync-precurrent-failure-returns-uninitialized-after-successful-cleanup
 core2-init-cleanup-failure-reclassifies-root
 core2-concurrent-init-detects-world-conflict
@@ -2219,11 +2205,12 @@ core2-replanning-after-abandon-reuses-same-day
 core2-abandoned-content-remains-reachable-from-parent
 ```
 
-### Session temporal / errors
+### Session temporal / resource / errors
 
 ```text
 core2-all-session-kinds-use-one-conversation-per-session
 core2-start-session-installs-session-only-after-context-success
+core2-start-session-failure-removes-session-root-before-settlement
 core2-all-session-kinds-stream-send-final
 core2-all-session-kinds-keep-submit-final-private
 core2-all-session-kinds-use-compression-lifecycle
@@ -2231,6 +2218,8 @@ core2-all-session-kinds-terminalize-on-conversation-failure
 core2-all-session-kinds-terminalize-on-agent-failure
 core2-all-session-kinds-terminalize-on-invalid-submission
 core2-all-session-kinds-drain-summary-provider-before-operation-settles
+core2-terminal-session-removes-workspace-before-operation-settles
+core2-send-success-keeps-same-session-workspace
 core2-send-running-state-precedes-output-delta
 core2-operation-final-state-is-visible-before-promise-settles
 core2-visible-world-damage-maps-world-invalid-not-conflict
@@ -2241,8 +2230,10 @@ core2-stale-child-end-cannot-clear-new-child
 
 ```text
 core2-publication-generates-staging-identity-internally
-core2-business-callers-cannot-supply-hash-fileid-revision-commitid
+core2-business-callers-cannot-supply-hash-fileid-revision-commitid-timestamp
 core2-publication-rejects-duplicate-change-paths
+core2-publication-enforces-path-media-type-mapping
+core2-publication-uses-one-publication-timestamp-for-visible-target
 core2-publication-current-is-final-world-visibility-switch
 core2-postcurrent-diagnostic-failure-does-not-change-success
 core2-update-precurrent-failure-keeps-current-unchanged
@@ -2252,10 +2243,13 @@ core2-update-precurrent-failure-keeps-current-unchanged
 
 ```text
 core2-dispose-is-idempotent
+core2-dispose-getstate-remains-readable-with-zero-capabilities
+core2-dispose-subscribe-becomes-noop
 core2-dispose-capabilities-false-immediately
 core2-dispose-kills-exact-active-child
 core2-dispose-waits-for-inflight-operation-finally
 core2-dispose-waits-for-summary-provider-drain
+core2-dispose-waits-for-terminal-session-cleanup
 core2-dispose-does-not-remove-runtime-root-before-operation-cleanup
 core2-dispose-settlement-leaves-no-runtime-root-access-in-flight
 core2-dispose-does-not-rollback-postcurrent-publication
@@ -2293,41 +2287,45 @@ Core2 只有全部满足才算完整：
 1. `@dayloom/archive-protocol` + Core2 World Profile V0 是 persisted-data 唯一规范来源。
 2. Production Core2 不 import legacy Core 或 TUI。
 3. 现有 PlayPlanV0 / PlaySubmissionV1 / Play Context V0 不因补 lifecycle 被重写。
-4. 空 `worldRoot` 与只有空 Archive directories 的 root → `uninitialized`。
-5. partial/malformed durable archive → `invalid`，绝不被 Init 覆盖。
-6. Published read 对 canon、current day、lastSettledDay 执行 exact Profile relation validation。
+4. 空 `worldRoot` 与只有空 Archive directories 的 root → `uninitialized`；persistent-area symlink/unexpected entry fail-closed。
+5. Partial/malformed durable archive → `invalid`，绝不被 Init 覆盖。
+6. Published read 对 path mediaType、canon、current day、lastSettledDay 执行 exact Profile relation validation。
 7. PersistedPlayV1 read parser 与当前 Play builder完全一致。
 8. `uninitialized` 只提供 Init；`idle` 提供 Planning + Revise；`planned` 提供 Play + Abandon；`awaiting-settle` 提供 Settle + Abandon。
 9. Init/Planning/Play/Revise 各自有 canonical immutable Context V0；Init context为空，Play context不改版。
 10. 四类 Session 各有 concrete Core2-owned prompt + exact submit marker；semantic-summary prompt session-neutral。
-11. Init/Planning/Revise submission parser 全部 exact-key、unknown-field rejecting，模型不拥有结构 identity。
-12. Init submit 首次原子发布 Archive V2 → `idle`，不生成 plan。
-13. 同进程 Init pre-current failure只清理本 attempt 新建内容；cleanup 失败必须 reclassify，不虚报 uninitialized。
-14. Crash residue fail-closed 为 invalid，不增加 recovery coordinator。
-15. Planning target Day ID 由 Core2 生成，V0 为 `day1/day2/...`；beat ID由 Core2生成。
-16. Planning 持久化现有 PlayPlanV0 → `planned`。
-17. Play 保持现有 Promptpile React、streaming、compression、strict relation validation、atomic publication correctness。
-18. Play submit → `awaiting-settle`，且 persisted play/summary可由 read-side重新严格验证。
-19. Settle deterministic 发布新 commit → `idle`，推进 `lastSettledDay`，不重写 day bytes。
-20. Revise 使用 full canon snapshot replacement，不引入 patch framework。
-21. Abandon 只从 visible tree 删除 Core2-owned current-day docs，parent history保留；replan复用同一未 settle day。
-22. 四类 conversational Session 从创建到 terminal 使用一个持续 writable Conversation identity。
-23. 四类 Session 共用已验证 Promptpile / React / compression mechanics，不复制四套 runtime。
-24. compression beta.2 live-trigger、restore-source、timeout/drain、error preservation theorem全部保持。
-25. 六类 publication 使用一个 mechanical primitive；business caller只提供 WorldChange + target control，不提供 Protocol identity/hash/revision。
-26. Publication lock内严格区分 WORLD_CONFLICT 与 WORLD_INVALID。
-27. `current.json` 始终是最终 World visibility switch；之后只允许不影响 World truth 的 diagnostic 更新。
-28. Public operation Promise settle前最终 public state已发布。
-29. `dispose()` settle时不存在 Core2-owned child、provider cleanup、Session operation或 runtimeRoot filesystem access仍在 flight。
-30. Public API/event不含 presentation state。
-31. 不引入 command bus、StateMachine、RuntimeOperations、plugin/provider framework、queue、scheduler、并发系统或 recovery coordinator。
-32. Core2 implementation 阶段不修改 restored TUI 来迁就未完成能力。
-33. 从空 World 到 `day2 planned` 的完整 headless lifecycle通过；planned/awaiting 两种 Abandon/replan通过。
-34. 每个合法 stable state都有合法下一步；invalid 是明确 fail-closed diagnostic terminal，不存在意外业务死路。
-35. Core2 package metadata不再宣称 Play-only runtime。
-36. Core2 tests在 Linux/Windows × Node 20/22全绿。
-37. 只有以上全部满足，才允许重新迁移 TUI。
-38. 后续 TUI migration以 interaction capability closure为验收标准，不要求旧 Core API/data/event compatibility。
+11. Init/Planning/Revise submission parser exact-key、unknown-field rejecting；模型不拥有 Day/beat/World publication identity。
+12. Init manifest title固定 trim；canon string原样保存；Init不生成 plan。
+13. Init submit首次原子发布 Archive V2 → `idle`。
+14. 同进程 Init pre-current failure只清理本 attempt 新建内容；cleanup失败必须 reclassify，不虚报 uninitialized。
+15. Crash residue fail-closed 为 invalid，不增加 recovery coordinator。
+16. Planning target Day ID由 Core2生成，V0为 `day1/day2/...`；beat ID由Core2生成。
+17. Planning持久化现有 PlayPlanV0 → `planned`。
+18. Play保持当前 Promptpile React、streaming、compression、strict relation validation、atomic publication correctness。
+19. Play submit → `awaiting-settle`，persisted play/summary可由 read-side重新严格验证。
+20. Settle deterministic发布新 commit → `idle`，推进 `lastSettledDay`，不重写 day bytes。
+21. Revise使用 full canon snapshot replacement，不引入 patch framework。
+22. Abandon只从 visible tree删除 Core2-owned current-day docs，parent history保留；replan复用同一未 settle day。
+23. 四类 conversational Session 从创建到 terminal使用一个持续 writable Conversation identity。
+24. Terminal Session必须在 Promise settle前删除自身 workspace；send success继续使用同一 workspace。
+25. 四类 Session共用已验证 Promptpile / React / compression mechanics，不复制四套 runtime。
+26. Compression beta.2 live-trigger、restore-source、timeout/drain、error preservation theorem全部保持。
+27. 六类 publication使用一个 mechanical primitive；business caller只提供 base/initial manifest identity、WorldChange与 target control，不提供 hash/fileId/revision/commitId/timestamp。
+28. Publication primitive只做mechanics，不承担业务 document解析；固定path→mediaType映射是其结构性 guard。
+29. Publication lock内严格区分 WORLD_CONFLICT 与 WORLD_INVALID。
+30. `current.json`始终是最终 World visibility switch；之后只允许不影响 World truth 的 diagnostic更新。
+31. Public operation Promise settle前最终 public state已发布；dispose开始后停止 listener delivery 是唯一例外。
+32. `dispose()` settle时不存在 Core2-owned child、provider cleanup、Session operation或 runtimeRoot filesystem access仍在 flight。
+33. Dispose后 getState可读、capabilities全false、subscribe为noop、mutation返回DISPOSED。
+34. Public API/event不含 presentation state。
+35. 不引入 command bus、StateMachine、RuntimeOperations、plugin/provider framework、queue、scheduler、并发系统或 recovery coordinator。
+36. Core2 implementation阶段不修改 restored TUI来迁就未完成能力。
+37. 从空 World到 `day2 planned` 的完整 headless lifecycle通过；planned/awaiting 两种 Abandon/replan通过。
+38. 每个合法 stable state都有合法下一步；invalid是明确 fail-closed diagnostic terminal，不存在意外业务死路。
+39. Core2 package metadata不再宣称 Play-only runtime。
+40. Core2 tests在 Linux/Windows × Node 20/22全绿。
+41. 只有以上全部满足，才允许重新迁移 TUI。
+42. 后续 TUI migration以 interaction capability closure为验收标准，不要求旧 Core API/data/event compatibility。
 
 ---
 
@@ -2357,7 +2355,7 @@ Core2 只有全部满足才算完整：
 │                                                               │
 │  business legality + exact submission validation              │
 │  one mechanical Archive publication primitive                │
-│  one single-operation lifecycle + deterministic dispose       │
+│  one single-operation lifecycle + deterministic cleanup       │
 └──────────────┬─────────────────┬─────────────────┬─────────────┘
                │                 │                 │
                ▼                 ▼                 ▼
@@ -2387,9 +2385,11 @@ new data model defines truth
 已有真实共同 mechanics → 只抽 mechanical helper
 模型产生业务内容 → Core2产生稳定结构 identity
 World truth只由 validated publication产生
+Session terminal → workspace先清理再settle
+Dispose settle → Core2-owned async work全部结束
 失败先保证 World truth不被误改，再保证本 operation完全收尾
 ```
 
 最终一句话：
 
-> **Core2 不重写旧 Core，也不为 TUI 定制接口；它围绕新的 Archive V2 / Dayloom World Profile V0，完整拥有 Dayloom 产品生命周期，以一个持续 Conversation、一个机械 publication theorem 和一个单执行流生命周期形成优雅、可验证、无死路的 application closure。**
+> **Core2 不重写旧 Core，也不为 TUI 定制接口；它围绕新的 Archive V2 / Dayloom World Profile V0，完整拥有 Dayloom 产品生命周期，以一个持续 Conversation、一个机械 publication theorem 和一个单执行流资源生命周期形成优雅、可验证、无死路的 application closure。**
