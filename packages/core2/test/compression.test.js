@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { compressDirectory, heuristicTokenizer } = require('promptpile-compress');
 const { CoreOperationError } = require('../dist/errors');
 const {
   CORE2_COMPRESSION_POLICY,
@@ -39,6 +40,23 @@ function providerOptions(root, runner, events = []) {
     onChildStart: (child) => events.push(['start', child]),
     onChildEnd: (child) => events.push(['end', child]),
   };
+}
+
+async function seedCompactConversation(conversationDir) {
+  fs.writeFileSync(path.join(conversationDir, '[0]user.md'), 'small original user turn');
+  fs.writeFileSync(path.join(conversationDir, '[1]assistant.md'), 'small original assistant turn');
+  return compressDirectory({
+    directory: conversationDir,
+    threshold: 1,
+    keepRecent: 0,
+    strategy: 'sliding-window',
+    tokenizer: heuristicTokenizer,
+    summary: {
+      kind: 'semantic',
+      maxOutputTokens: 2_048,
+      provider: { id: 'test-seed-provider', summarize: async (source) => semanticDocument(source, 'seed summary') },
+    },
+  });
 }
 
 const request = {
@@ -170,4 +188,27 @@ test('real beta.2 lifecycle skips healthy compact history, then restores origina
   assert.equal(JSON.stringify(summaryRequests[1]).includes('summary-marker-1'), false);
   assert.ok(summaryRequests[1].turns.some((turn) => turn.idx === 0), 'restored original history is the recompression source');
   assert.deepEqual([contextPath, reactPath, privatePath].map((file) => fs.readFileSync(file)), protectedBytes);
+});
+
+test('triggered compact lifecycle restores a below-threshold original without calling the Core2 provider', async (t) => {
+  const root = temporaryRoot(t), conversationDir = path.join(root, 'conversation'), seeded = await seedCompactConversation(conversationDir);
+  fs.writeFileSync(path.join(conversationDir, `[${seeded.summaryIdx}]system.md`), 'inflated live summary '.repeat(8_000));
+  let providerCalls = 0;
+  const runner = { async run() { providerCalls += 1; throw new Error('Core2 semantic provider must not run'); } };
+  const completion = await runCompressedCompletion({ ...providerOptions(root, runner), conversationDir, completion: async () => 'below-threshold' });
+  assert.equal(completion, 'below-threshold'); assert.equal(providerCalls, 0);
+  assert.equal(fs.existsSync(path.join(conversationDir, '[0]user.md')), true); assert.equal(fs.existsSync(path.join(conversationDir, '[1]assistant.md')), true);
+});
+
+test('triggered compact lifecycle may restore to no turns without calling the Core2 provider', async (t) => {
+  const root = temporaryRoot(t), conversationDir = path.join(root, 'conversation'), seeded = await seedCompactConversation(conversationDir);
+  for (const name of fs.readdirSync(seeded.archivePath)) {
+    if (/^\[\d+\]/.test(name)) fs.rmSync(path.join(seeded.archivePath, name));
+  }
+  fs.writeFileSync(path.join(conversationDir, `[${seeded.summaryIdx}]system.md`), 'inflated live summary '.repeat(8_000));
+  let providerCalls = 0;
+  const runner = { async run() { providerCalls += 1; throw new Error('Core2 semantic provider must not run'); } };
+  const completion = await runCompressedCompletion({ ...providerOptions(root, runner), conversationDir, completion: async () => 'no-turns' });
+  assert.equal(completion, 'no-turns'); assert.equal(providerCalls, 0);
+  assert.equal(fs.readdirSync(conversationDir).some((name) => /^\[\d+\]/.test(name)), false);
 });
