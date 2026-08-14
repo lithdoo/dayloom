@@ -36,6 +36,8 @@ export interface DayloomCore {
 interface InternalOptions {
   runner?: ProcessRunner; boundaries?: PackagedBoundaries;
   publisher?: typeof publishPlay; mutationPublisher?: typeof publishMutation;
+  remove?: typeof rm;
+  classifier?: typeof classifyWorld;
 }
 const encoder = new TextEncoder();
 const json = (value: unknown) => encoder.encode(`${JSON.stringify(value, null, 2)}\n`);
@@ -48,14 +50,15 @@ class DayloomCoreImpl implements DayloomCore {
   private mutation = false;
   private disposed = false;
   private activeChild: ChildProcess | null = null;
-  private inFlight: Promise<CoreResult> | null = null;
+  private currentOperationDone: Promise<void> | null = null;
   private disposal: Promise<void> | null = null;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   constructor(
     classified: ClassifiedWorld, private readonly worldRoot: string, private readonly runtimeRoot: string,
     private readonly config: CallerConfig, private readonly boundaries: PackagedBoundaries,
     private readonly runner: ProcessRunner, private readonly playPublisher: typeof publishPlay,
-    private readonly mutationPublisher: typeof publishMutation,
+    private readonly mutationPublisher: typeof publishMutation, private readonly remove: typeof rm,
+    private readonly classifier: typeof classifyWorld,
   ) { this.world = classified.published; this.worldState = classified.state; }
   getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed); }
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -83,26 +86,39 @@ class DayloomCoreImpl implements DayloomCore {
   private operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
     if (this.mutation) return Promise.resolve(failure('BUSY', 'Another mutation is in flight.'));
-    this.mutation = true; this.changed();
-    const run = (async () => {
-      try { return await action(); }
+    let resolveOperation!: () => void;
+    const operationDone = new Promise<void>((resolve) => { resolveOperation = resolve; });
+    this.mutation = true;
+    this.currentOperationDone = operationDone;
+    this.changed();
+    return (async () => {
+      try {
+        if (this.disposed) return failure('DISPOSED', 'Core is disposed.');
+        return await action();
+      }
       catch (error) {
         if (error instanceof CoreOperationError) return failure(error.code, error.message);
         const code = codeOf(error);
         if (code === 'WORLD_INVALID') {
-          const classified = await classifyWorld(this.worldRoot);
-          this.world = classified.published; this.worldState = classified.state;
+          await this.recoverWorldState();
           return failure('WORLD_INVALID', messageOf(error));
         }
         if (['SUBMISSION_INVALID', 'WORLD_CONFLICT'].includes(code)) return failure(code as 'SUBMISSION_INVALID' | 'WORLD_CONFLICT', messageOf(error));
-        const classified = await classifyWorld(this.worldRoot);
-        if (classified.state.status === 'invalid') { this.world = null; this.worldState = classified.state; }
+        await this.recoverWorldState();
         return failure('INTERNAL_ERROR', messageOf(error));
-      } finally { this.mutation = false; this.changed(); }
+      } finally {
+        this.mutation = false;
+        this.changed();
+        if (this.currentOperationDone === operationDone) this.currentOperationDone = null;
+        resolveOperation();
+      }
     })();
-    this.inFlight = run;
-    void run.finally(() => { if (this.inFlight === run) this.inFlight = null; });
-    return run;
+  }
+  private async recoverWorldState(): Promise<void> {
+    try {
+      const classified = await this.classifier(this.worldRoot);
+      if (classified.state.status === 'invalid') { this.world = null; this.worldState = classified.state; }
+    } catch { /* error recovery must not replace the original operation result */ }
   }
   startSession(kind: CoreSessionKind) { return this.operation(async () => {
     if (!this.canStart(kind)) return failure('NOT_AVAILABLE', `${kind} Session is not available.`);
@@ -112,19 +128,20 @@ class DayloomCoreImpl implements DayloomCore {
       else if (kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config);
       else if (kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config);
       else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config);
-    } catch (error) { await rm(path.join(this.runtimeRoot, 'sessions', id), { recursive: true, force: true }); return failure('INTERNAL_ERROR', messageOf(error)); }
+    } catch (error) { await this.cleanupSessionRoot(path.join(this.runtimeRoot, 'sessions', id)); return failure('INTERNAL_ERROR', messageOf(error)); }
     try {
       const context = kind === 'play' ? buildContextMessage(this.world!) : buildLifecycleContext(session);
       if (context !== null) await this.appendConversation(session.contextDir, context);
-      if (this.disposed) { await rm(session.root, { recursive: true, force: true }); return failure('DISPOSED', 'Core is disposed.'); }
+      if (this.disposed) { await this.cleanupSessionRoot(session.root); return failure('DISPOSED', 'Core is disposed.'); }
       this.session = session; this.sessionStatus = { id, kind, status: 'ready' }; return success();
-    } catch (error) { await rm(session.root, { recursive: true, force: true }); return failure('CONVERSATION_FAILED', messageOf(error)); }
+    } catch (error) { await this.cleanupSessionRoot(session.root); return failure('CONVERSATION_FAILED', messageOf(error)); }
   }); }
   send(text: string) { return this.operation(async () => {
     if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'send is not available.');
     if (typeof text !== 'string' || text.trim() === '') return failure('INVALID_INPUT', 'Input must be non-empty.');
     const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'running' }; this.changed();
     try {
+      if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
       try { await this.appendConversation(session.conversationDir, text); }
       catch (error) { throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error)); }
       await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig, (delta) => this.emit({ type: 'output.delta', sessionId: session.id, text: delta })));
@@ -136,17 +153,21 @@ class DayloomCoreImpl implements DayloomCore {
     if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
     const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'submitting' }; this.changed();
     try {
+      if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
       try { await this.appendConversation(session.conversationDir, session.submitMarker); }
       catch (error) { throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error)); }
       const final = await this.compressAndComplete(session, () => this.runSessionReact(session, session.submitConfig));
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
       const published = await this.publishSubmission(session, final);
-      this.installPublished(published); await this.terminalize(session); return success();
+      this.installPublished(published);
+      await this.terminalize(session);
+      return success();
     } catch (error) { await this.terminalize(session); throw error; }
   }); }
   cancel() { return this.operation(async () => {
     if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
-    await this.terminalize(this.session); return success();
+    const cleanupError = await this.terminalize(this.session);
+    return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
   }); }
   settle() { return this.operation(async () => {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
@@ -188,14 +209,18 @@ class DayloomCoreImpl implements DayloomCore {
     return this.worldState.phase === 'planned' && kind === 'play';
   }
   private installPublished(world: PublishedWorld) { this.world = world; this.worldState = world.view; }
-  private async terminalize(session: CoreSession) {
-    await rm(session.root, { recursive: true, force: true });
+  private async terminalize(session: CoreSession): Promise<Error | null> {
     if (this.session === session) { this.session = null; this.sessionStatus = null; this.changed(); }
+    return this.cleanupSessionRoot(session.root);
+  }
+  private async cleanupSessionRoot(root: string): Promise<Error | null> {
+    try { await this.remove(root, { recursive: true, force: true }); return null; }
+    catch (error) { return error instanceof Error ? error : new Error('Could not remove terminal Session workspace.'); }
   }
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.disposed = true; this.listeners.clear(); this.activeChild?.kill();
-    this.disposal = (async () => { const operation = this.inFlight; if (operation) await operation.catch(() => undefined); this.activeChild = null; this.session = null; this.sessionStatus = null; await rm(this.runtimeRoot, { recursive: true, force: true }); })();
+    this.disposal = (async () => { const operation = this.currentOperationDone; if (operation) await operation; this.activeChild = null; this.session = null; this.sessionStatus = null; await this.remove(this.runtimeRoot, { recursive: true, force: true }); })();
     return this.disposal;
   }
 }
@@ -219,8 +244,9 @@ export async function createDayloomCoreInternal(options: CreateDayloomCoreOption
   let config: CallerConfig; try { config = await readCallerConfig(llmConfigPath); } catch (error) { throw new CoreInitializationError('INVALID_OPTIONS', 'Invalid caller LLM config.', { cause: error }); }
   let boundaries: PackagedBoundaries; try { boundaries = internal.boundaries ?? await resolvePackagedBoundaries(); } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not initialize packaged Promptpile boundaries.', { cause: error }); }
   try {
-    const classified = await classifyWorld(worldRoot), runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-core2-'));
+    const classifier = internal.classifier ?? classifyWorld;
+    const classified = await classifier(worldRoot), runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-core2-'));
     await mkdir(path.join(runtimeRoot, 'sessions'));
-    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.publisher ?? publishPlay, internal.mutationPublisher ?? publishMutation);
+    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.publisher ?? publishPlay, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier);
   } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not initialize Core runtime.', { cause: error }); }
 }

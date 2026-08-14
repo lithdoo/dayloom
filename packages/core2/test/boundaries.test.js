@@ -9,6 +9,7 @@ const { deriveSummaryConfig, readCallerConfig, writeDerivedConfigs } = require('
 const { runReact } = require('../dist/promptpile/react-runner');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
 const { createPlayWorkspace, WRITABLE_SUMMARY_AUTHORITY_NOTE } = require('../dist/session/play');
+const { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } = require('../dist/session/lifecycle');
 const { readPublishedWorld } = require('../dist/world/read');
 const { archiveFixture, eventStream } = require('./helpers');
 
@@ -66,6 +67,27 @@ test('play workspace isolates compression requests and marks summaries as untrus
     assert.equal(fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8').includes(WRITABLE_SUMMARY_AUTHORITY_NOTE), true);
   }
   assert.deepEqual(fs.readdirSync(session.contextDir), []);
+});
+test('lifecycle workspaces own exact markers, empty Init context, and concrete business prompts', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-lifecycle-workspace-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
+  const config = await readCallerConfig(fixture.config), world = await readPublishedWorld(fixture.root);
+  const init = await createInitWorkspace(runtime, 'init', config);
+  const planning = await createPlanningWorkspace(runtime, 'planning', world, config);
+  const revise = await createReviseWorkspace(runtime, 'revise', world, config);
+  assert.deepEqual(fs.readdirSync(init.contextDir), []);
+  assert.equal(init.submitMarker, '[DAYLOOM_INIT_SUBMIT_V1]\nFinalize this Session now using the Core2 Init submission Final contract.');
+  assert.equal(planning.submitMarker, '[DAYLOOM_PLANNING_SUBMIT_V1]\nFinalize this Session now using the Core2 Planning submission Final contract.');
+  assert.equal(revise.submitMarker, '[DAYLOOM_REVISE_SUBMIT_V1]\nFinalize this Session now using the Core2 Revise submission Final contract.');
+  assert.equal(buildLifecycleContext(planning), `[DAYLOOM_PLANNING_CONTEXT_V0]\n\n[WORLD]\nworld_id: world1\ntarget_day: day1\nlast_settled_day: <none>\n\n[CANON_PREMISE]\nPremise\n\n[CANON_RULES]\nRules\n\n[CANON_STYLE]\nStyle\n\n[CANON_USER_ROLE]\nUser role`);
+  assert.equal(buildLifecycleContext(revise), `[DAYLOOM_REVISE_CONTEXT_V0]\n\n[WORLD]\nworld_id: world1\nlast_settled_day: <none>\n\n[CANON_PREMISE]\nPremise\n\n[CANON_RULES]\nRules\n\n[CANON_STYLE]\nStyle\n\n[CANON_USER_ROLE]\nUser role`);
+  const settledWorld = { ...world, commit: { ...world.commit, control: { phase: 'idle', day: null, lastSettledDay: 'day1' } }, lastSettledSummary: 'Verified summary\n' };
+  const day2 = await createPlanningWorkspace(runtime, 'planning-day2', settledWorld, config);
+  assert.equal(buildLifecycleContext(day2).endsWith('\n\n[LAST_SETTLED_SUMMARY]\nVerified summary\n'), true);
+  assert.equal(buildLifecycleContext(planning).includes('[LAST_SETTLED_SUMMARY]'), false);
+  assert.match(fs.readFileSync(path.join(init.root, 'react', 'thought.md'), 'utf8'), /establish a new World/);
+  assert.match(fs.readFileSync(path.join(planning.root, 'react', 'thought.md'), 'utf8'), /Do not modify canon, targetDay/);
+  assert.match(fs.readFileSync(path.join(revise.root, 'react', 'thought.md'), 'utf8'), /Do not rewrite manifest identity/);
 });
 test('React runner rejects malformed, schema-invalid, gaps, session changes and Final mismatch', async () => {
   const boundaries = await resolvePackagedBoundaries();

@@ -27,6 +27,7 @@ for (const file of await files(root)) {
   const source = await readFile(file, 'utf8');
   for (const match of source.matchAll(specifier)) {
     if (forbidden.some((rule) => rule.test(match[1]))) violations.push(`${file}: forbidden import ${match[1]}`);
+    if (file.endsWith(`${path.sep}session${path.sep}lifecycle.ts`) && match[1] === './play') violations.push(`${file}: shared Session policy must not be owned by Play`);
   }
 }
 const packageJson = JSON.parse(await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));

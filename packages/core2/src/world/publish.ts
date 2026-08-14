@@ -22,7 +22,10 @@ export interface PublishMutationInput {
   changes: readonly WorldChange[];
   control: { phase: 'idle' | 'planned' | 'awaiting-settle'; day: string | null; lastSettledDay: string | null };
 }
-interface PublicationOptions { writeDiagnostic?: (target: string, bytes: Uint8Array) => Promise<void> }
+interface PublicationOptions {
+  writeDiagnostic?: (target: string, bytes: Uint8Array) => Promise<void>;
+  writeCurrent?: (target: string, bytes: Uint8Array, exclusive: boolean) => Promise<void>;
+}
 const jsonBytes = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
 const coreOwned = /^(?:canon\/(?:premise|rules|style|user-role)\.md|days\/day[1-9][0-9]*\/(?:plan|play)\.json|days\/day[1-9][0-9]*\/summary\.md)$/;
 const expectedMedia = (documentPath: string) => documentPath.endsWith('.json') ? 'application/json' : 'text/markdown';
@@ -92,7 +95,7 @@ export async function publishMutation(worldRoot: string, input: PublishMutationI
     if (await installImmutable(operationTarget, jsonBytes(operation))) created.push(operationTarget);
     const committed = await validatePublishedProfile(worldRoot, manifest, commit, candidate);
     if (input.base === null) { const target = path.join(worldRoot, 'manifest.json'); await atomic(target, jsonBytes(manifest), true); created.push(target); }
-    await atomic(path.join(worldRoot, 'current.json'), jsonBytes(parseCurrentPointerV2({ schemaVersion: 2, revision: commit.revision, commitId, updatedAt: timestamp })), input.base === null);
+    await (options.writeCurrent ?? atomic)(path.join(worldRoot, 'current.json'), jsonBytes(parseCurrentPointerV2({ schemaVersion: 2, revision: commit.revision, commitId, updatedAt: timestamp })), input.base === null);
     visible = true;
     const diagnosed = parseArchiveOperationV2({ ...operation, status: 'published', updatedAt: new Date().toISOString() });
     try { await (options.writeDiagnostic ?? atomic)(operationTarget, jsonBytes(diagnosed)); } catch { /* diagnostic only */ }

@@ -37,7 +37,7 @@ export function parseDayId(value: unknown): string {
   return value;
 }
 export function nextDay(lastSettledDay: string | null): string {
-  return lastSettledDay === null ? 'day1' : `day${Number(parseDayId(lastSettledDay).slice(3)) + 1}`;
+  return lastSettledDay === null ? 'day1' : `day${BigInt(parseDayId(lastSettledDay).slice(3)) + 1n}`;
 }
 
 async function regularBytes(root: string, relative: string): Promise<Uint8Array> {
@@ -100,6 +100,7 @@ export async function validatePublishedProfile(root: string, manifest: Readonly<
     parseDayId(control.day);
     if (control.day !== nextDay(control.lastSettledDay)) throw new Error('Current day does not follow lastSettledDay.');
   }
+  validateDayTreeStructure(tree, control.day, control.lastSettledDay);
   const canon = Object.freeze({
     premise: await readTextDocument(root, tree, 'canon/premise.md'),
     rules: await readTextDocument(root, tree, 'canon/rules.md'),
@@ -123,6 +124,15 @@ export async function validatePublishedProfile(root: string, manifest: Readonly<
   const view = Object.freeze({ status: 'published' as const, worldId: manifest.worldId, title: manifest.title, revision: commit.revision, commitId: commit.id, phase: control.phase, day: control.day, lastSettledDay: control.lastSettledDay });
   return Object.freeze({ manifest, commit, tree, view, canon, lastSettledSummary, playContext });
 }
+
+function validateDayTreeStructure(tree: Readonly<RootTreeV1>, currentDay: string | null, lastSettledDay: string | null): void {
+  const maximumVisibleDay = currentDay === null ? dayNumber(lastSettledDay) : dayNumber(currentDay);
+  for (const entry of tree.entries) {
+    const match = /^days\/(day[1-9][0-9]*)\/(plan\.json|play\.json|summary\.md)$/.exec(entry.path);
+    if (match && dayNumber(match[1]) > maximumVisibleDay) throw new Error(`Future Core2-owned day document is not legal in the visible tree: ${entry.path}`);
+  }
+}
+function dayNumber(day: string | null): bigint { return day === null ? 0n : BigInt(parseDayId(day).slice(3)); }
 
 function entryFor(tree: Readonly<RootTreeV1>, rawPath: string) {
   const documentPath = parseWorldDocumentPathV1(rawPath);

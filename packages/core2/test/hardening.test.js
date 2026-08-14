@@ -6,6 +6,7 @@ const path = require('node:path');
 const { createDayloomCoreInternal } = require('../dist/core');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
 const { publishPlay } = require('../dist/world/publish');
+const { classifyWorld } = require('../dist/world/read');
 const { archiveFixture, FakeRunner, eventStream } = require('./helpers');
 
 test('a second mutation returns BUSY immediately', async (t) => {
@@ -15,6 +16,78 @@ test('a second mutation returns BUSY immediately', async (t) => {
   const starting = core.startSession('play');
   while (!release) await new Promise((resolve) => setImmediate(resolve));
   assert.equal((await core.cancel()).error.code, 'BUSY'); release(); assert.deepEqual(await starting, { ok: true });
+});
+test('listener-reentrant dispose observes the preinstalled operation completion handle', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const runner = new FakeRunner();
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() });
+  let disposal;
+  core.subscribe(() => { disposal ??= core.dispose(); });
+  const starting = core.startSession('play');
+  assert.deepEqual(await starting, { ok: false, error: { code: 'DISPOSED', message: 'Core is disposed.' } });
+  await disposal;
+  assert.equal(runner.calls.length, 0);
+  assert.deepEqual(core.getState().capabilities, { startSessions: [], settle: false, abandonDay: false, send: false, submit: false, cancel: false });
+});
+test('listener-reentrant dispose from running state prevents a later child from starting', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const runner = new FakeRunner();
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() });
+  await core.startSession('play');
+  const callsBeforeSend = runner.calls.length; let disposal;
+  core.subscribe((event) => { if (event.type === 'state.changed' && event.state.session?.status === 'running') disposal ??= core.dispose(); });
+  const sending = core.send('hello');
+  assert.equal((await sending).error.code, 'DISPOSED');
+  await disposal;
+  assert.equal(runner.calls.length, callsBeforeSend);
+});
+test('post-publication workspace cleanup failure keeps truth successful and Session terminal', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const remove = async (target, options) => {
+    if (target.includes(`${path.sep}sessions${path.sep}`)) throw new Error('session cleanup denied');
+    return fs.promises.rm(target, options);
+  };
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), remove }); t.after(() => core.dispose());
+  await core.startSession('play');
+  assert.deepEqual(await core.submit(), { ok: true });
+  assert.equal(core.getState().session, null);
+  assert.equal(core.getState().world.revision, 2);
+  assert.equal(core.getState().world.phase, 'awaiting-settle');
+});
+test('terminal cleanup failure never leaves an invalid submission in submitting state', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const remove = async (target, options) => {
+    if (target.includes(`${path.sep}sessions${path.sep}`)) throw new Error('session cleanup denied');
+    return fs.promises.rm(target, options);
+  };
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner(['{}']), boundaries: await resolvePackagedBoundaries(), remove }); t.after(() => core.dispose());
+  await core.startSession('play');
+  const result = await core.submit();
+  assert.equal(result.error.code, 'SUBMISSION_INVALID');
+  assert.equal(core.getState().session, null);
+  assert.deepEqual(core.getState().capabilities.startSessions, ['play']);
+});
+test('successful terminal operation removes its Session workspace before settling', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup); let terminalRootRemoved = false;
+  const remove = async (target, options) => {
+    if (target.includes(`${path.sep}sessions${path.sep}`)) terminalRootRemoved = true;
+    return fs.promises.rm(target, options);
+  };
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner(), boundaries: await resolvePackagedBoundaries(), remove }); t.after(() => core.dispose());
+  await core.startSession('play');
+  assert.deepEqual(await core.cancel(), { ok: true });
+  assert.equal(terminalRootRemoved, true);
+  assert.equal(core.getState().session, null);
+});
+test('recovery classification failure cannot reject a public operation', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup); let classifications = 0;
+  const classifier = async (root) => { if (classifications++ === 0) return classifyWorld(root); throw new Error('recovery read failed'); };
+  const publisher = async () => { throw Object.assign(new Error('disk failed'), { code: 'EIO' }); };
+  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), publisher, classifier }); t.after(() => core.dispose());
+  await core.startSession('play');
+  assert.deepEqual(await core.submit(), { ok: false, error: { code: 'INTERNAL_ERROR', message: 'disk failed' } });
 });
 test('generic publication I/O failure is INTERNAL_ERROR, not AGENT_FAILED', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);

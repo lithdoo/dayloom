@@ -6,8 +6,9 @@ const path = require('node:path');
 const { createDayloomCoreInternal } = require('../dist/core');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
 const { classifyWorld, nextDay, parsePersistedPlayV1 } = require('../dist/world/read');
+const { publishMutation } = require('../dist/world/publish');
 const { parseInitSubmissionV1, parsePlanningSubmissionV1, parseReviseSubmissionV1 } = require('../dist/session/submission');
-const { FakeRunner } = require('./helpers');
+const { archiveFixture, FakeRunner } = require('./helpers');
 
 const init = JSON.stringify({ version: 1, title: '  New World  ', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' } });
 const planning = (intent = 'Day intent') => JSON.stringify({ version: 1, intent, beats: [{ intent: 'Begin' }] });
@@ -39,6 +40,39 @@ test('submission parsers are exact and Core owns day and beat identity', () => {
   assert.equal(parseReviseSubmissionV1(revise).canon.premise, 'Revised');
   assert.throws(() => parsePlanningSubmissionV1(JSON.stringify({ version: 1, intent: 'x', beats: [], day: 'day9' })));
   assert.equal(nextDay(null), 'day1'); assert.equal(nextDay('day1'), 'day2');
+  assert.equal(nextDay('day9007199254740992'), 'day9007199254740993');
+});
+
+test('idle Profile rejects visible next-day documents before Planning can overwrite them', async (t) => {
+  const fixture = archiveFixture({ phase: 'idle' }); t.after(fixture.cleanup);
+  const classified = await classifyWorld(fixture.root);
+  assert.equal(classified.state.status, 'invalid');
+  assert.match(classified.state.error.message, /Future Core2-owned day document/);
+});
+
+test('publication primitive rejects duplicate business paths before filesystem mutation', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-duplicate-change-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  await assert.rejects(() => publishMutation(root, {
+    operationType: 'init', base: null, initialManifest: { worldId: 'world1', title: 'World' },
+    changes: [
+      { op: 'put', path: 'canon/premise.md', mediaType: 'text/markdown', bytes: Buffer.from('a') },
+      { op: 'put', path: 'canon/premise.md', mediaType: 'text/markdown', bytes: Buffer.from('b') },
+    ],
+    control: { phase: 'idle', day: null, lastSettledDay: null },
+  }), /duplicated/);
+  assert.equal(fs.existsSync(path.join(root, 'current.json')), false);
+});
+
+test('failed initial publication cleans its own pre-current durable files back to uninitialized', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-init-cleanup-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const markdown = (documentPath, value) => ({ op: 'put', path: documentPath, mediaType: 'text/markdown', bytes: Buffer.from(value) });
+  await assert.rejects(() => publishMutation(root, {
+    operationType: 'init', base: null, initialManifest: { worldId: 'world1', title: 'World' },
+    changes: [markdown('canon/premise.md', 'p'), markdown('canon/rules.md', 'r'), markdown('canon/style.md', 's'), markdown('canon/user-role.md', 'u')],
+    control: { phase: 'idle', day: null, lastSettledDay: null },
+  }, { writeCurrent: async () => { throw new Error('current write failed'); } }), /current write failed/);
+  assert.equal((await classifyWorld(root)).state.status, 'uninitialized');
+  assert.equal(fs.existsSync(path.join(root, 'manifest.json')), false);
 });
 
 test('PersistedPlayV1 parser enforces pinned plan relations', () => {
