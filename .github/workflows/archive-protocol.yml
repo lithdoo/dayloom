@@ -39,6 +39,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run build -w @dayloom/archive-protocol
       - run: npm test -w @dayloom/core2
 
   conformance:
