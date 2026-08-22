@@ -231,6 +231,18 @@ test('send preserves React failure detail as AGENT_FAILED and terminalizes the S
   assert.equal(core.getState().session, null);
 });
 
+test('completed empty React Final maps to AGENT_FAILED and terminalizes the Session', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const core = await createDayloomCoreInternal(
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
+    { runner: new FakeRunner(['   ']), boundaries: await resolvePackagedBoundaries() },
+  );
+  t.after(() => core.dispose());
+  await core.startSession('play');
+  assert.deepEqual(await core.send('hello'), { ok: false, error: { code: 'AGENT_FAILED', message: 'React Final was empty.' } });
+  assert.equal(core.getState().session, null);
+});
+
 test('compression failure is CONVERSATION_FAILED, skips React, and leaves World unchanged', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); let appends = 0, reactCalls = 0;
   const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');

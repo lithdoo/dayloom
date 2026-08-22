@@ -50,5 +50,6 @@ export async function runReact(input: {
   if (!streamed && result.stdout.length > 0) consumeChunk(result.stdout);
   if (buffer.length > 0) throw new Error('React emitted truncated JSONL.');
   if (result.code !== 0 || !terminal || sessionId === null || deltas !== final) throw new Error(result.stderr || 'React stream did not complete successfully.');
+  if (final.trim() === '') throw new Error('React Final was empty.');
   return final;
 }

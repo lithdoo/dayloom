@@ -160,6 +160,14 @@ test('React runner preserves the concrete session failure message', async () => 
     /provider rejected the API key/,
   );
 });
+test('React runner rejects a completed but empty Final', async () => {
+  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('   ');
+  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
+  await assert.rejects(
+    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }),
+    /React Final was empty/,
+  );
+});
 test('React invocation keeps the frozen context/output topology and enables no input, tools, or hook', async () => {
   const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('ok'); let captured;
   const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
