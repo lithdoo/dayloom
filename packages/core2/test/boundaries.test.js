@@ -60,6 +60,8 @@ test('play workspace isolates compression requests and marks summaries as untrus
   const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-workspace-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
   const session = await createPlayWorkspace(runtime, 'session', await readPublishedWorld(fixture.root), await readCallerConfig(fixture.config));
   assert.equal(path.dirname(session.requestsDir), path.join(session.root, 'compression'));
+  assert.equal(session.reactWorkRoot, path.join(session.root, 'react-work'));
+  assert.equal(fs.statSync(session.reactWorkRoot).isDirectory(), true);
   assert.equal(fs.statSync(session.requestsDir).isDirectory(), true);
   assert.equal(fs.readFileSync(session.summaryPromptPath, 'utf8').includes('Return exactly one JSON object'), true);
   assert.equal(TOML.parse(fs.readFileSync(session.summaryConfigPath, 'utf8')).llm_api[0].name, 'test');
@@ -91,7 +93,7 @@ test('lifecycle workspaces own exact markers, empty Init context, and concrete b
 });
 test('React runner rejects malformed, schema-invalid, gaps, session changes and Final mismatch', async () => {
   const boundaries = await resolvePackagedBoundaries();
-  const base = { runner: null, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' };
+  const base = { runner: null, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' };
   for (const stdout of [
     '{bad\n',
     JSON.stringify({ schema_version: 1, type: 'bad', session_id: 'x', sequence: 0 }) + '\n',
@@ -110,7 +112,7 @@ test('React runner consumes JSONL incrementally across stdout chunks', async () 
     options.onStdout(stream.slice(0, split)); options.onStdout(stream.slice(split));
     return { code: 0, stdout: stream, stderr: '' };
   } };
-  const final = await runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', onDelta: (text) => received.push(text) });
+  const final = await runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w', onDelta: (text) => received.push(text) });
   assert.equal(final, 'hello'); assert.deepEqual(received, ['hello']);
 });
 test('React runner emits Final delta before the child process closes', async () => {
@@ -120,14 +122,14 @@ test('React runner emits Final delta before the child process closes', async () 
     close = () => { options.onStdout(`${lines[2]}\n`); resolve({ code: 0, stdout: eventStream('live'), stderr: '' }); };
   }) };
   let delta = '', settled = false;
-  const running = runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', onDelta: (text) => { delta += text; } }).finally(() => { settled = true; });
+  const running = runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w', onDelta: (text) => { delta += text; } }).finally(() => { settled = true; });
   while (!close) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(delta, 'live'); assert.equal(settled, false); close(); assert.equal(await running, 'live');
 });
 test('React runner rejects truncated JSONL at EOF', async () => {
   const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('x').slice(0, -3);
   const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
-  await assert.rejects(() => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' }), /truncated JSONL/);
+  await assert.rejects(() => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }), /truncated JSONL/);
 });
 test('React runner preserves the concrete session failure message', async () => {
   const boundaries = await resolvePackagedBoundaries(), id = 'react-session';
@@ -137,15 +139,15 @@ test('React runner preserves the concrete session failure message', async () => 
   ].map(JSON.stringify).join('\n') + '\n';
   const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 1, stdout, stderr: '' }; } };
   await assert.rejects(
-    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y' }),
+    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }),
     /provider rejected the API key/,
   );
 });
 test('React invocation keeps the frozen context/output topology and enables no input, tools, or hook', async () => {
   const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('ok'); let captured;
   const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
-  await runReact({ runner, reactBin: 'packaged-react', validate: boundaries.validateAgentEvent, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir' });
-  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json']);
+  await runReact({ runner, reactBin: 'packaged-react', validate: boundaries.validateAgentEvent, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir', workRoot: 'work-root' });
+  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--work-root', 'work-root', '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json']);
   assert.equal(captured.args.includes('--input'), false); assert.equal(captured.args.includes('--tools-file'), false); assert.equal(captured.args.includes('--after-hook-path'), false);
 });
 test('architecture guard rejects legacy and deep imports', () => {

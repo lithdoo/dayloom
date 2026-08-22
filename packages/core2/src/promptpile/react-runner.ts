@@ -11,10 +11,10 @@ interface AgentEvent {
   error?: { code: string; message: string };
 }
 export async function runReact(input: {
-  runner: ProcessRunner; reactBin: string; validate: ValidateFunction; config: string; context: string; conversation: string;
+  runner: ProcessRunner; reactBin: string; validate: ValidateFunction; config: string; context: string; conversation: string; workRoot: string;
   onDelta?: (text: string) => void; onChild?: (child: ChildProcess) => void;
 }): Promise<string> {
-  const args = ['--config', input.config, '-d', input.context, '--output-dir', input.conversation, '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json'];
+  const args = ['--config', input.config, '-d', input.context, '--output-dir', input.conversation, '--work-root', input.workRoot, '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json'];
   let expected = 0, sessionId: string | null = null, terminal = false, deltas = '', final = '', buffer = '', streamed = false;
   const consumeLine = (rawLine: string) => {
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;

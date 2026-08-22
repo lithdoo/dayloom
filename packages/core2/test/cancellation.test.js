@@ -28,6 +28,7 @@ function blockedReactRunner({ finishOnKill = true } = {}) {
         react = {
           child,
           options,
+          get settled() { return settled; },
           fail: () => settle({ code: 1, stdout: '', stderr: 'failed' }),
           complete(content = 'done') {
             const stdout = eventStream(content);
@@ -181,7 +182,10 @@ test('core2-running-cancel-leaves-world-unchanged', async (t) => {
 test('core2-running-cancel-terminalizes-session-once', async (t) => {
   const controlled = blockedReactRunner(); let cleanups = 0;
   const remove = async (target, options) => {
-    if (target.includes(`${path.sep}sessions${path.sep}`)) cleanups += 1;
+    if (target.includes(`${path.sep}sessions${path.sep}`)) {
+      assert.equal(controlled.react.settled, true, 'Session root removal must follow child settlement');
+      cleanups += 1;
+    }
     return rm(target, options);
   };
   const { core } = await setup(t, controlled.runner, { remove });

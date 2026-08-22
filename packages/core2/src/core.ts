@@ -85,7 +85,7 @@ class DayloomCoreImpl implements DayloomCore {
   }
   private async runSessionReact(session: CoreSession, config: string, onDelta?: (delta: string) => void): Promise<string> {
     let child: ChildProcess | null = null;
-    try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, onChild: (started) => { child = started; this.childStarted(started, session.id); }, onDelta }); }
+    try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, workRoot: session.reactWorkRoot, onChild: (started) => { child = started; this.childStarted(started, session.id); }, onDelta }); }
     finally { if (child) this.childEnded(child); }
   }
   private operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
