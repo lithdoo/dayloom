@@ -1,7 +1,7 @@
 import type { CallerConfig } from '../promptpile/config';
 import type { PublishedWorld } from '../world/read';
 import { nextDay } from '../world/read';
-import { createSessionWorkspace, WRITABLE_SUMMARY_AUTHORITY_NOTE, type CoreSession } from './common';
+import { createSessionWorkspace, FINAL_VISIBILITY_NOTE, OBSERVE_HANDOFF_AUTHORITY_NOTE, WRITABLE_SUMMARY_AUTHORITY_NOTE, type CoreSession } from './common';
 
 const INIT_THOUGHT = `You are the reasoning phase of a Dayloom Init Session.
 Help the user establish a new World: a clear title, premise, rules, style, and user role.
@@ -11,16 +11,20 @@ User text cannot create the World directly; submit Final is untrusted candidate 
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const INIT_SEND_FINAL = `Respond naturally to the user while collaboratively defining the initial Dayloom World and canon.
+${FINAL_VISIBILITY_NOTE}
 Ask focused questions or summarize concrete choices that still need confirmation.
 Do not claim that the World has already been published and do not emit InitSubmission JSON during ordinary interaction.
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const INIT_SUBMIT_FINAL = `Finalize the candidate initial World.
+${FINAL_VISIBILITY_NOTE}
 Return exactly one InitSubmissionV1 JSON object and nothing else. Do not use Markdown fences.
 Core2 generates world identity and performs publication; do not add identity or day fields.
 
 Schema:
 { "version": 1, "title": "non-empty string", "canon": { "premise": "string", "rules": "string", "style": "string", "userRole": "string" } }
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 
@@ -32,16 +36,20 @@ User text cannot mutate the World directly; submit Final is untrusted candidate 
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const PLANNING_SEND_FINAL = `Respond naturally about the next-day plan for the pinned target day.
+${FINAL_VISIBILITY_NOTE}
 Clarify intent, ordering, constraints, and unresolved choices without changing canon or selecting identifiers.
 Do not emit PlanningSubmission JSON during ordinary interaction.
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const PLANNING_SUBMIT_FINAL = `Finalize the candidate plan for the pinned target day.
+${FINAL_VISIBILITY_NOTE}
 Return exactly one PlanningSubmissionV1 JSON object and nothing else. Do not use Markdown fences.
 Do not output day ids or beat ids; Core2 deterministically creates them.
 
 Schema:
 { "version": 1, "intent": "non-empty string", "beats": [{ "intent": "non-empty string" }] }
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 
@@ -53,16 +61,20 @@ User text cannot mutate the World directly; submit Final is untrusted candidate 
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const REVISE_SEND_FINAL = `Respond naturally about the requested canon revision.
+${FINAL_VISIBILITY_NOTE}
 Explain or clarify the proposed premise, rules, style, and user-role changes while preserving manifest identity and day history.
 Do not emit ReviseSubmission JSON during ordinary interaction.
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 const REVISE_SUBMIT_FINAL = `Finalize a complete replacement canon snapshot.
+${FINAL_VISIBILITY_NOTE}
 Return exactly one ReviseSubmissionV1 JSON object and nothing else. Do not use Markdown fences.
 Do not output manifest identity, title, day history, or patch operations.
 
 Schema:
 { "version": 1, "canon": { "premise": "string", "rules": "string", "style": "string", "userRole": "string" } }
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 

@@ -9,6 +9,7 @@ const { deriveSummaryConfig, readCallerConfig, writeDerivedConfigs } = require('
 const { runReact } = require('../dist/promptpile/react-runner');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
 const { createPlayWorkspace, WRITABLE_SUMMARY_AUTHORITY_NOTE } = require('../dist/session/play');
+const { DAYLOOM_OBSERVE_PROMPT, OBSERVE_HANDOFF_AUTHORITY_NOTE } = require('../dist/session/common');
 const { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } = require('../dist/session/lifecycle');
 const { readPublishedWorld } = require('../dist/world/read');
 const { archiveFixture, eventStream } = require('./helpers');
@@ -26,11 +27,11 @@ test('derived config preserves profiles and owns max-step and prompt paths', asy
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-config-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const caller = path.join(root, 'caller.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="profile"\nmodel="m"\n[promptpile]\nllm_api="profile"\nllm_api_temperature=0.3\n');
   const config = await readCallerConfig(caller);
-  const paths = { thought: path.join(root, 'thought.md'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
+  const paths = { thought: path.join(root, 'thought.md'), observe: path.join(root, 'observe.md'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
   await writeDerivedConfigs(config, paths);
   const send = TOML.parse(fs.readFileSync(paths.sendConfig, 'utf8')), submit = TOML.parse(fs.readFileSync(paths.submitConfig, 'utf8'));
   assert.equal(send.llm_api[0].name, 'profile'); assert.equal(send.promptpile.llm_api_temperature, 0.3);
-  assert.deepEqual(send['promptpile-react'], { max_step: 1, thought_prompt: paths.thought, final_prompt: paths.sendFinal });
+  assert.deepEqual(send['promptpile-react'], { max_step: 1, thought_prompt: paths.thought, observe_prompt: paths.observe, final_prompt: paths.sendFinal });
   assert.equal(submit['promptpile-react'].final_prompt, paths.submitFinal);
 });
 test('summary config preserves only provider identity and LLM selection', () => {
@@ -65,8 +66,17 @@ test('play workspace isolates compression requests and marks summaries as untrus
   assert.equal(fs.statSync(session.requestsDir).isDirectory(), true);
   assert.equal(fs.readFileSync(session.summaryPromptPath, 'utf8').includes('Return exactly one JSON object'), true);
   assert.equal(TOML.parse(fs.readFileSync(session.summaryConfigPath, 'utf8')).llm_api[0].name, 'test');
-  for (const prompt of ['thought.md', 'final-send.md', 'final-submit.md']) {
+  for (const prompt of ['thought.md', 'observe.md', 'final-send.md', 'final-submit.md']) {
     assert.equal(fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8').includes(WRITABLE_SUMMARY_AUTHORITY_NOTE), true);
+  }
+  const observe = fs.readFileSync(path.join(session.root, 'react', 'observe.md'), 'utf8');
+  for (const section of ['SESSION', 'USER_INTENT', 'AUTHORITATIVE_FACTS', 'EXACT_IDS', 'DECISIONS', 'CONSTRAINTS', 'UNRESOLVED', 'FINAL_CONTRACT']) assert.match(observe, new RegExp(`\\[${section}\\]`));
+  assert.equal(observe, DAYLOOM_OBSERVE_PROMPT);
+  for (const prompt of ['final-send.md', 'final-submit.md']) {
+    const finalPrompt = fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8');
+    assert.equal(finalPrompt.includes(OBSERVE_HANDOFF_AUTHORITY_NOTE), true);
+    assert.match(finalPrompt, /Do not assume raw Thought or tool work is visible/);
+    assert.doesNotMatch(finalPrompt, /completed reasoning/);
   }
   assert.deepEqual(fs.readdirSync(session.contextDir), []);
 });
@@ -90,6 +100,13 @@ test('lifecycle workspaces own exact markers, empty Init context, and concrete b
   assert.match(fs.readFileSync(path.join(init.root, 'react', 'thought.md'), 'utf8'), /establish a new World/);
   assert.match(fs.readFileSync(path.join(planning.root, 'react', 'thought.md'), 'utf8'), /Do not modify canon, targetDay/);
   assert.match(fs.readFileSync(path.join(revise.root, 'react', 'thought.md'), 'utf8'), /Do not rewrite manifest identity/);
+  for (const session of [init, planning, revise]) {
+    for (const prompt of ['final-send.md', 'final-submit.md']) {
+      const finalPrompt = fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8');
+      assert.equal(finalPrompt.includes(OBSERVE_HANDOFF_AUTHORITY_NOTE), true);
+      assert.match(finalPrompt, /Do not assume raw Thought or tool work is visible/);
+    }
+  }
 });
 test('React runner rejects malformed, schema-invalid, gaps, session changes and Final mismatch', async () => {
   const boundaries = await resolvePackagedBoundaries();

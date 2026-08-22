@@ -1,6 +1,6 @@
 import type { CallerConfig } from '../promptpile/config';
 import type { PublishedWorld } from '../world/read';
-import { createSessionWorkspace, SUMMARY_SYSTEM_PROMPT, WRITABLE_SUMMARY_AUTHORITY_NOTE, type CoreSession } from './common';
+import { createSessionWorkspace, FINAL_VISIBILITY_NOTE, OBSERVE_HANDOFF_AUTHORITY_NOTE, SUMMARY_SYSTEM_PROMPT, WRITABLE_SUMMARY_AUTHORITY_NOTE, type CoreSession } from './common';
 
 export { SUMMARY_SYSTEM_PROMPT, WRITABLE_SUMMARY_AUTHORITY_NOTE };
 
@@ -13,14 +13,17 @@ Do not emit Dayloom submission JSON unless the current run is explicitly a submi
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 export const SEND_FINAL_PROMPT = `Produce the user-facing assistant response for the latest user turn in this Dayloom Play Session.
-Use the authoritative context and the completed reasoning from this run.
+${FINAL_VISIBILITY_NOTE}
 Return natural-language content only.
 Do not emit PlaySubmission JSON or internal protocol data.
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
 export const SUBMIT_FINAL_PROMPT = `Produce the final machine result for this Dayloom Play Session.
+${FINAL_VISIBILITY_NOTE}
 Return exactly one JSON object and nothing else. Do not use Markdown fences.
 Do not choose or change the day. Use the existing plan beat ids exactly.
+${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 
 Schema:

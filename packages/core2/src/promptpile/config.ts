@@ -39,8 +39,8 @@ export function deriveSummaryConfig(config: CallerConfig): CallerConfig {
   return derived;
 }
 
-export async function writeDerivedConfigs(config: CallerConfig, paths: { thought: string; sendFinal: string; submitFinal: string; sendConfig: string; submitConfig: string; summaryConfig: string }): Promise<void> {
-  const derive = (final: string) => ({ ...config, 'promptpile-react': { max_step: 1, thought_prompt: paths.thought, final_prompt: final } });
+export async function writeDerivedConfigs(config: CallerConfig, paths: { thought: string; observe: string; sendFinal: string; submitFinal: string; sendConfig: string; submitConfig: string; summaryConfig: string }): Promise<void> {
+  const derive = (final: string) => ({ ...config, 'promptpile-react': { max_step: 1, thought_prompt: paths.thought, observe_prompt: paths.observe, final_prompt: final } });
   await Promise.all([
     writeFile(paths.sendConfig, TOML.stringify(derive(paths.sendFinal) as TOML.JsonMap), 'utf8'),
     writeFile(paths.submitConfig, TOML.stringify(derive(paths.submitFinal) as TOML.JsonMap), 'utf8'),
