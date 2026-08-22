@@ -27,11 +27,11 @@ test('derived config preserves profiles and owns max-step and prompt paths', asy
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-config-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const caller = path.join(root, 'caller.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="profile"\nmodel="m"\n[promptpile]\nllm_api="profile"\nllm_api_temperature=0.3\n');
   const config = await readCallerConfig(caller);
-  const paths = { thought: path.join(root, 'thought.md'), observe: path.join(root, 'observe.md'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
+  const paths = { thought: path.join(root, 'thought.md'), observe: path.join(root, 'observe.md'), tools: path.join(root, 'tools.toml'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
   await writeDerivedConfigs(config, paths);
   const send = TOML.parse(fs.readFileSync(paths.sendConfig, 'utf8')), submit = TOML.parse(fs.readFileSync(paths.submitConfig, 'utf8'));
   assert.equal(send.llm_api[0].name, 'profile'); assert.equal(send.promptpile.llm_api_temperature, 0.3);
-  assert.deepEqual(send['promptpile-react'], { max_step: 1, thought_prompt: paths.thought, observe_prompt: paths.observe, final_prompt: paths.sendFinal });
+  assert.deepEqual(send['promptpile-react'], { max_step: 1, tools_file: paths.tools, thought_prompt: paths.thought, observe_prompt: paths.observe, final_prompt: paths.sendFinal });
   assert.equal(submit['promptpile-react'].final_prompt, paths.submitFinal);
 });
 test('summary config preserves only provider identity and LLM selection', () => {
@@ -70,6 +70,7 @@ test('play workspace isolates compression requests and marks summaries as untrus
     assert.equal(fs.readFileSync(path.join(session.root, 'react', prompt), 'utf8').includes(WRITABLE_SUMMARY_AUTHORITY_NOTE), true);
   }
   const observe = fs.readFileSync(path.join(session.root, 'react', 'observe.md'), 'utf8');
+  assert.equal(fs.readFileSync(path.join(session.root, 'react', 'tools.toml'), 'utf8'), 'tools = []\n');
   for (const section of ['SESSION', 'USER_INTENT', 'AUTHORITATIVE_FACTS', 'EXACT_IDS', 'DECISIONS', 'CONSTRAINTS', 'UNRESOLVED', 'FINAL_CONTRACT']) assert.match(observe, new RegExp(`\\[${section}\\]`));
   assert.equal(observe, DAYLOOM_OBSERVE_PROMPT);
   for (const prompt of ['final-send.md', 'final-submit.md']) {

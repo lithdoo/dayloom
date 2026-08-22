@@ -243,6 +243,30 @@ test('completed empty React Final maps to AGENT_FAILED and terminalizes the Sess
   assert.equal(core.getState().session, null);
 });
 
+test('Agent Event v1 internal_error projects to AGENT_FAILED without publication', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');
+  const id = 'receipt-failure';
+  const stdout = [
+    { schema_version: 1, type: 'session.started', session_id: id, sequence: 0, max_steps: 1 },
+    { schema_version: 1, type: 'session.failed', session_id: id, sequence: 1, phase: 'final', steps_completed: 1, error: { code: 'internal_error', message: 'React completion evidence was invalid.' } },
+  ].map(JSON.stringify).join('\n') + '\n';
+  const runner = { async run(_bin, args, options = {}) {
+    if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
+    options.onStdout?.(stdout);
+    return { code: 1, stdout, stderr: '' };
+  } };
+  const core = await createDayloomCoreInternal(
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
+    { runner, boundaries: await resolvePackagedBoundaries() },
+  );
+  t.after(() => core.dispose());
+  await core.startSession('play');
+  assert.deepEqual(await core.send('hello'), { ok: false, error: { code: 'AGENT_FAILED', message: 'React completion evidence was invalid.' } });
+  assert.equal(core.getState().session, null);
+  assert.equal(fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8'), before);
+});
+
 test('compression failure is CONVERSATION_FAILED, skips React, and leaves World unchanged', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); let appends = 0, reactCalls = 0;
   const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');
