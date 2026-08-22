@@ -9,16 +9,34 @@ function write(root, relative, bytes) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, bytes);
 }
-function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false } = {}) {
+function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false, profileVersion = 0 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-world-'));
   const documents = new Map([
     ['canon/premise.md', Buffer.from('Premise')], ['canon/rules.md', Buffer.from('Rules')],
     ['canon/style.md', Buffer.from('Style')], ['canon/user-role.md', Buffer.from('User role')],
-    [`days/${day}/plan.json`, Buffer.from(JSON.stringify(malformedPlan ? { intent: '' } : { intent: 'Live the day', beats: [{ id: 'beat1', intent: 'Begin' }] }))],
+    [`days/${day}/plan.json`, Buffer.from(JSON.stringify(malformedPlan ? { intent: '' } : profileVersion === 1 ? { version: 1, intent: 'Live the day', knownContext: [], constraints: [], openQuestions: [], maxEvents: 1, beats: [{ id: 'beat1', intent: 'Begin', priority: 'required', dependsOn: [] }] } : { intent: 'Live the day', beats: [{ id: 'beat1', intent: 'Begin' }] }))],
   ]);
+  if (profileVersion !== 0) {
+    documents.set('profile/dayloom.json', Buffer.from(JSON.stringify({ schemaVersion: 1, profile: 'dayloom', profileVersion })));
+    if (profileVersion === 1) for (const [documentPath, content] of [
+      ['state/world.yaml', 'schemaVersion: 1\ntitle: World\nstatus: active\n'],
+      ['state/calendar.yaml', 'schemaVersion: 1\ncurrentDay: null\nelapsed: null\n'],
+      ['state/progress.yaml', 'schemaVersion: 1\nactiveArcIds: []\n'],
+      ['state/variables.yaml', 'schemaVersion: 1\nvariables: {}\n'],
+      ['characters/index.yaml', 'schemaVersion: 1\nids: []\n'],
+      ['locations/index.yaml', 'schemaVersion: 1\nids: []\n'],
+      ['arcs/index.yaml', 'schemaVersion: 1\nids: []\n'],
+      ['memory/short-term.md', ''], ['memory/long-term.md', ''],
+      ['memory/facts.yaml', 'schemaVersion: 1\nfacts: []\n'],
+      ['memory/unresolved-threads.yaml', 'schemaVersion: 1\nthreads: []\n'],
+      ['memory/important-events.yaml', 'schemaVersion: 1\nevents: []\n'],
+      ['story-seeds/active.yaml', 'schemaVersion: 1\nseeds: []\n'],
+    ]) documents.set(documentPath, Buffer.from(content));
+  }
   const entries = [...documents].map(([documentPath, bytes]) => {
     const blobHash = protocol.hashBlobV1(bytes); write(root, protocol.formatBlobObjectPathV1(blobHash), bytes);
-    return { path: documentPath, blobHash, mediaType: documentPath.endsWith('.json') ? 'application/json' : 'text/markdown', bytes: bytes.length };
+    const mediaType = documentPath.endsWith('.json') ? 'application/json' : documentPath.endsWith('.yaml') ? 'application/yaml' : 'text/markdown';
+    return { path: documentPath, blobHash, mediaType, bytes: bytes.length };
   });
   const tree = protocol.createRootTreeV1(entries), rootTreeHash = protocol.hashRootTreeV1(tree);
   write(root, protocol.formatTreeObjectPathV1(rootTreeHash), protocol.encodeRootTreeCanonicalV1(tree));

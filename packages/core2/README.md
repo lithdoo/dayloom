@@ -2,6 +2,16 @@
 
 Archive V2-only Dayloom product lifecycle runtime. It classifies and validates the published World, owns Init, Planning, Play and Revise conversational Sessions (including ready and running cancellation), and publishes deterministic Settle and Abandon mutations. See the repository's `CORE2_FUNCTIONAL_COMPLETION_DRAFT.md` for the frozen contract.
 
+Core2 now persists World Profile V1: canon, world/calendar/variable state, characters and relationships, locations and triggers, arcs, memory, story seeds, structured day events, settlement projections, visible Session audit, and typed revisions. Play records proposed facts; one atomic Settle commit applies validated patches and updates state, memory, timelines, summary, diary, settlement evidence, and the next-day seed.
+
+Legacy filesystem Worlds migrate explicitly and read-only:
+
+```sh
+dayloom-core2 archive migrate-world-profile-v1 --source ./old-world --target ./archive-v2-world
+```
+
+The migration publishes one Profile V1 initial revision, writes `legacy/migration-report.json`, accounts for every portable UTF-8 source file exactly once, preserves unknown files, and validates the resulting Published World before returning success.
+
 ## Promptpile React boundary
 
 Core2 pins `promptpile-react@0.1.0-beta.4` and owns the complete integration topology for every conversational Session:

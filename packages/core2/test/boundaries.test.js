@@ -89,7 +89,9 @@ test('lifecycle workspaces own exact markers, empty Init context, and concrete b
   const planning = await createPlanningWorkspace(runtime, 'planning', world, config);
   const revise = await createReviseWorkspace(runtime, 'revise', world, config);
   assert.deepEqual(fs.readdirSync(init.contextDir), []);
-  assert.equal(init.submitMarker, '[DAYLOOM_INIT_SUBMIT_V1]\nFinalize this Session now using the Core2 Init submission Final contract.');
+  assert.equal(init.submitMarker, '[DAYLOOM_INIT_SUBMIT_V2]\nFinalize this Session now using the Core2 Init submission Final contract.');
+  assert.match(fs.readFileSync(init.submitConfig, 'utf8'), /final-submit\.md/);
+  assert.match(fs.readFileSync(path.join(init.root, 'react', 'final-submit.md'), 'utf8'), /InitSubmissionV2/);
   assert.equal(planning.submitMarker, '[DAYLOOM_PLANNING_SUBMIT_V1]\nFinalize this Session now using the Core2 Planning submission Final contract.');
   assert.equal(revise.submitMarker, '[DAYLOOM_REVISE_SUBMIT_V1]\nFinalize this Session now using the Core2 Revise submission Final contract.');
   assert.equal(buildLifecycleContext(planning), `[DAYLOOM_PLANNING_CONTEXT_V0]\n\n[WORLD]\nworld_id: world1\ntarget_day: day1\nlast_settled_day: <none>\n\n[CANON_PREMISE]\nPremise\n\n[CANON_RULES]\nRules\n\n[CANON_STYLE]\nStyle\n\n[CANON_USER_ROLE]\nUser role`);
@@ -98,7 +100,7 @@ test('lifecycle workspaces own exact markers, empty Init context, and concrete b
   const day2 = await createPlanningWorkspace(runtime, 'planning-day2', settledWorld, config);
   assert.equal(buildLifecycleContext(day2).endsWith('\n\n[LAST_SETTLED_SUMMARY]\nVerified summary\n'), true);
   assert.equal(buildLifecycleContext(planning).includes('[LAST_SETTLED_SUMMARY]'), false);
-  assert.match(fs.readFileSync(path.join(init.root, 'react', 'thought.md'), 'utf8'), /establish a new World/);
+  assert.match(fs.readFileSync(path.join(init.root, 'react', 'thought.md'), 'utf8'), /establish a rich new World/);
   assert.match(fs.readFileSync(path.join(planning.root, 'react', 'thought.md'), 'utf8'), /Do not modify canon, targetDay/);
   assert.match(fs.readFileSync(path.join(revise.root, 'react', 'thought.md'), 'utf8'), /Do not rewrite manifest identity/);
   for (const session of [init, planning, revise]) {

@@ -7,7 +7,7 @@ import { CoreInitializationError, CoreOperationError, failure, success, type Cor
 import type { CoreEvent } from './events';
 import { buildState, type CoreSessionKind, type CoreState, type CoreWorldState } from './state';
 import { classifyWorld, type ClassifiedWorld, type PublishedWorld } from './world/read';
-import { publishMutation, publishPlay, type PublishMutationInput } from './world/publish';
+import { publishMutation, publishPlay, type PublishMutationInput, type WorldChange } from './world/publish';
 import { resolvePackagedBoundaries, type PackagedBoundaries } from './promptpile/binaries';
 import { readCallerConfig, type CallerConfig } from './promptpile/config';
 import { appendUser, nodeProcessRunner, type ProcessRunner } from './promptpile/conversation';
@@ -17,9 +17,17 @@ import { buildContextMessage, createPlayWorkspace } from './session/play';
 import { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } from './session/lifecycle';
 import type { CoreSession } from './session/common';
 import {
-  parseInitSubmissionV1, parsePlanningSubmissionV1, parsePlaySubmissionV1, parseReviseSubmissionV1,
+  parsePlanningSubmissionV1, parsePlaySubmissionV1, parseReviseSubmissionV1,
   validateAndBuildPlayDocuments,
 } from './session/submission';
+import { parseInitSubmissionV2, parsePlanningSubmissionV2, parsePlaySubmissionV2, parseReviseSubmissionV2 } from './session/submission-v2';
+import { buildInitMutationV1 } from './world/builders/init';
+import { buildSessionAuditV1 } from './world/builders/audit';
+import { buildPlanningMutationV1 } from './world/builders/planning';
+import { buildPlayMutationV1 } from './world/builders/play-v1';
+import { buildSettlementMutationV1 } from './world/builders/settlement';
+import { readStructuredDayEventsV1 } from './world/profile/events';
+import { buildReviseMutationV1 } from './world/builders/revise';
 
 export interface CreateDayloomCoreOptions { worldRoot: string; llmConfigPath: string }
 export interface DayloomCore {
@@ -197,32 +205,67 @@ class DayloomCoreImpl implements DayloomCore {
   }
   settle() { return this.operation(async () => {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
-    const base = this.world, day = base.commit.control.day;
-    const published = await this.mutationPublisher(this.worldRoot, { operationType: 'settle', base, changes: [], control: { phase: 'idle', day: null, lastSettledDay: day } });
+    const base = this.world, day = base.commit.control.day as string;
+    let changes: WorldChange[] = [];
+    if (base.profileVersion === 1 && base.tree.entries.some((entry) => entry.path === `days/${day}/play-index.json`)) {
+      if (base.profileV1 === null) throw new Error('Profile V1 is unavailable during settlement.');
+      // Awaiting-settle deliberately exposes no playContext, so read and validate the
+      // persisted plan from the verified tree through the structured event reader's input.
+      const { parsePlayPlanV1, readTextDocument } = await import('./world/read');
+      const planText = await readTextDocument(this.worldRoot, base.tree, `days/${day}/plan.json`);
+      const persistedPlan = parsePlayPlanV1(JSON.parse(planText));
+      const events = await readStructuredDayEventsV1(this.worldRoot, base.tree, day, persistedPlan, base.profileV1);
+      changes = buildSettlementMutationV1(base, events);
+    }
+    const published = await this.mutationPublisher(this.worldRoot, { operationType: 'settle', base, changes, control: { phase: 'idle', day: null, lastSettledDay: day } });
     this.installPublished(published); return success();
   }); }
   abandonDay() { return this.operation(async () => {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || !['planned', 'awaiting-settle'].includes(this.world.commit.control.phase) || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'abandonDay is not available.');
     const base = this.world, day = base.commit.control.day;
-    const paths = [`days/${day}/plan.json`, `days/${day}/play.json`, `days/${day}/summary.md`].filter((candidate) => base.tree.entries.some((entry) => entry.path === candidate));
+    const paths = base.profileVersion === 1 ? base.tree.entries.map((entry) => entry.path).filter((candidate) => candidate.startsWith(`days/${day}/`)) : [`days/${day}/plan.json`, `days/${day}/play.json`, `days/${day}/summary.md`].filter((candidate) => base.tree.entries.some((entry) => entry.path === candidate));
     const published = await this.mutationPublisher(this.worldRoot, { operationType: 'abandon-day', base, changes: paths.map((documentPath) => ({ op: 'delete' as const, path: documentPath })), control: { phase: 'idle', day: null, lastSettledDay: base.commit.control.lastSettledDay } });
     this.installPublished(published); return success();
   }); }
   private async publishSubmission(session: CoreSession, final: string): Promise<PublishedWorld> {
     if (session.kind === 'play') {
+      if (session.pinned!.profileVersion === 1) {
+        let rich: { submission: ReturnType<typeof parsePlaySubmissionV2>; changes: ReturnType<typeof buildPlayMutationV1> } | null = null;
+        try {
+          const submission = parsePlaySubmissionV2(final); rich = { submission, changes: buildPlayMutationV1(session.pinned!, submission) };
+        } catch { /* Profile V0 submission compatibility falls through during staged rollout. */ }
+        if (rich !== null) return this.mutationPublisher(this.worldRoot, { operationType: 'play', base: session.pinned!, changes: [...rich.changes, ...await buildSessionAuditV1(session, rich.submission, final)], control: { phase: 'awaiting-settle', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
+      }
       let documents;
       try { documents = validateAndBuildPlayDocuments(session.pinned!.playContext!.plan, parsePlaySubmissionV1(final)); }
       catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
       return this.playPublisher(this.worldRoot, session.pinned!, session.day!, documents);
     }
     if (session.kind === 'init') {
-      let submission; try { submission = parseInitSubmissionV1(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-      return this.mutationPublisher(this.worldRoot, { operationType: 'init', base: null, initialManifest: { worldId: `world_${randomUUID().replaceAll('-', '')}`, title: submission.title.trim() }, changes: canonChanges(submission.canon), control: { phase: 'idle', day: null, lastSettledDay: null } });
+      let submission; try { submission = parseInitSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
+      const changes = [...buildInitMutationV1(submission), ...await buildSessionAuditV1(session, submission, final)];
+      return this.mutationPublisher(this.worldRoot, { operationType: 'init', base: null, initialManifest: { worldId: `world_${randomUUID().replaceAll('-', '')}`, title: submission.title.trim() }, changes, control: { phase: 'idle', day: null, lastSettledDay: null } });
     }
     if (session.kind === 'planning') {
+      if (session.pinned!.profileVersion === 1) {
+        let submission; try { submission = parsePlanningSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
+        const changes = [...buildPlanningMutationV1(session.day!, submission), ...await buildSessionAuditV1(session, submission, final)];
+        return this.mutationPublisher(this.worldRoot, { operationType: 'planning', base: session.pinned!, changes, control: { phase: 'planned', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
+      }
       let submission; try { submission = parsePlanningSubmissionV1(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
       const plan = { intent: submission.intent, beats: submission.beats.map((beat, index) => ({ id: `beat${index + 1}`, intent: beat.intent })) };
       return this.mutationPublisher(this.worldRoot, { operationType: 'planning', base: session.pinned!, changes: [{ op: 'put', path: `days/${session.day}/plan.json`, mediaType: 'application/json', bytes: json(plan) }], control: { phase: 'planned', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
+    }
+    if (session.pinned!.profileVersion === 1) {
+      try {
+        const submission = parseReviseSubmissionV2(final);
+        const changes = [...buildReviseMutationV1(session.pinned!, submission), ...await buildSessionAuditV1(session, submission, final)];
+        return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes, control: { ...session.pinned!.commit.control } });
+      } catch (error) {
+        // Temporary compatibility for worlds initialized through the former V1 prompt.
+        try { const legacy = parseReviseSubmissionV1(final); return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes: canonChanges(legacy.canon), control: { ...session.pinned!.commit.control } }); }
+        catch { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
+      }
     }
     let submission; try { submission = parseReviseSubmissionV1(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
     return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes: canonChanges(submission.canon), control: { ...session.pinned!.commit.control } });

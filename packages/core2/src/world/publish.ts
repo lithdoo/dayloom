@@ -6,17 +6,18 @@ import {
   formatBlobObjectPathV1, formatCommitObjectPathV2, formatOperationPathV2, formatTreeObjectPathV1,
   hashBlobV1, hashRootTreeV1, parseArchiveCommitV2, parseArchiveManifestV2, parseArchiveOperationV2,
   parseCurrentPointerV2, parseStagingManifestV1, parseWorldDocumentPathV1,
-  validateCommitParentRelationV2, validateOperationStagingRelationV2, validatePreparedTargetRelationV2,
-  type StagedChangeV1,
+  validateCommitParentRelationV2, validateContentV1, validateOperationStagingRelationV2, validatePreparedTargetRelationV2,
+  type ArchiveMediaTypeV1, type StagedChangeV1,
 } from '@dayloom/archive-protocol';
 import type { PlayDocuments } from '../session/submission';
 import { classifyWorld, readPublishedWorld, validatePublishedProfile, type PublishedWorld } from './read';
+import { assertMutationPathAllowedV1, expectedMediaTypeV1 } from './profile/policy';
 
 export type WorldChange =
-  | { op: 'put'; path: string; mediaType: 'application/json' | 'text/markdown'; bytes: Uint8Array }
+  | { op: 'put'; path: string; mediaType: ArchiveMediaTypeV1; bytes: Uint8Array }
   | { op: 'delete'; path: string };
 export interface PublishMutationInput {
-  operationType: 'init' | 'planning' | 'play' | 'revise' | 'settle' | 'abandon-day';
+  operationType: 'init' | 'planning' | 'play' | 'revise' | 'settle' | 'abandon-day' | 'migration';
   base: PublishedWorld | null;
   initialManifest?: { worldId: string; title: string };
   changes: readonly WorldChange[];
@@ -27,8 +28,6 @@ interface PublicationOptions {
   writeCurrent?: (target: string, bytes: Uint8Array, exclusive: boolean) => Promise<void>;
 }
 const jsonBytes = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
-const coreOwned = /^(?:canon\/(?:premise|rules|style|user-role)\.md|days\/day[1-9][0-9]*\/(?:plan|play)\.json|days\/day[1-9][0-9]*\/summary\.md)$/;
-const expectedMedia = (documentPath: string) => documentPath.endsWith('.json') ? 'application/json' : 'text/markdown';
 const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 
 export async function installImmutable(target: string, bytes: Uint8Array): Promise<boolean> {
@@ -111,13 +110,16 @@ export async function publishMutation(worldRoot: string, input: PublishMutationI
 }
 
 function validateInput(input: PublishMutationInput) {
-  if ((input.base === null) !== (input.operationType === 'init') || (input.base === null) !== (input.initialManifest !== undefined)) throw new Error('Publication base and initial manifest are inconsistent.');
+  if ((input.base === null) !== (input.operationType === 'init' || input.operationType === 'migration') || (input.base === null) !== (input.initialManifest !== undefined)) throw new Error('Publication base and initial manifest are inconsistent.');
   const paths = new Set<string>();
   for (const change of input.changes) {
-    const documentPath = parseWorldDocumentPathV1(change.path);
-    if (!coreOwned.test(documentPath) || paths.has(documentPath)) throw new Error('Publication change path is invalid or duplicated.');
+    const documentPath = assertMutationPathAllowedV1(input.operationType, parseWorldDocumentPathV1(change.path));
+    if (paths.has(documentPath)) throw new Error('Publication change path is invalid or duplicated.');
     paths.add(documentPath);
-    if (change.op === 'put' && change.mediaType !== expectedMedia(documentPath)) throw new Error('Publication change mediaType is invalid.');
+    if (change.op === 'put') {
+      if (change.mediaType !== expectedMediaTypeV1(documentPath)) throw new Error('Publication change mediaType is invalid.');
+      validateContentV1(change.bytes, change.mediaType);
+    }
   }
 }
 function coded(code: 'WORLD_CONFLICT' | 'WORLD_INVALID', message: string, cause?: unknown) { return Object.assign(new Error(message, { cause }), { code }); }
