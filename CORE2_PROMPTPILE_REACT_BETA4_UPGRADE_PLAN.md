@@ -1,6 +1,6 @@
 # Dayloom Core2 → Promptpile React beta.4 升级计划
 
-> 状态：**Implementation Plan / 可直接实施**  
+> 状态：**Implemented · Core2 closure verified · repository closure blocked by legacy tui-old PTY**
 > 日期：2026-08-22  
 > 目标包：`@dayloom/core2`  
 > 目标依赖：`promptpile-react@0.1.0-beta.4`  
@@ -381,9 +381,10 @@ Core2 可以预创建该目录，也可以让 React 首次 invocation 创建。�
 
 ```text
 react/observe.md
+react/tools.toml
 ```
 
-并把路径传给 `writeDerivedConfigs()`。`common.ts` 同时定义：
+`tools.toml` 固定为 `tools = []`，用于满足 beta.4 Thought 阶段的显式工具策略，同时保持零工具能力；caller 不能覆盖。并把两个路径传给 `writeDerivedConfigs()`。`common.ts` 同时定义：
 
 ```ts
 DAYLOOM_OBSERVE_PROMPT
@@ -405,6 +406,7 @@ observe: string;
 ```toml
 [promptpile-react]
 max_step = 1
+tools_file = ".../tools.toml"
 thought_prompt = "..."
 observe_prompt = "..."
 final_prompt = "..."
@@ -670,60 +672,84 @@ TUI 属于本次的 consumer regression scope，而不是 implementation scope�
 
 不得仅因 production code 已编译就把计划标记完成。
 
+实施提交：
+
+```text
+c9c26ae chore(core2): upgrade promptpile-react to beta.4
+c1a6966 feat(core2): own react session work lifecycle
+9f7b9be feat(core2): define react observation handoff contract
+6ff2021 fix(core2): reject empty react final completion
+34d3fe0 test(core2): verify real react beta.4 integration
+```
+
+验证记录（2026-08-22）：
+
+```text
+Preflight beta.3: npm test -w @dayloom/core2 → 85/85 passed
+beta.4 closure: npm test -w @dayloom/core2 → 93/93 passed
+npm test -w @dayloom/tui → 33/33 passed
+npm run docs:check → 23 Markdown files passed
+npm run examples:check → 9 files passed
+npm test → Core2 and preceding workspaces passed; stopped at @dayloom/tui-old
+npm test -w @dayloom/tui-old (independent retry) → 48/51 passed, 3 legacy real-PTY cases failed
+```
+
+仓库级唯一未闭合项不在本次 implementation/consumer scope：`@dayloom/tui-old` 在 Windows Node 24 ConPTY 环境中稳定出现 `AttachConsole failed`，3 条旧 TUI real-PTY 用例等待 `Enter your reply` 超时。独立复跑结果一致；当前 `@dayloom/tui` consumer 全绿。本次不修改 legacy TUI semantics，也不以跳过测试伪造 monorepo success。因此下方 monorepo 总回归项保持未勾选；其余勾选项均有本次自动化证据。
+
 ## 6. 验收矩阵
 
 ### 6.1 配置与路径
 
-- [ ] `promptpile-react` 精确依赖为 `0.1.0-beta.4`。
-- [ ] lockfile 只包含目标依赖更新和已明确归属的既有改动。
-- [ ] caller-defined `[promptpile-react]` 继续失败关闭。
-- [ ] `reactWorkRoot` 位于 Session root 内。
-- [ ] `reactWorkRoot` 与 context/conversation 均不相交。
-- [ ] runner 总是传递 `--work-root`。
+- [x] `promptpile-react` 精确依赖为 `0.1.0-beta.4`。
+- [x] lockfile 只包含目标依赖更新和已明确归属的既有改动。
+- [x] caller-defined `[promptpile-react]` 继续失败关闭。
+- [x] `reactWorkRoot` 位于 Session root 内。
+- [x] `reactWorkRoot` 与 context/conversation 均不相交。
+- [x] runner 总是传递 `--work-root`。
 
 ### 6.2 数据流
 
-- [ ] Thought 写 work，不写 writable Conversation。
-- [ ] Observe 能读取当前 invocation 的 Thought work。
-- [ ] Observe 缺失或空输出投影为 `AGENT_FAILED`，且不运行 Final。
-- [ ] Observe 输出包含全部固定 Dayloom section labels，且不依赖隐藏 Thought 引用。
-- [ ] Final 不读取 work directory。
-- [ ] Final 最后一条 message 是 Observe user-role handoff。
-- [ ] Final system prompt 将 Observe handoff 视为 untrusted model-produced data。
-- [ ] instruction-like Observe 文本不能覆盖 immutable context、pinned facts、exact ids 或 schema。
-- [ ] writable Conversation 允许 application/user、visible Final 与 compression-owned 合法状态，但不包含任何 React internal artifact。
-- [ ] 同一 Dayloom Session 连续两次 send 不共享 invocation work，前一轮 Thought 不泄漏到后一轮。
+- [x] Thought 写 work，不写 writable Conversation。
+- [x] Observe 能读取当前 invocation 的 Thought work。
+- [x] Observe 缺失或空输出投影为 `AGENT_FAILED`，且不运行 Final。
+- [x] Observe 输出包含全部固定 Dayloom section labels，且不依赖隐藏 Thought 引用。
+- [x] Final 不读取 work directory。
+- [x] Final 最后一条 message 是 Observe user-role handoff。
+- [x] Final system prompt 将 Observe handoff 视为 untrusted model-produced data。
+- [x] instruction-like Observe 文本不能覆盖 immutable context、pinned facts、exact ids 或 schema。
+- [x] writable Conversation 允许 application/user、visible Final 与 compression-owned 合法状态，但不包含任何 React internal artifact。
+- [x] 同一 Dayloom Session 连续两次 send 不共享 invocation work，前一轮 Thought 不泄漏到后一轮。
 
 ### 6.3 Session 生命周期
 
-- [ ] success 后 beta.4 invocation work directory 被删除。
-- [ ] ordinary failure 后 invocation work directory 被删除。
-- [ ] running cancel 后 Core2 删除 enclosing Session/work root。
-- [ ] running cancel 严格满足 child close/operation settle happens-before root removal。
-- [ ] ready cancel 不创建 React work artifacts。
-- [ ] dispose 不留下 Dayloom runtime-owned work root。
-- [ ] cleanup failure 不覆盖既有 operation failure，不复活 Session。
+- [x] success 后 beta.4 invocation work directory 被删除。
+- [x] ordinary failure 后 invocation work directory 被删除。
+- [x] running cancel 后 Core2 删除 enclosing Session/work root。
+- [x] running cancel 严格满足 child close/operation settle happens-before root removal。
+- [x] ready cancel 不创建 React work artifacts。
+- [x] dispose 不留下 Dayloom runtime-owned work root。
+- [x] cleanup failure 不覆盖既有 operation failure，不复活 Session。
 
 ### 6.4 Final 与 publication
 
-- [ ] valid Receipt 才允许 React `session.completed`。
-- [ ] Core2 不解析 Receipt，也不依赖 Receipt 内部诊断文本。
-- [ ] `session.failed/internal_error` 投影为 `AGENT_FAILED`，不进入 Core2 publication。
-- [ ] completed 但空白的 Final 投影为 `AGENT_FAILED`。
-- [ ] streamed deltas 不等价于 Dayloom submission/publication 成功。
-- [ ] ordinary send 的 visible Final 仍写入 Session Conversation。
-- [ ] submission Final 通过既有 strict parser 后才进入 publication。
-- [ ] Receipt success、submission validity 与 World publication 在测试中是三个独立断言。
-- [ ] World OCC/publication theorem 不变。
+- [x] valid Receipt 才允许 React `session.completed`。
+- [x] Core2 不解析 Receipt，也不依赖 Receipt 内部诊断文本。
+- [x] `session.failed/internal_error` 投影为 `AGENT_FAILED`，不进入 Core2 publication。
+- [x] completed 但空白的 Final 投影为 `AGENT_FAILED`。
+- [x] streamed deltas 不等价于 Dayloom submission/publication 成功。
+- [x] ordinary send 的 visible Final 仍写入 Session Conversation。
+- [x] submission Final 通过既有 strict parser 后才进入 publication。
+- [x] Receipt success、submission validity 与 World publication 在测试中是三个独立断言。
+- [x] World OCC/publication theorem 不变。
 
 ### 6.5 回归
 
-- [ ] Core2 package/architecture tests 通过。
-- [ ] cancellation/hardening/compression tests 通过。
-- [ ] Init/Planning/Play/Revise lifecycle tests 通过。
-- [ ] TUI consumer tests 通过。
+- [x] Core2 package/architecture tests 通过。
+- [x] cancellation/hardening/compression tests 通过。
+- [x] Init/Planning/Play/Revise lifecycle tests 通过。
+- [x] TUI consumer tests 通过。
 - [ ] monorepo tests、docs check、examples check 通过。
-- [ ] 文档状态、实现 commit 和实际验证命令已在 Closure 阶段记录。
+- [x] 文档状态、实现 commit 和实际验证命令已在 Closure 阶段记录。
 
 ## 7. 失败与回滚
 
