@@ -7,6 +7,7 @@ export interface PackagedBoundaries {
   promptpileBin: string;
   reactBin: string;
   validateAgentEvent: ValidateFunction;
+  validateProcessPile: ValidateFunction;
 }
 const localRequire = createRequire(__filename);
 
@@ -22,13 +23,15 @@ function bin(metadata: Record<string, unknown>, name: string, root: string): str
 export async function resolvePackagedBoundaries(): Promise<PackagedBoundaries> {
   const promptpile = await packageRoot('promptpile');
   const react = await packageRoot('promptpile-react');
-  const schema = JSON.parse(await readFile(path.join(react.root, 'schema', 'agent-event-v1.schema.json'), 'utf8'));
+  const agentSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'agent-event-v1.schema.json'), 'utf8'));
+  const processSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'process-pile-v1.schema.json'), 'utf8'));
   // The packaged normative schema intentionally uses `required` inside `not`
   // branches without redeclaring those properties in every branch.
   const ajv = new Ajv2020({ strict: true, strictRequired: false });
   return Object.freeze({
     promptpileBin: bin(promptpile.metadata, 'promptpile', promptpile.root),
     reactBin: bin(react.metadata, 'promptpile-react', react.root),
-    validateAgentEvent: ajv.compile(schema),
+    validateAgentEvent: ajv.compile(agentSchema),
+    validateProcessPile: ajv.compile(processSchema),
   });
 }

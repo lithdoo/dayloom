@@ -1,270 +1,237 @@
-# Dayloom TUI：React 临时过程透明展示改造草案
+# Dayloom TUI：React 过程流透明展示改造草案
 
-> 状态：Draft / 可在 CoreEvent v2 冻结后实施  
-> 日期：2026-08-23  
-> 所有者：`dayloom/packages/tui`  
+> 状态：Draft / CoreEvent v2 冻结后可直接分阶段实施
+> 日期：2026-08-23
+> 所有者：`dayloom/packages/tui`
 > 上游契约：`dayloom/packages/core2/REACT_PROCESS_PILE_ADAPTER_PLAN.md`
 
-## 1. 职责与目标
+## 1. 目标
 
-TUI 只消费 CoreEvent v2，不读取 Promptpile process pile，也不理解 React 内部协议：
-
-```text
-CoreEvent work.started/delta/ready
-→ 同一个 WORKING presentation item
-→ ready 时原位替换为临时 work directory reference
-
-CoreEvent output.started/delta/completed
-→ 独立 AI message
-```
-
-用户体验：
+TUI 在用户与 AI 对话期间按需展示 Thought、Observe、Check 实时过程；过程完成后原位收束为简短状态，再独立流式展示 Final。
 
 ```text
 用户输入
-→ Thought / Observe / Check 临时过程实时显示
-→ 临时过程块被 work directory 地址原位替换
-→ Final 独立流式显示
+→ Thought / Observe / Check 临时过程流
+→ 原位收束为 React 临时工作目录地址
+→ Final 独立流式输出
 ```
+
+TUI 只消费 CoreEvent v2，不读取 Process Pile。它只显示 Core2 转发的临时路径字符串，不主动读取目录内容。
+
+## 2. 职责边界
+
+TUI 负责：
+
+- 订阅 Core2 的 `work.*` 和 `output.*`；
+- 将一个 operation 的过程显示为一个可更新 presentation item；
+- 按 phase 更新标题并追加正文；
+- 在完成、失败或取消时原位收束；
+- 将 Final 显示为独立 assistant message；
+- 用 generation 防止迟到事件串入新 operation。
 
 TUI 不负责：
 
-- process-pile schema、sequence 或 React FSM 校验；
-- child process、FD、work root 或清理实现；
--读取、tail 或解析 work directory；
-- 将过程信息写入 Conversation、Archive 或 World；
--长期保存、恢复或 GC work path。
+- 理解 Process Pile schema、sequence 或 React FSM；
+- 启动、取消或清理 child process；
+- 创建、读取或删除 React 工作目录；
+- 将 `workPath` 持久化或写入 transcript；
+- 将过程信息写入 transcript、Conversation、Archive 或 World；
+- 根据过程正文推断业务状态。
 
-## 2. 不变量
+## 3. 不变量
 
-### 2.1 Presentation 不等于 transcript
-
-```text
-working / work-reference
-= 临时 session presentation
-
-assistant Final
-= 正式 transcript message
-```
-
-- Thought/Observe/Check 不得伪装为 assistant message。
-- work reference 不得进入正式 transcript DTO。
-- Final 必须使用独立 messageId。
-- ready 时只替换匹配 workId，不能“删除最后一条消息”。
-
-### 2.2 生命周期
-
-- work path 只保证在当前 session 调试生命周期内有效。
-- dispose 后必须显示 cleaned/expired 或移除 session presentation。
-- TUI 不承诺重启恢复。
-- Hub、submission receipt 和 Archive 不保存 work path。
-- cancel/dispose/terminal 后迟到事件不能复活旧 item。
-
-### 2.3 透明标签
-
-工作过程必须明确标注：
+### 3.1 Presentation 不等于 transcript
 
 ```text
-临时过程
-非最终内容
-不进入存档
+working item = 临时 UI presentation
+assistant message = 正式 Final transcript
 ```
 
-避免用户把可见过程误认为已接受事实或正式回答。
+- Thought/Observe/Check 不得伪装成 assistant message；
+- working item 不进入 transcript DTO 或导出；
+- Final 始终使用独立 messageId；
+- 收束按 `sessionId + operationId` 精确原位更新，不能删除“最后一条消息”。
 
-## 3. 输入契约
+### 3.2 临时路径契约
 
-TUI 只处理以下 CoreEvent v2：
+- TUI 接收 `workPath`，但不接收 `workId` 或 React processId；
+- `workPath` 是 opaque presentation metadata，不是持久状态；
+- TUI 不根据路径推断 operation、phase 或业务结果；
+- 路径只保证在 React operation 运行期间可能有效；
+- `output.completed`、`output.failed` 或 `work.failed` 后将路径标记为 expired；
+- 调试文件生命周期和清理由 Promptpile React 独立负责。
+
+### 3.3 明确标签
+
+过程块必须显示：
+
+```text
+临时过程 · 非最终内容 · 不进入存档
+```
+
+避免用户把可见过程误认为正式回答、已接受事实或 World mutation。
+
+## 4. 输入契约
 
 ```ts
-type TuiCoreEvent =
-  | { type: 'work.started'; sessionId: string; workId: string; workPath: string }
+type TuiCoreEventV2 =
+  | { type: 'state.changed'; state: CoreState }
+  | { type: 'work.started'; sessionId: string; operationId: string; workPath: string }
   | {
       type: 'work.delta';
       sessionId: string;
-      workId: string;
+      operationId: string;
       phase: 'thought' | 'observe' | 'check';
       stepIndex: number;
       text: string;
     }
-  | {
-      type: 'work.ready';
-      sessionId: string;
-      workId: string;
-      status: 'checked';
-      workPath: string;
-    }
-  | {
-      type: 'work.failed';
-      sessionId: string;
-      workId: string;
-      status: 'failed' | 'cancelled';
-      workPath: string | null;
-      message: string;
-    }
-  | { type: 'output.started'; sessionId: string; messageId: string }
-  | { type: 'output.delta'; sessionId: string; messageId: string; text: string }
-  | { type: 'output.completed'; sessionId: string; messageId: string };
+  | { type: 'work.completed'; sessionId: string; operationId: string; workPath: string }
+  | { type: 'work.failed'; sessionId: string; operationId: string; status: 'failed' | 'cancelled'; message: string; workPath: string | null }
+  | { type: 'output.started'; sessionId: string; operationId: string; messageId: string }
+  | { type: 'output.delta'; sessionId: string; operationId: string; messageId: string; text: string }
+  | { type: 'output.completed'; sessionId: string; operationId: string; messageId: string }
+  | { type: 'output.failed'; sessionId: string; operationId: string; messageId: string; message: string };
 ```
 
-TUI 信任 Core2 已完成协议与 path ownership 验证，只做自身 presentation state 验证。出现不可能事件时忽略 mutation、记录 diagnostic，不尝试修复上游顺序。
+TUI 信任 Core2 已完成上游协议验证，只验证自身 presentation 状态。遇到不可能事件时忽略 mutation 并记录受限 diagnostic，不尝试修复上游时序。
 
-## 4. View model
+## 5. View model
 
 ```ts
-type TuiPresentationItem =
-  | {
-      kind: 'working';
-      id: `work:${string}`;
-      sessionId: string;
-      workId: string;
-      phase: 'thought' | 'observe' | 'check';
-      stepIndex: number;
-      text: string;
-      status: 'streaming';
-    }
-  | {
-      kind: 'work-reference';
-      id: `work:${string}`;
-      sessionId: string;
-      workId: string;
-      status: 'checked' | 'failed' | 'cancelled' | 'cleaned';
-      workPath: string | null;
-      detail: string | null;
-    }
-  | TuiMessage;
+type TuiPresentationItem = WorkingItem | TuiMessage;
+
+interface WorkingItem {
+  kind: 'working';
+  id: `operation:${string}:${string}`;
+  sessionId: string;
+  operationId: string;
+  phase: 'thought' | 'observe' | 'check' | null;
+  stepIndex: number | null;
+  text: string;
+  status: 'streaming' | 'completed' | 'failed' | 'cancelled';
+  workPath: string | null;
+  pathStatus: 'live' | 'expired';
+  detail: string | null;
+}
 
 interface TuiMessage {
   kind: 'message';
   id: string;
+  sessionId: string;
+  operationId: string;
   role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
   text: string;
   status: 'streaming' | 'complete' | 'error';
 }
 ```
 
-`working` 与 `work-reference` 使用同一个 presentation ID：
+Working item 使用稳定 ID `operation:<sessionId>:<operationId>`。Final 使用 Core2 提供的 messageId，绝不复用 working item ID。
+
+## 6. Reducer
+
+### 6.1 转换
 
 ```text
-work:<workId>
-```
+work.started(operation)
+→ append working(streaming)
 
-因此替换是类型状态转换，不是删除和重建不相关 item。
-
-## 5. Reducer
-
-### 5.1 转换
-
-```text
-work.started(workId)
-→ append working(workId)
-
-work.delta(workId, phase, step)
-→ 只追加到匹配且 streaming 的 working
+work.delta(operation, phase, step)
+→ 向匹配且 streaming 的 working 追加 text
 → 更新 phase 和 step
 
-work.ready(workId)
-→ 原位 replace 为 work-reference(checked)
-→ 丢弃屏幕上的过程正文
+work.completed(operation)
+→ 原位清空过程正文
+→ working(completed, workPath, pathStatus=live)
 
-work.failed(workId)
-→ 原位 replace 为 work-reference(failed|cancelled)
+work.failed(operation, failed)
+→ 原位清空过程正文
+→ working(failed, safe message)
+
+work.failed(operation, cancelled)
+→ 原位清空过程正文
+→ working(cancelled, "工作过程已取消")
 
 output.started(messageId)
 → append 独立 assistant message(streaming)
 
 output.delta(messageId)
-→ 只追加到匹配 message
+→ 只追加到匹配且 streaming 的 message
 
 output.completed(messageId)
 → message complete
+→ 对应 working pathStatus=expired
+
+output.failed(messageId)
+→ message error
+→ 对应 working pathStatus=expired
 ```
 
-Final skipped 时不会出现 output events，TUI 不创建空 assistant message。
+Final skipped 时不会出现 `output.*`，TUI 不创建空 assistant message。
 
-### 5.2 防串流条件
+### 6.2 防串流
 
-拒绝 mutation：
+拒绝以下 mutation：
 
-- sessionId 不是当前 presentation generation；
-- workId/messageId 不存在或不是 live 状态；
--重复 started/ready/completed；
-- ready/failed 后仍到达 work delta；
-- completed/error 后仍到达 output delta；
-- cancel intent 或 dispose 已使 generation 失效。
+- sessionId 不是当前页面 Session；
+- operationId 不属于当前或仍展示的 operation；
+- started 重复；
+- completed/failed 后仍到达 work delta；
+- messageId 不存在或不属于对应 operation；
+- output completed/error 后仍到达 delta；
+- cancel/dispose 已使 presentation generation 失效。
 
-Reducer 必须是纯函数；打开目录、复制 path、取消 child 等副作用放在 driver/effect 层。
+Reducer 必须是纯函数。订阅、取消请求、滚动和计时属于 driver/effect 层。
 
-### 5.3 内存与 transcript 限制
+### 6.3 内存限制
 
 - active working 和 streaming Final 不参与普通 transcript eviction；
-- work.ready 后立即释放累积过程正文，只保留 path/status；
--过程正文设置仅用于 UI 防失控的内存上限，超限时可折叠旧文本但不得伪造丢失内容；
--该上限不影响 Core2 或 React 执行；
-- work/reference 不进入导出 transcript。
+- 过程正文设置 UI 内存上限；
+- 超限时在本地折叠最早文本，并显示“部分较早过程已折叠”；
+- `work.completed/failed` 后立即释放累积过程正文；
+- 内存限制不得影响 Core2 或 React 执行；
+- working item 不进入 transcript export。
 
-## 6. 展示设计
+## 7. 展示设计
 
-### 6.1 Working
+Streaming：
 
 ```text
-[WORKING · THOUGHT · 临时过程 · 不进入存档]
+[WORKING · THOUGHT]
+临时过程 · 非最终内容 · 不进入存档
+
 正在检查人物和当前世界状态……
-
-[WORKING · OBSERVE · 临时过程 · 不进入存档]
-当前场景中……
-
-[WORKING · CHECK · 临时过程 · 不进入存档]
-正在核对是否进入最终回答……
 ```
 
-- phase 变化更新标题，不创建三个分散 block；
--保留已有正文，用户能看到过程连续性；
--明确区分 WORKING 与 AI Final 的视觉层级；
--光标、滚动和 resize 不应造成正文重复。
+Phase 变化时只更新同一块标题：`THOUGHT → OBSERVE → CHECK`。
 
-### 6.2 Work reference
+完成后原位收束：
 
 ```text
-[WORK · TEMPORARY · CHECKED]
-C:\...\react-work\promptpile-react-session-...\work
-仅用于当前会话调试；会话结束后删除
+[WORK · TEMPORARY]
+C:\...\promptpile-react-session-...\work
+仅在本次处理运行期间有效
 ```
 
-失败：
+失败或取消：
 
 ```text
-[WORK · FAILED]
-过程未完成；临时目录仅用于当前会话排查
+[WORKING · FAILED]
+工作过程未完成
+
+[WORKING · CANCELLED]
+工作过程已取消
 ```
 
-清理后：
-
-```text
-[WORK · CLEANED]
-临时工作目录已随会话清理
-```
-
-### 6.3 Final
+Final：
 
 ```text
 [AI]
 Final 正在流式输出……
 ```
 
-Final 必须在 work reference 之后出现，并作为独立 transcript message。TUI 不把 work 文本拼入 Final，也不从 work path生成摘要。
+Final 是独立 transcript message。TUI 不把过程正文拼入 Final，也不从过程内容生成摘要。
 
-## 7. 交互
-
-- work reference 可聚焦；
-- Enter 复制当前真实路径；
-- `o` 仅在用户明确触发后调用平台安全打开 API；
--禁止字符串拼接 shell command；
-- path 为空或已 cleaned 时禁用复制/打开；
--窄终端可折叠 path，聚焦详情显示完整路径和临时生命周期；
--帮助文本明确 work 不进入存档。
-
-打开目录失败只更新本地提示，不改变 Core2 operation、Final 或 World 状态。
+operation 终态后保留地址文本但标记为 `EXPIRED`，不得继续声称目录存在。可提供复制；若提供打开操作，必须由用户明确触发平台安全 API，禁止拼接 shell command。打开失败只更新本地提示，不改变 Core2 或 World 状态。
 
 ## 8. 页面生命周期
 
@@ -272,45 +239,45 @@ Final 必须在 work reference 之后出现，并作为独立 transcript message
 
 ```text
 ready
-→ working stream
-→ work reference
-→ Final stream（或 skipped）
+→ work.started/delta
+→ work.completed
+→ output.started/delta/completed（或 Final skipped）
 → ready
 ```
 
-同一 session 内下一次 send 使用新 workId/messageId；旧 reference 可显示到 session dispose。
+同一 Session 的下一次 send 使用新的 operationId。旧 completed item 可以保留在当前页面，但不进入 transcript 数据。
 
 ### 8.2 Submit
 
 ```text
-working/reference
-→ Final JSON
-→ strict parse
-→ Archive publication
+working stream
+→ working path reference
+→ Final JSON stream
+→ output completed
+→ Core2 strict parse/publication
 → invalidate presentation generation
-→ Core2 dispose/cleanup
 → Hub
 ```
 
-Hub 和 submission receipt 不保存 work path。Archive 只包含正式 Final 与 World publication 数据。
+Hub、submission receipt、Archive 和 World 不保存 working item。
 
 ### 8.3 Failure
 
-- React/Check failure：working 原位标记 failed，不创建空 Final。
-- Final failure：work reference 保留到 dispose，Final 标记 error。
-- publication failure：不改变 work 的临时属性，不把过程写入 Archive。
+- Final 前失败：working 原位标记 failed，不创建空 assistant message；
+- Final streaming 后失败：working 路径标记 expired，Final message通过 `output.failed` 标记 error；
+- publication failure：不改变过程的临时属性，不把过程写入 Archive。
 
 ### 8.4 Cancel
 
 ```text
-record cancel intent
-→ invalidate presentation generation
-→ request Core2 cancel
-→ ignore late deltas
-→ settle working as cancelled（若页面仍展示）
+request Core2 cancel
+→ Core2 work.failed(cancelled)
+→ reducer 原位收束
+→ generation 失效
+→ ignore late events
 ```
 
-TUI 不自行 kill child，也不自行删除目录。
+TUI 不自行 kill child，也不等待或删除 React 文件。
 
 ### 8.5 Dispose
 
@@ -318,87 +285,81 @@ TUI 不自行 kill child，也不自行删除目录。
 invalidate generation
 → unsubscribe observer
 → await Core2 dispose
-→ mark references cleaned or discard session presentation
+→ discard session presentation
 ```
 
-dispose 必须幂等。TUI 不能在 cleanup 后继续显示路径“可打开”。
+dispose 幂等；迟到事件不能复活页面状态。
 
-## 9. 实施阶段
+## 9. 可选监听
 
-### Phase 0：契约冻结
+Core2 v2 提供完整过程流，TUI 可以按用户配置选择展示级别：
 
-- 锁定 CoreEvent v2 类型和 Core2 最低版本；
--冻结 Final skipped、failure、cancel fixtures；
--明确 presentation generation 生命周期。
+```ts
+type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
+```
+
+- `hidden` 仍消费生命周期事件，但不渲染过程正文；
+- 其他模式仅影响展示，不影响 Core2 验证、取消和 Final；
+- 切换可见性不写 Conversation 或 Archive；
+- 默认策略由产品配置决定，不改变事件协议。
+
+## 10. 分阶段实施
+
+### Phase 0：冻结契约
+
+- 锁定 CoreEvent v2 和 Core2 最低版本；
+- 冻结 operationId/messageId、Final skipped、failure、cancel fixtures；
+- 明确 presentation generation 生命周期。
 
 ### Phase 1：纯 reducer
 
-- working/reference/message 类型；
-- workId/messageId 精确归属；
--原位替换；
-- late/duplicate event guards；
-- property-style reducer sequence tests。
+- working/message 类型；
+- operationId/messageId 精确归属；
+- 原位收束与正文释放；
+- late/duplicate guards；
+- property-style sequence tests。
 
 ### Phase 2：Runtime driver
 
 - CoreEvent v2 subscription；
+- visibility filter；
 - cancel/dispose generation token；
-- effect 与 reducer 分离；
-- active item eviction guard。
+- effect 与 reducer 分离。
 
-### Phase 3：UI 与交互
+### Phase 3：UI
 
-- phase labels 和临时/非归档提示；
--复制、安全打开、cleaned 状态；
--中文宽字符、resize、滚动和窄屏。
+- phase labels、临时/非归档提示；
+- completed/failed/cancelled 收束状态；
+- 中文宽字符、resize、滚动、快速 delta；
+- 屏幕阅读器和低动态模式。
 
 ### Phase 4：真实 E2E
 
 ```text
 packaged Promptpile React
-→ Core2 process adapter
-→ TUI runtime driver
+→ Core2 Process Pile adapter
+→ TUI driver
 → presentation reducer/view
 ```
 
 最终 E2E 不能由同一个 fake 同时模拟 producer 和 consumer。
 
-## 10. 必测矩阵
+## 11. 必测矩阵
 
-### Reducer
+Reducer：Thought/Observe/Check 更新同一 item；completed 原位收束并释放正文；Final 是独立 message；连续 send 不串身份；duplicate/late 不污染当前 generation；Final skipped 无空 message；failure/cancel 各有唯一终态。
 
-- working 原位替换为 reference；
-- Final 始终是新 message；
-- Thought/Observe/Check phase 更新不创建重复 block；
--多次 send 不串 workId/messageId；
-- duplicate/late events 不污染当前 generation；
-- Final skipped 不产生空 message；
-- failure/cancel 有唯一 presentation state。
+Lifecycle：cancel 后迟到 delta 不复活；dispose 后无新 presentation；hidden 模式不影响 operation；Hub/receipt/export 不含过程正文；TUI 不访问 React work path 或文件系统。
 
-### Lifecycle
+Rendering/E2E：中文宽字符、快速 delta、resize、滚动；各阶段 cancel；Check/Final/publication failure；多次 send 后 submit 不串流；Archive/World 只包含正式内容。
 
-- active working/Final 不被 transcript eviction；
-- dispose 后 path 不再显示可用；
-- cancel 后迟到 delta 不复活；
-- Hub/receipt/export transcript 不含 work path；
--打开目录失败不改变业务结果。
+## 12. 完成定义
 
-### Rendering/E2E
-
-- Windows/Linux path；
--中文宽字符、快速 delta、resize、滚动；
--各 phase cancel；
-- Check/Final/publication failure；
-- session 调试期 path 可打开，dispose 后被清理；
-- Archive/World 只包含正式权威内容。
-
-## 11. 完成定义
-
-1. TUI 只消费 CoreEvent v2，不理解 process-pile 或 React FSM。
-2. Thought、Observe、Check 显示为同一个明确标注的临时工作块。
-3. work.ready 通过 workId 将工作块原位替换为临时目录地址。
+1. TUI 只消费 CoreEvent v2，不理解 Process Pile 或 React FSM。
+2. Thought、Observe、Check 显示为一个明确标注的临时 working item。
+3. work.completed 后原位显示临时目录地址，operation 终态后明确标记 expired。
 4. Final 使用独立 messageId 和正式 transcript message。
-5. 工作正文和路径不进入 transcript export、Archive 或 World。
-6. cancel、failure、dispose、重复和迟到事件不能串流或复活旧 UI。
+5. 过程正文不进入 transcript export、Conversation、Archive 或 World。
+6. cancel、dispose、重复和迟到事件不能串流或复活旧 UI。
 7. reducer 纯净，副作用由 driver/effect 层负责。
-8.真实 Promptpile React → Core2 → TUI E2E 在 Windows/Linux 通过。
+8. TUI 不创建、读取或删除 React 临时文件；路径打开只能由用户明确触发安全平台 API。
+9. 真实 Promptpile React → Core2 → TUI E2E 在 Windows/Linux 通过。

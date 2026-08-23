@@ -14,13 +14,32 @@ The migration publishes one Profile V1 initial revision, writes `legacy/migratio
 
 ## Promptpile React boundary
 
-Core2 pins `promptpile-react@0.1.0-beta.4` and owns the complete integration topology for every conversational Session:
+Core2 pins `promptpile-react@0.1.0-beta.5` and supports two explicit event boundaries:
+
+- `core-event-v1` remains the compatibility default and consumes Agent Event v1;
+- `core-event-v2` consumes the ordered Process Pile on FD3 and exposes Thought, Observe, Check, and Final as live application events.
+
+Select v2 when creating the runtime:
+
+```ts
+const core = await createDayloomCore({
+  worldRoot,
+  llmConfigPath,
+  eventProtocol: 'core-event-v2',
+});
+```
+
+Every v2 `send` or `submit` receives an independent `operationId`. Work events carry a temporary `workPath` for presentation only; Core2 never creates, reads, persists, or deletes that directory. Promptpile React owns it under its default cleanup lifecycle. The path may be displayed while the operation is live and must be considered expired at operation terminal.
+
+Core2 owns the remaining integration invariants:
 
 - immutable Dayloom context and writable Conversation remain the authoritative model layers;
-- intermediate Thought, Observe, Check, and receipt artifacts stay inside a Session-owned `react-work` root;
+- intermediate Thought, Observe, Check, and receipt artifacts remain React-owned temporary data;
 - a shared, self-contained Observe handoff is the only per-invocation bridge into Final;
 - Final never depends on raw Thought visibility and only a non-empty Final may complete a Core2 operation;
 - the caller cannot configure `[promptpile-react]`, work paths, tools, or hooks; Core2 supplies an explicit empty Thought tool set;
-- cancellation waits for the active child/operation to settle before terminal Session cleanup removes the enclosing work root.
+- cancellation invalidates late event projection and waits for child plus FD3 drain;
+- `output.completed` is emitted only after a valid Process Pile terminal, EOF, matching Final, and child exit 0;
+- process text, IDs, and paths never enter Conversation, Archive, World, receipts, or exported transcript.
 
-React terminal success, Core2 acceptance, submission validation, and World publication are separate witnesses. Core2 consumes only Agent Event v1 and does not parse Promptpile React's private Completion Receipt.
+React terminal success, Core2 acceptance, submission validation, and World publication remain separate witnesses. Core2 does not parse Promptpile React's private Completion Receipt or inspect its temporary files.

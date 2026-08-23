@@ -1,404 +1,325 @@
-# Dayloom Core2：React Process Pile 适配与临时工作目录改造草案
+# Dayloom Core2：React 过程流适配改造草案
 
-> 状态：Draft / 可在上游协议冻结后实施  
-> 日期：2026-08-23  
-> 所有者：`dayloom/packages/core2`  
-> 上游规范：`promptpile/packages/promptpile-react/PROCESS_PILE_STREAMING_PLAN.md`  
+> 状态：Draft / 契约冻结后可直接分阶段实施
+> 日期：2026-08-23
+> 所有者：`dayloom/packages/core2`
+> 上游规范：`promptpile/packages/promptpile-react/PROCESS_PILE_STREAMING_PLAN.md`
 > 下游规范：`dayloom/packages/tui/REACT_TRANSPARENT_WORK_STREAMING_PLAN.md`
 
-## 1. 职责
+## 1. 目标
 
-Core2 是 Promptpile React 与 Dayloom 应用之间唯一的反腐层：
+本改造只有一个核心目的：在用户与 AI 对话期间，通过 Core2 向应用层提供 Thought、Observe、Check 的实时过程接口，同时保持现有 Final、Conversation、Archive 和 World 权威边界不变。
 
 ```text
-Promptpile React process-pile
-→ transport owner
-→ schema/FSM validator
-→ temporary work owner
-→ authority firewall
+Promptpile React Process Pile v1
+→ Core2 transport + validator
 → CoreEvent v2
+→ TUI 按需展示
 ```
+
+Core2 是协议适配器和 authority firewall，不是 React 文件系统管理器。
+
+## 2. 职责边界
 
 Core2 负责：
 
-- 启动、终止和 drain Promptpile React；
-- 单流读取 process pile；
-- 校验 schema、全局时序和 terminal 完整性；
-- 创建并清理 caller-owned 临时 work root；
-- 将合法事实投影为稳定 CoreEvent；
-- 保证过程信息不能进入 Conversation、Archive 或 World。
+- 启动、取消和 drain Promptpile React 子进程；
+- 从一个独立 pipe 读取 Process Pile v1 JSONL；
+- 校验 framing、schema、identity、sequence、phase FSM 和联合终态；
+- 将 Thought、Observe、Check、Final 投影为稳定 CoreEvent；
+- 隔离不同 Dayloom Session 和 operation；
+- 保证过程事件不进入 Conversation、Archive 或 World DTO。
 
 Core2 不负责：
 
-- 生成或修改 Thought/Observe/Check 正文；
-- 读取 work 文件推断 React phase 或决策；
-- 复制 Promptpile React 的业务 FSM；
-- 决定 TUI 如何布局、替换或着色；
-- 长期保存、归档、GC 或恢复临时 work。
+- 创建、读取、扫描或删除 React 临时工作目录；
+- 传递 `--work-root` 或 `--work-lifecycle caller`；
+- 访问、验证、缓存或持久化 `work_path` 指向的文件系统内容；
+- 读取 handoff、Receipt 或其他 React 内部文件；
+- 根据 Thought、Observe、Check 决定 World mutation；
+- 决定 TUI 的布局、折叠、清除或着色。
 
-## 2. 不变量
+React 使用默认 `work_lifecycle=cleanup`，自行闭环其临时目录。
 
-### 2.1 单一事实来源
+## 3. 不变量
 
-启用 process pile 后：
+### 3.1 单一机器事实流
+
+启用 v2 后：
 
 ```text
-process-pile = 唯一 React 机器事件源
+Process Pile = 唯一 React 机器事件源
 stdout       = drain only
 stderr       = capped diagnostic only
-child exit   = transport witness，不单独证明业务成功
+child exit   = transport witness
 ```
 
-禁止合并 stdout Agent Event v1 与 process pile；两个物理流之间不存在可验证的全局顺序。
+禁止把 Agent Event v1 stdout 与 Process Pile 合并排序。两个物理流不存在可验证的全局顺序。
 
-### 2.2 Authority firewall
+### 3.2 权威边界
 
 ```text
-temporary process information
-= work.started / work.delta / work.ready / work.failed
-+ workPath
+临时过程信息
+= work.started / work.delta / work.completed / work.failed
 + Thought / Observe / Check text
 
-authoritative information
-= accepted user input
-+ validated Final
-+ submission result
-+ Archive/World publication
+权威信息
+= accepted user turn
++ verified Final
++ submission/publication result
++ Archive/World commit
 ```
 
-- 前一组永远不能成为后一组的输入。
-- Final delta 可展示，但只有合法 terminal Final 才能成为完成结果。
-- Core2 不根据过程正文决定 World mutation。
+- 过程正文只发送给当前 live observer；
+- 不写入 Conversation、Archive、World、submission receipt 或导出 transcript；
+- Final delta 可以实时展示，但只有联合终态成功后才完成；
+- Core2 不缓存完整过程正文，只保留 FSM 所需的有限状态。
 
-### 2.3 Ownership
+### 3.3 身份
 
-- 每个 operation 有唯一 `sessionId`、`processId`、`workId`。
-- Final 有独立 `messageId`。
-- 临时目录由 Core2 创建 root、React 创建 session child、Core2 最终清理。
-- cancel/dispose/terminal 后迟到事件不能产生新的应用状态。
+一个 Dayloom Session 可以包含多次 operation：
 
-## 3. 启动与 transport
+```text
+Session
+├─ send operation 1
+├─ send operation 2
+└─ submit operation
+```
 
-### 3.1 参数
+每次 `send()` 或 `submit()` 创建唯一 `operationId`。所有过程和 Final 事件都同时携带 `sessionId + operationId`，迟到事件不能进入后续 operation。
 
-Core2 为本次 runtime 创建专属临时 root，并启动：
+React 的 `process_id` 用于流身份校验，`work_id` 在适配器内部校验后丢弃。`work_path` 作为不可信、临时、非持久化的 opaque presentation metadata 转发给 TUI；Core2 不访问该路径。
+
+## 4. 公共 API
+
+协议版本在 Core 实例创建时冻结：
+
+```ts
+export interface CreateDayloomCoreOptions {
+  worldRoot: string;
+  llmConfigPath: string;
+  eventProtocol?: 'core-event-v1' | 'core-event-v2';
+}
+```
+
+- 默认保持 `core-event-v1`，兼容现有调用者；
+- v2 调用者必须显式选择；
+- 同一个 Core 实例运行期间不得切换协议；
+- 不支持运行时静默降级。
+
+### 4.1 CoreEvent v2
+
+```ts
+export type ReactWorkPhase = 'thought' | 'observe' | 'check';
+
+export type CoreEventV2 =
+  | { type: 'state.changed'; state: CoreState }
+  | { type: 'work.started'; sessionId: string; operationId: string; workPath: string }
+  | { type: 'work.delta'; sessionId: string; operationId: string; phase: ReactWorkPhase; stepIndex: number; text: string }
+  | { type: 'work.completed'; sessionId: string; operationId: string; workPath: string }
+  | { type: 'work.failed'; sessionId: string; operationId: string; status: 'failed' | 'cancelled'; message: string; workPath: string | null }
+  | { type: 'output.started'; sessionId: string; operationId: string; messageId: string }
+  | { type: 'output.delta'; sessionId: string; operationId: string; messageId: string; text: string }
+  | { type: 'output.completed'; sessionId: string; operationId: string; messageId: string }
+  | { type: 'output.failed'; sessionId: string; operationId: string; messageId: string; message: string };
+```
+
+`messageId` 由 Core2 在合法 `phase.started(final)` 时生成，在该 Final 生命周期内保持不变。
+
+## 5. Transport
+
+Core2 启动：
 
 ```text
 promptpile-react
-  --work-root <runtimeTemp>/react-work
-  --work-lifecycle caller
-  --process-pile-fd <inheritedFd>
+  --process-pile-fd 3
   --process-pile-format json
+  ...现有 config/context/output 参数
 ```
 
-要求：
+不传 `--work-root`，不传 `--work-lifecycle caller`。
 
-- process pile FD 与 child stdout/stderr 分离；
-- Windows 使用明确的 inherited stdio slot，不依赖 shell 重定向；
-- stdout 始终 drain，stderr capped；
-- Core2 dispose 前必须结束 reader 和 child；
-- argv、cwd、root identity 记录在 diagnostic，不写 Archive。
+Node runner 使用显式 stdio pipe：
 
-### 3.2 联合终态
+```ts
+spawn(process.execPath, [reactBin, ...args], {
+  stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+  windowsHide: true,
+});
 
-Core2 同时观察：
-
-```text
-protocol terminal
-process-pile EOF
-child exit status
-cancel/dispose intent
+// child.stdio[3] 是 Process Pile reader
 ```
 
-判定规则：
+runner 边界必须支持 `AbortSignal`、FD3 chunk、stdout/stderr drain 和 child callback。stderr 只保留固定上限，Process Pile callback 失败触发同一个 abort 路径；dispose 前必须等待 child close 和所有 pipe EOF。
 
-| 条件 | Core2 结论 |
-| --- | --- |
-| 合法 `process.completed` + EOF + exit 0 | React completed |
-| 合法 `process.failed` + EOF + nonzero/zero | React failed，以协议错误为主 |
-| EOF 前没有 terminal | `PROCESS_PILE_TRUNCATED` |
-| terminal 后还有事件 | `PROCESS_PILE_INVALID` |
-| completed 但 child nonzero | `PROCESS_EXIT_MISMATCH` |
-| cancel intent 后 transport 关闭 | `CANCELLED`，不接受迟到业务事件 |
+## 6. Validator 与 reducer
 
-协议已断裂时不要求上游继续写 `process.failed`；Core2 自己形成 transport failure。
-
-## 4. 严格 reducer
-
-### 4.1 验证层次
-
-按以下顺序验证，任一失败立即关闭 operation：
+验证顺序：
 
 ```text
 JSONL framing
-→ JSON Schema
+→ Process Pile v1 schema
 → process identity
 → continuous sequence
 → phase FSM
-→ work path ownership
 → terminal consistency
 ```
 
 必须验证：
 
-- process ID 恒定；
-- sequence 从 0 连续递增；
--恰好一个 process started；
--每个 phase 满足 `started → delta* → completed`；
-- Thought/Observe/Check step index 合法；
+- 首事件恰好是一个 `process.started`，sequence 为 0；
+- `process_id` 全程不变，sequence 连续递增；
+- Thought/Observe/Check 满足 `started → delta* → completed`；
+- step index、Check continue 和 max steps 一致；
 - terminal Check 后 `work.ready` happens-before Final；
-- Check 继续下一 step 时不得提前 ready；
 - Final skipped 时不得出现 Final phase；
-- terminal 唯一且之后无事件；
-- aggregated Final delta 等于 terminal Final content。
+- Final delta 聚合值等于 terminal Final content；
+- terminal 唯一且之后无事件。
 
-### 4.2 适配器状态
+适配器只验证上游事实，不重新执行 React 决策。
 
-```ts
-type AdapterState =
-  | { kind: 'starting' }
-  | { kind: 'working'; processId: string; workId: string; step: number; phase: 'thought' | 'observe' | 'check' }
-  | { kind: 'work-ready'; processId: string; workId: string; workPath: string }
-  | { kind: 'final'; processId: string; workId: string; messageId: string; text: string }
-  | { kind: 'completed'; final: string | null }
-  | { kind: 'failed'; code: string }
-  | { kind: 'cancelled' };
-```
-
-该状态机只验证上游事实并管理投影，不重新做 Check decision 或 React loop。
-
-## 5. 临时 work owner
-
-### 5.1 创建
+## 7. 事件投影与完成边界
 
 ```text
-OS temp / caller runtime temp
-  dayloom-core2-<runtimeId>/
-    owner.json
-    react-work/
-      promptpile-react-session-<id>/
-        .promptpile-react-session.json
-        work/      # process event 公开的 workPath
-        control/   # React 私有 handoff/Receipt
+process.started                         → work.started(workPath)
+phase.delta(thought|observe|check)     → work.delta
+work.ready                              → work.completed(workPath)
+phase.started(final)                    → output.started
+phase.delta(final)                      → output.delta
+phase.completed(final)                  → 只封闭内部 Final accumulator
+process.completed + EOF + exit 0 + 一致 → output.completed + success
+process.failed / 本地 transport failure → Final 前 work.failed；Final 开始后 output.failed
 ```
 
-- Core2 创建唯一 runtime root 和 owner marker；
-- Promptpile React 只能在 `react-work/` 下创建唯一 session child；
-- process event 发布 canonical absolute `session/work/`，不得发布 session root 或 `control/`；
-- Core2 验证 path 是本次 root 下合法 marker session 的 `work/` 子目录且真实存在；
--禁止 root escape 和 symlink traversal。
+`output.completed` 不能在 `phase.completed(final)` 时提前发送。Final skipped 不产生完成的 assistant message。已经开始 Final 后发生失败时发送一次 `output.failed`，绝不发送 `output.completed`。
 
-### 5.2 清理
+## 8. 联合终态与错误映射
 
-唯一顺序：
+Core2 同时观察 protocol terminal、Process Pile EOF、child exit 和 cancel intent：
 
 ```text
-invalidate event generation
-→ terminate/drain active child
-→ close process reader
-→ canonicalize exact owned target
-→ validate owner marker
-→ recursively delete runtime temp root
+合法 process.completed + EOF + exit 0 → success
+合法 process.failed + EOF             → AGENT_FAILED / CANCELLED
+EOF 前无 terminal                     → PROCESS_PILE_TRUNCATED
+terminal 后还有事件                   → PROCESS_PILE_INVALID
+completed 但 child nonzero             → PROCESS_EXIT_MISMATCH
+schema/FSM/sequence 错误                → PROCESS_PILE_INVALID
 ```
 
-- 不使用未解析环境变量、glob 或模型提供的路径删除；
-- 不扫描其他 runtime；
-- cleanup failure 只产生 diagnostic，不污染已完成 Final；
-- crash/SIGKILL orphan 由 OS temp policy 处理，本期不新增应用级 GC；
-- restart 不恢复 work path。
+公开 CoreResult 映射：
 
-## 6. CoreEvent v2
+- React `cancelled` 或本地 cancel 胜出 → `CANCELLED`；
+- 其他合法 `process.failed` → `AGENT_FAILED`；
+- framing/schema/FSM/truncated/exit mismatch → `AGENT_FAILED`；
+- runner 无法启动或 Core2 内部不变量失败 → `INTERNAL_ERROR`。
 
-```ts
-export type CoreEventV2 =
-  | { type: 'work.started'; sessionId: string; workId: string; workPath: string }
-  | {
-      type: 'work.delta';
-      sessionId: string;
-      workId: string;
-      phase: 'thought' | 'observe' | 'check';
-      stepIndex: number;
-      text: string;
-    }
-  | {
-      type: 'work.ready';
-      sessionId: string;
-      workId: string;
-      status: 'checked';
-      workPath: string;
-    }
-  | {
-      type: 'work.failed';
-      sessionId: string;
-      workId: string;
-      status: 'failed' | 'cancelled';
-      workPath: string | null;
-      message: string;
-    }
-  | { type: 'output.started'; sessionId: string; messageId: string }
-  | { type: 'output.delta'; sessionId: string; messageId: string; text: string }
-  | { type: 'output.completed'; sessionId: string; messageId: string };
-```
-
-投影规则：
-
-```text
-process.started                     → work.started
-phase.delta(thought|observe|check) → work.delta
-work.ready                          → work.ready
-phase.started(final)               → output.started
-phase.delta(final)                 → output.delta
-phase.completed(final)             → output.completed
-process.failed                     → work.failed + CoreResult
-```
-
-CoreEvent 不暴露 Promptpile sequence、raw protocol error、tool arguments 或 provider metadata。TUI 不需要理解 process-pile schema。
-
-## 7. CoreEvent v2 迁移
-
-现有 `output.delta` 没有 messageId，不能安全承担多流身份。采用显式版本入口：
-
-```ts
-runReact({ eventProtocol: 'core-event-v1' | 'core-event-v2' })
-```
-
-迁移：
-
-```text
-Core2 先支持 v1 + v2
-→ TUI 切换到 v2
-→ 其他消费者迁移
-→ 后续 major 删除 v1
-```
-
-- v2 字段不得 optional 化来兼容 v1；
-- v1 继续走现有 Agent Event v1 adapter；
-- v2 要求支持 process-pile 的 Promptpile React 版本；
--调用方显式选择，禁止运行时静默降级。
-
-## 8. Archive 与 World 防火墙
-
-```text
-Archive input
-= World state
-+ accepted user turns
-+ accepted Final
-+ submission/publication metadata
-
-Archive input
-≠ work CoreEvent
-≠ process-pile event
-≠ workPath
-≠ temporary phase text
-```
-
-实现约束：
-
-- Archive DTO 不增加 workId/workPath/phase delta；
-- Archive serializer 不依赖 React adapter 或 TUI presentation；
-- `work.*` 只能发送给 live application observer；
-- debug log 属于 runtime diagnostic，不属于 Archive V2；
--临时目录创建/删除不产生 World commit；
--无论 send、submit、failure 或 cancel，边界都不改变。
+原始协议事件、provider metadata 和路径不进入公共 error DTO。
 
 ## 9. Cancel 与 dispose
 
-### Cancel
+每次 operation 有原子 generation 状态：
 
 ```text
-record cancel intent
-→ invalidate application event generation
-→ signal child
+OPEN
+├─ 接受 verified terminal → TERMINAL
+└─ 接受 cancel intent     → CANCELLED
+```
+
+只有首先从 `OPEN` 完成转换的一方生效。
+
+Cancel：
+
+```text
+accept cancel intent
+→ invalidate event projection
+→ AbortSignal / terminate child
 → drain stdout/stderr/process pile
-→ settle adapter as cancelled
 → emit at most one work.failed(cancelled)
+→ settle operation
 ```
 
-若 cancel intent 与合法 terminal 竞争，以先被 reducer 接受的 terminal boundary 为准；一旦 cancel generation 失效，不再投影迟到 delta。
+Dispose 会 cancel active operation、等待 child 与 pipe drain、取消订阅并标记 Core disposed。Core2 不删除 React 临时目录；React cleanup 生命周期自行完成清理。
 
-### Dispose
+## 10. Conversation、Archive 与 World 防火墙
 
 ```text
-cancel active operation
-→ await terminal/drain
-→ unsubscribe observers
-→ cleanup owned temp root
-→ mark runtime disposed
+Conversation/Archive/World 输入
+= accepted user turns
++ verified Final
++ publication metadata
+
+Conversation/Archive/World 输入
+≠ work/process event
+≠ Thought/Observe/Check text
+≠ process_id/work_id/work_path
 ```
 
-dispose 幂等，重复调用不重复删除或重复发事件。
+- Archive DTO 和 serializer 不依赖 React adapter；
+- `work.*` 只能发给 live observer；
+- debug log 不属于 Archive V2；
+- failure/cancel 不归档过程正文；
+- 过程流开关不改变 World mutation 结果；
+- 本改造不新增 Core2 文件写入，不改变现有 Final/Archive publication 事务。
 
-## 10. 分阶段实施
+## 11. 依赖与发布边界
 
-### Phase 0：依赖冻结
+- `promptpile-react` 固定为 `0.1.0-beta.5`；
+- 从发布包加载 `schema/process-pile-v1.schema.json`；
+- `PackagedBoundaries` 提供 React binary 和 Process Pile validator；
+- 禁止 deep import Promptpile React 源码或 dist 内部模块；
+- Core2 tarball smoke 使用实际安装的 Promptpile React 包。
 
-- 锁定 process-pile schema、fixtures 和 Promptpile React 最低版本；
--确定 CoreEvent v2 public types；
--冻结 error code mapping。
+## 12. 分阶段实施
 
-### Phase 1：transport 与 validator
+### Phase 0：冻结契约
 
-- inherited FD、stdout/stderr drain；
+- 冻结 CoreEvent v2、operationId/messageId 规则；
+- 锁定 beta.5、schema、fixtures；
+- 冻结错误映射与联合终态。
+
+### Phase 1：runner 与协议 reducer
+
+- FD3 pipe、stdout/stderr drain、AbortSignal；
 - JSONL/schema/sequence/FSM validator；
-- EOF/exit/terminal 联合判定；
-- truncated/mismatch failure。
+- terminal/EOF/exit 联合判定。
 
-### Phase 2：临时目录 owner
+### Phase 2：CoreEvent v2
 
-- root/marker 创建；
-- argv 传递；
-- path validation；
-- cancel/dispose 精确清理。
+- operation generation；
+- work/output 事件投影；
+- v1/v2 实例级选择；
+- late/duplicate event guards。
 
-### Phase 3：CoreEvent v2 与 authority firewall
+### Phase 3：authority firewall
 
--事件投影；
-- Final aggregation；
-- v1/v2 显式入口；
-- Archive/World dependency guards。
+- Conversation/Archive/World guards；
+- failure/cancel 无过程归档测试；
+- diagnostic 截断和敏感字段测试。
 
 ### Phase 4：真实集成
 
-- packaged Promptpile React child；
-- Core2 E2E；
-- Windows/Linux；
--失败、取消、dispose、重复调用。
+- packaged Promptpile React beta.5；
+- Windows/Linux FD3；
+- send/submit/failure/cancel/dispose；
+- 连续多次 operation 不串流。
 
-## 11. 必测矩阵
+## 13. 必测矩阵
 
-### Protocol
+Protocol：malformed JSON、schema error、sequence gap/duplicate/reorder、非法 phase、Final before ready、Final skipped、content mismatch、missing/duplicate terminal、EOF/exit mismatch。
 
-- malformed JSON、schema error；
-- sequence gap/duplicate/reorder；
-- phase delta before start/after completed；
-- Final before work.ready；
-- missing/duplicate terminal；
-- EOF/exit/terminal mismatch；
-- partial Final 与 terminal content mismatch。
+Identity：连续 send 使用不同 operationId；submit 不继承 send generation；late event 不进入下一 operation；messageId 只属于一个 Final。
 
-### Ownership
+Authority：work delta 不写 Conversation；Archive 无过程正文和 React ID/path；failure/cancel 不归档过程；开启 v2 不改变 World publication。
 
-- root escape、symlink、marker mismatch；
--只删除当前 runtime root；
-- cleanup failure 不覆盖 primary result；
-- dispose/cancel 幂等；
-- restart 不恢复临时 path。
+Lifecycle：cancel/dispose 幂等；cancel 后无新投影但完整 drain；stderr 有上限；Core2 不创建或删除 React work 目录。
 
-### Authority
+## 14. 完成定义
 
-- work delta 不写 Conversation；
-- Archive fixture 无 workId/workPath/phase text；
-- failure/cancel 不产生过程归档；
-- debug mode 不改变 Archive schema；
--临时目录清理不产生 World commit。
-
-## 12. 完成定义
-
-1. Core2 只消费单一 process pile，不合并双流时序。
-2. schema、FSM、sequence、exit、EOF 与 terminal 全部严格验证。
-3. 临时目录有唯一 owner，并在 dispose 后精确清理。
-4. CoreEvent v2 隐藏上游协议细节并提供稳定身份。
-5. v1/v2 迁移显式、无 optional 双义字段、无静默降级。
-6. Thought/Observe/Check 和 workPath 不进入 Conversation、Archive 或 World。
-7. cancel、failure、dispose 和迟到事件均有唯一可测试终态。
-8. packaged Promptpile React → Core2 E2E 在 Windows/Linux 通过。
+1. Core2 只消费单一 Process Pile，不合并双流时序。
+2. Thought、Observe、Check 通过稳定 `work.*` 接口实时输出。
+3. 每次 send/submit 有独立 operationId，迟到事件不能串流。
+4. Final 与过程流共享严格时序，只有联合终态成功才发 `output.completed`。
+5. Core2 不创建、读取或清理 React 临时工作目录；仅透明转发运行期间有效的 workPath。
+6. 过程正文和 React 内部 ID/path 不进入 Conversation、Archive 或 World。
+7. v1/v2 迁移显式且实例级冻结，无静默降级。
+8. packaged React → Core2 E2E 在 Windows/Linux 通过。

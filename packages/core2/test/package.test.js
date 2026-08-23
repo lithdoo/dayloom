@@ -14,7 +14,7 @@ test('core2 pins the frozen promptpile-compress release', () => {
 });
 
 test('core2 pins the verified promptpile-react release', () => {
-  assert.equal(corePackage.dependencies['promptpile-react'], '0.1.0-beta.4');
+  assert.equal(corePackage.dependencies['promptpile-react'], '0.1.0-beta.5');
 });
 
 test('core2 package describes the complete product lifecycle', () => {

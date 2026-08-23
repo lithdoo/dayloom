@@ -6,11 +6,12 @@ const { createDayloomCore, CoreInitializationError } = require('../dist');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
 const { archiveFixture } = require('./helpers');
 
-test('core2 resolves packaged binaries and compiles packaged Agent Event schema', async () => {
+test('core2 resolves packaged binaries and compiles packaged React schemas', async () => {
   const boundaries = await resolvePackagedBoundaries();
   assert.match(boundaries.promptpileBin, /promptpile[\\/]dist[\\/]index\.js$/);
   assert.match(boundaries.reactBin, /promptpile-react[\\/]dist[\\/]index\.js$/);
   assert.equal(boundaries.validateAgentEvent({ schema_version: 1, type: 'session.started', session_id: 'x', sequence: 0, max_steps: 1, future: true }), true);
+  assert.equal(boundaries.validateProcessPile({ schema_version: 1, process_id: `react_${'1'.repeat(32)}`, sequence: 0, type: 'process.started', max_steps: 1, work_id: `work_${'2'.repeat(32)}`, work_path: 'x', work_lifecycle: 'cleanup' }), true);
   assert.equal(fs.existsSync(path.join(__dirname, '..', 'src', 'schema', 'agent-event-v1.schema.json')), false);
 });
 test('core2 initializes a valid planned World and derives play capability', async (t) => {
@@ -31,4 +32,11 @@ test('core2 rejects caller-owned React and Conversation config', async (t) => {
   await assert.rejects(() => createDayloomCore({ worldRoot: fixture.root, llmConfigPath: fixture.config }), (error) => error.code === 'INVALID_OPTIONS');
   fs.writeFileSync(fixture.config, '[promptpile]\ndir="bad"\n');
   await assert.rejects(() => createDayloomCore({ worldRoot: fixture.root, llmConfigPath: fixture.config }), (error) => error.code === 'INVALID_OPTIONS');
+});
+test('core2 rejects an unknown public event protocol', async (t) => {
+  const fixture = archiveFixture(); t.after(fixture.cleanup);
+  await assert.rejects(
+    () => createDayloomCore({ worldRoot: fixture.root, llmConfigPath: fixture.config, eventProtocol: 'future' }),
+    (error) => error instanceof CoreInitializationError && error.code === 'INVALID_OPTIONS',
+  );
 });

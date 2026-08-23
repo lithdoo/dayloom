@@ -62,7 +62,7 @@ test('play workspace isolates compression requests and marks summaries as untrus
   const session = await createPlayWorkspace(runtime, 'session', await readPublishedWorld(fixture.root), await readCallerConfig(fixture.config));
   assert.equal(path.dirname(session.requestsDir), path.join(session.root, 'compression'));
   assert.equal(session.reactWorkRoot, path.join(session.root, 'react-work'));
-  assert.equal(fs.statSync(session.reactWorkRoot).isDirectory(), true);
+  assert.equal(fs.existsSync(session.reactWorkRoot), false);
   assert.equal(fs.statSync(session.requestsDir).isDirectory(), true);
   assert.equal(fs.readFileSync(session.summaryPromptPath, 'utf8').includes('Return exactly one JSON object'), true);
   assert.equal(TOML.parse(fs.readFileSync(session.summaryConfigPath, 'utf8')).llm_api[0].name, 'test');

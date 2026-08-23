@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { CoreInitializationError, CoreOperationError, failure, success, type CoreResult } from './errors';
-import type { CoreEvent } from './events';
+import type { CoreEvent, CoreEventFor, CoreEventProtocol } from './events';
 import { buildState, type CoreSessionKind, type CoreState, type CoreWorldState } from './state';
 import { classifyWorld, type ClassifiedWorld, type PublishedWorld } from './world/read';
 import { publishMutation, publishPlay, type PublishMutationInput, type WorldChange } from './world/publish';
@@ -29,10 +29,10 @@ import { buildSettlementMutationV1 } from './world/builders/settlement';
 import { readStructuredDayEventsV1 } from './world/profile/events';
 import { buildReviseMutationV1 } from './world/builders/revise';
 
-export interface CreateDayloomCoreOptions { worldRoot: string; llmConfigPath: string }
-export interface DayloomCore {
+export interface CreateDayloomCoreOptions { worldRoot: string; llmConfigPath: string; eventProtocol?: CoreEventProtocol }
+export interface DayloomCore<P extends CoreEventProtocol = CoreEventProtocol> {
   getState(): CoreState;
-  subscribe(listener: (event: CoreEvent) => void): () => void;
+  subscribe(listener: (event: CoreEventFor<P>) => void): () => void;
   startSession(kind: CoreSessionKind): Promise<CoreResult>;
   send(text: string): Promise<CoreResult>;
   submit(): Promise<CoreResult>;
@@ -50,7 +50,7 @@ interface InternalOptions {
 const encoder = new TextEncoder();
 const json = (value: unknown) => encoder.encode(`${JSON.stringify(value, null, 2)}\n`);
 
-class DayloomCoreImpl implements DayloomCore {
+class DayloomCoreImpl implements DayloomCore<CoreEventProtocol> {
   private world: PublishedWorld | null;
   private worldState: CoreWorldState;
   private session: CoreSession | null = null;
@@ -62,13 +62,14 @@ class DayloomCoreImpl implements DayloomCore {
   private cancelRequestedSessionId: string | null = null;
   private interruptCancelPromise: Promise<CoreResult> | null = null;
   private disposal: Promise<void> | null = null;
+  private activeReactOperation: { id: string; sessionId: string; workPath: string | null; messageId: string | null; terminalProjected: boolean } | null = null;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   constructor(
     classified: ClassifiedWorld, private readonly worldRoot: string, private readonly runtimeRoot: string,
     private readonly config: CallerConfig, private readonly boundaries: PackagedBoundaries,
     private readonly runner: ProcessRunner, private readonly playPublisher: typeof publishPlay,
     private readonly mutationPublisher: typeof publishMutation, private readonly remove: typeof rm,
-    private readonly classifier: typeof classifyWorld,
+    private readonly classifier: typeof classifyWorld, private readonly eventProtocol: CoreEventProtocol,
   ) { this.world = classified.published; this.worldState = classified.state; }
   getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed, this.cancelRequestedSessionId); }
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -93,8 +94,43 @@ class DayloomCoreImpl implements DayloomCore {
   }
   private async runSessionReact(session: CoreSession, config: string, onDelta?: (delta: string) => void): Promise<string> {
     let child: ChildProcess | null = null;
-    try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, workRoot: session.reactWorkRoot, onChild: (started) => { child = started; this.childStarted(started, session.id); }, onDelta }); }
-    finally { if (child) this.childEnded(child); }
+    if (this.eventProtocol === 'core-event-v1') {
+      try { return await runReact({ runner: this.runner, reactBin: this.boundaries.reactBin, validate: this.boundaries.validateAgentEvent, config, context: session.contextDir, conversation: session.conversationDir, workRoot: session.reactWorkRoot, onChild: (started) => { child = started; this.childStarted(started, session.id); }, onDelta }); }
+      finally { if (child) this.childEnded(child); }
+    }
+    const operation = { id: `op_${randomUUID().replaceAll('-', '')}`, sessionId: session.id, workPath: null as string | null, messageId: null as string | null, terminalProjected: false };
+    let messageId: string | null = null;
+    this.activeReactOperation = operation;
+    const live = () => this.activeReactOperation === operation && !operation.terminalProjected && !this.disposed && !this.isCancelRequested(session);
+    const fail = (message: string, status: 'failed' | 'cancelled' = 'failed') => {
+      if (!live()) return;
+      operation.terminalProjected = true;
+      if (messageId) this.emit({ type: 'output.failed', sessionId: session.id, operationId: operation.id, messageId, message });
+      else this.emit({ type: 'work.failed', sessionId: session.id, operationId: operation.id, status, message, workPath: operation.workPath });
+    };
+    try {
+      return await runReact({
+        runner: this.runner, reactBin: this.boundaries.reactBin,
+        validate: this.boundaries.validateAgentEvent, validateProcessPile: this.boundaries.validateProcessPile,
+        eventProtocol: 'core-event-v2', config, context: session.contextDir, conversation: session.conversationDir,
+        onChild: (started) => { child = started; this.childStarted(started, session.id); },
+        observer: {
+          workStarted: (workPath) => { if (live()) { operation.workPath = workPath; this.emit({ type: 'work.started', sessionId: session.id, operationId: operation.id, workPath }); } },
+          workDelta: (phase, stepIndex, text) => { if (live()) this.emit({ type: 'work.delta', sessionId: session.id, operationId: operation.id, phase, stepIndex, text }); },
+          workCompleted: (workPath) => { if (live()) this.emit({ type: 'work.completed', sessionId: session.id, operationId: operation.id, workPath }); },
+          workFailed: (status, message, workPath) => { operation.workPath = workPath; fail(message, status); },
+          outputStarted: () => { if (live()) { messageId = `msg_${randomUUID().replaceAll('-', '')}`; operation.messageId = messageId; this.emit({ type: 'output.started', sessionId: session.id, operationId: operation.id, messageId }); } },
+          outputDelta: (text) => { if (live() && messageId) this.emit({ type: 'output.delta', sessionId: session.id, operationId: operation.id, messageId, text }); },
+          outputCompleted: () => { if (live() && messageId) { operation.terminalProjected = true; this.emit({ type: 'output.completed', sessionId: session.id, operationId: operation.id, messageId }); } },
+        },
+      });
+    } catch (error) {
+      fail(messageOf(error));
+      throw error;
+    } finally {
+      if (child) this.childEnded(child);
+      if (this.activeReactOperation === operation) this.activeReactOperation = null;
+    }
   }
   private operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
@@ -282,6 +318,12 @@ class DayloomCoreImpl implements DayloomCore {
   private cancelledResult(): CoreResult { return failure('CANCELLED', 'The active Session operation was cancelled.'); }
   private beginInterruptCancel(session: CoreSession): Promise<CoreResult> {
     this.cancelRequestedSessionId = session.id;
+    const reactOperation = this.activeReactOperation;
+    if (reactOperation?.sessionId === session.id && !reactOperation.terminalProjected) {
+      reactOperation.terminalProjected = true;
+      if (reactOperation.messageId) this.emit({ type: 'output.failed', sessionId: session.id, operationId: reactOperation.id, messageId: reactOperation.messageId, message: 'The active output was cancelled.' });
+      else this.emit({ type: 'work.failed', sessionId: session.id, operationId: reactOperation.id, status: 'cancelled', message: 'The active work was cancelled.', workPath: reactOperation.workPath });
+    }
     const operation = this.currentOperationDone;
     let cancelPromise!: Promise<CoreResult>;
     cancelPromise = (async () => {
@@ -334,9 +376,13 @@ function canonChanges(canon: { premise: string; rules: string; style: string; us
 function codeOf(error: unknown): string { return typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : ''; }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : 'Internal Core error.'; }
 
-export async function createDayloomCore(options: CreateDayloomCoreOptions): Promise<DayloomCore> { return createDayloomCoreInternal(options); }
+export function createDayloomCore(options: CreateDayloomCoreOptions & { eventProtocol: 'core-event-v2' }): Promise<DayloomCore<'core-event-v2'>>;
+export function createDayloomCore(options: CreateDayloomCoreOptions & { eventProtocol?: 'core-event-v1' }): Promise<DayloomCore<'core-event-v1'>>;
+export function createDayloomCore(options: CreateDayloomCoreOptions): Promise<DayloomCore> { return createDayloomCoreInternal(options); }
 export async function createDayloomCoreInternal(options: CreateDayloomCoreOptions, internal: InternalOptions = {}): Promise<DayloomCore> {
   if (!options || typeof options.worldRoot !== 'string' || options.worldRoot.trim() === '' || typeof options.llmConfigPath !== 'string' || options.llmConfigPath.trim() === '') throw new CoreInitializationError('INVALID_OPTIONS', 'worldRoot and llmConfigPath are required.');
+  if (options.eventProtocol !== undefined && options.eventProtocol !== 'core-event-v1' && options.eventProtocol !== 'core-event-v2') throw new CoreInitializationError('INVALID_OPTIONS', 'eventProtocol must be core-event-v1 or core-event-v2.');
+  const eventProtocol = options.eventProtocol ?? 'core-event-v1';
   const worldRoot = path.resolve(options.worldRoot), llmConfigPath = path.resolve(options.llmConfigPath);
   try { await mkdir(worldRoot, { recursive: true }); } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not create worldRoot directory.', { cause: error }); }
   let config: CallerConfig; try { config = await readCallerConfig(llmConfigPath); } catch (error) { throw new CoreInitializationError('INVALID_OPTIONS', 'Invalid caller LLM config.', { cause: error }); }
@@ -345,6 +391,6 @@ export async function createDayloomCoreInternal(options: CreateDayloomCoreOption
     const classifier = internal.classifier ?? classifyWorld;
     const classified = await classifier(worldRoot), runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-core2-'));
     await mkdir(path.join(runtimeRoot, 'sessions'));
-    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.publisher ?? publishPlay, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier);
+    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.publisher ?? publishPlay, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier, eventProtocol);
   } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not initialize Core runtime.', { cause: error }); }
 }

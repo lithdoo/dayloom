@@ -51,7 +51,7 @@ function respond(response, requestNumber, finals, options = {}) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   const phase = (requestNumber - 1) % 4;
   if (phase === 2) {
-    response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: '{"decision":false}' } }] } }] })}\n\ndata: [DONE]\n\n`);
+    response.end(`data: ${JSON.stringify({ choices: [{ delta: { ...(options.checkContent ? { content: options.checkContent } : {}), tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: '{"decision":false}' } }] } }] })}\n\ndata: [DONE]\n\n`);
     return;
   }
   const invocation = Math.floor((requestNumber - 1) / 4) + 1;
@@ -175,4 +175,33 @@ test('real beta.4 empty Observe fails closed before Final and leaves no Session 
   const reactArgs = calls.find((call) => call.args.includes('--work-root')).args;
   const workRoot = reactArgs[reactArgs.indexOf('--work-root') + 1];
   assert.equal(fs.existsSync(path.dirname(workRoot)), false);
+});
+
+test('real beta.5 Process Pile streams all phases through CoreEvent v2 and React cleans its work', { timeout: 20_000 }, async (t) => {
+  const provider = await fixtureProvider(t, ['visible-v2-final'], { checkContent: 'checked' });
+  const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
+  const calls = [];
+  const runner = { run(bin, args, options) { calls.push({ args: [...args] }); return nodeProcessRunner.run(bin, args, options); } };
+  const core = await createDayloomCoreInternal(
+    { worldRoot: archive.root, llmConfigPath: archive.config, eventProtocol: 'core-event-v2' },
+    { runner, boundaries: await resolvePackagedBoundaries() },
+  );
+  t.after(() => core.dispose());
+  const events = []; const existedAtReady = [];
+  core.subscribe((event) => {
+    events.push(event);
+    if (event.type === 'work.completed') existedAtReady.push(fs.existsSync(event.workPath));
+  });
+  assert.deepEqual(await core.startSession('play'), { ok: true });
+  assert.deepEqual(await core.send('show transparent work'), { ok: true });
+  const operation = events.find((event) => event.type === 'work.started').operationId;
+  const own = events.filter((event) => event.operationId === operation);
+  assert.deepEqual(own.filter((event) => event.type === 'work.delta').map((event) => event.phase), ['thought', 'thought', 'observe', 'observe', 'check']);
+  assert.equal(own.filter((event) => event.type === 'output.delta').map((event) => event.text).join(''), 'visible-v2-final');
+  assert.equal(own.filter((event) => event.type === 'output.completed').length, 1);
+  assert.deepEqual(existedAtReady, [true]);
+  assert.equal(fs.existsSync(own.find((event) => event.type === 'work.started').workPath), false);
+  const reactArgs = calls.find((call) => call.args.includes('--process-pile-fd')).args;
+  assert.equal(reactArgs.includes('--work-root'), false);
+  assert.equal(reactArgs[reactArgs.indexOf('--process-pile-fd') + 1], '3');
 });
