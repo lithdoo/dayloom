@@ -79,10 +79,10 @@ function snapshot(directory) {
   return fs.readdirSync(directory).sort().map((name) => [name, fs.readFileSync(path.join(directory, name), 'utf8')]);
 }
 
-test('real beta.4 isolates two consecutive Play sends and hands Observe to Final', { timeout: 20_000 }, async (t) => {
+test('real beta.5 isolates two consecutive Play sends and hands Observe to Final', { timeout: 20_000 }, async (t) => {
   const provider = await fixtureProvider(t, ['visible-final-1', 'visible-final-2']);
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
-  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-react-beta4-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-react-beta5-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
   const boundaries = await resolvePackagedBoundaries();
   const world = await readPublishedWorld(archive.root), config = await readCallerConfig(archive.config);
   const session = await createPlayWorkspace(runtime, 'play', world, config);
@@ -91,8 +91,18 @@ test('real beta.4 isolates two consecutive Play sends and hands Observe to Final
 
   for (const [input, expected] of [['first turn', 'visible-final-1'], ['second turn', 'visible-final-2']]) {
     await appendUser(nodeProcessRunner, boundaries.promptpileBin, session.conversationDir, input);
-    assert.equal(await runReact({ runner: nodeProcessRunner, reactBin: boundaries.reactBin, validate: boundaries.validateAgentEvent, config: session.sendConfig, context: session.contextDir, conversation: session.conversationDir, workRoot: session.reactWorkRoot }), expected);
-    assert.deepEqual(fs.readdirSync(session.reactWorkRoot), []);
+    let workPath;
+    assert.equal(await runReact({
+      runner: nodeProcessRunner,
+      reactBin: boundaries.reactBin,
+      validateProcessPile: boundaries.validateProcessPile,
+      config: session.sendConfig,
+      context: session.contextDir,
+      conversation: session.conversationDir,
+      observer: { workStarted(path) { workPath = path; } },
+    }), expected);
+    assert.ok(workPath);
+    assert.equal(fs.existsSync(workPath), false);
   }
 
   assert.equal(provider.requests.length, 8);
@@ -114,7 +124,7 @@ test('real beta.4 isolates two consecutive Play sends and hands Observe to Final
   }
 });
 
-test('real beta.4 completes Play and Planning publication through Core2', { timeout: 25_000 }, async (t) => {
+test('real beta.5 completes Play and Planning publication through Core2', { timeout: 25_000 }, async (t) => {
   const playSubmission = JSON.stringify({ version: 1, summary: 'Day completed', beats: [{ id: 'beat1', status: 'completed', eventId: 'event1' }], events: [{ id: 'event1', beatId: 'beat1', userInput: 'Act', assistantOutput: 'Done' }] });
   const planningSubmission = JSON.stringify({ version: 1, intent: 'Continue the story', beats: [{ intent: 'Open the next scene' }] });
   const provider = await fixtureProvider(t, ['visible-send', playSubmission, planningSubmission]);
@@ -133,29 +143,29 @@ test('real beta.4 completes Play and Planning publication through Core2', { time
   assert.equal(provider.requests.length, 12);
 });
 
-test('real beta.4 running cancellation kills the child before Core2 removes its Session root', { timeout: 20_000 }, async (t) => {
+test('real beta.5 cancellation kills the React child and emits a closed operation', { timeout: 20_000 }, async (t) => {
   const provider = await fixtureProvider(t, ['unused'], { holdFirst: true });
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
   const calls = []; let reactChild;
   const runner = { run(bin, args, options = {}) {
     calls.push({ bin, args: [...args] });
-    return nodeProcessRunner.run(bin, args, { ...options, onChild(child) { options.onChild?.(child); if (args.includes('--work-root')) reactChild = child; } });
+    return nodeProcessRunner.run(bin, args, { ...options, onChild(child) { options.onChild?.(child); if (args.includes('--process-pile-fd')) reactChild = child; } });
   } };
   const core = await createDayloomCoreInternal({ worldRoot: archive.root, llmConfigPath: archive.config }, { runner, boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
+  const events = []; core.subscribe((event) => events.push(event));
   await core.startSession('play');
   const sending = core.send('wait');
   await waitFor(() => provider.requests.length === 1 && reactChild);
-  const reactArgs = calls.find((call) => call.args.includes('--work-root')).args;
-  const workRoot = reactArgs[reactArgs.indexOf('--work-root') + 1], sessionRoot = path.dirname(workRoot);
   const cancelling = core.cancel();
   await waitFor(() => reactChild.killed);
   provider.release();
   assert.equal((await sending).error.code, 'CANCELLED');
   assert.deepEqual(await cancelling, { ok: true });
-  assert.equal(fs.existsSync(sessionRoot), false);
+  assert.equal(calls.some((call) => call.args.includes('--work-root')), false);
+  assert.equal(events.filter((event) => event.type === 'work.failed' && event.status === 'cancelled').length, 1);
 });
 
-test('real beta.4 empty Observe fails closed before Final and leaves no Session work', { timeout: 20_000 }, async (t) => {
+test('real beta.5 empty Observe fails closed before Final without Core-owned work paths', { timeout: 20_000 }, async (t) => {
   const provider = await fixtureProvider(t, ['must-not-run'], { observeContent: '' });
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
   const before = fs.readFileSync(path.join(archive.root, 'current.json'), 'utf8');
@@ -166,24 +176,24 @@ test('real beta.4 empty Observe fails closed before Final and leaves no Session 
     { runner, boundaries: await resolvePackagedBoundaries() },
   );
   t.after(() => core.dispose());
+  const events = []; core.subscribe((event) => events.push(event));
   await core.startSession('play');
   const result = await core.send('fail before Final');
   assert.equal(result.error.code, 'AGENT_FAILED');
   assert.equal(provider.requests.length, 2);
   assert.equal(core.getState().session, null);
   assert.equal(fs.readFileSync(path.join(archive.root, 'current.json'), 'utf8'), before);
-  const reactArgs = calls.find((call) => call.args.includes('--work-root')).args;
-  const workRoot = reactArgs[reactArgs.indexOf('--work-root') + 1];
-  assert.equal(fs.existsSync(path.dirname(workRoot)), false);
+  assert.equal(calls.some((call) => call.args.includes('--work-root')), false);
+  assert.equal(events.filter((event) => event.type === 'work.failed' && event.status === 'failed').length, 1);
 });
 
-test('real beta.5 Process Pile streams all phases through CoreEvent v2 and React cleans its work', { timeout: 20_000 }, async (t) => {
+test('real beta.5 Process Pile streams all phases through CoreEvent v1 and React cleans its work', { timeout: 20_000 }, async (t) => {
   const provider = await fixtureProvider(t, ['visible-v2-final'], { checkContent: 'checked' });
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
   const calls = [];
   const runner = { run(bin, args, options) { calls.push({ args: [...args] }); return nodeProcessRunner.run(bin, args, options); } };
   const core = await createDayloomCoreInternal(
-    { worldRoot: archive.root, llmConfigPath: archive.config, eventProtocol: 'core-event-v2' },
+    { worldRoot: archive.root, llmConfigPath: archive.config },
     { runner, boundaries: await resolvePackagedBoundaries() },
   );
   t.after(() => core.dispose());

@@ -14,22 +14,18 @@ The migration publishes one Profile V1 initial revision, writes `legacy/migratio
 
 ## Promptpile React boundary
 
-Core2 pins `promptpile-react@0.1.0-beta.5` and supports two explicit event boundaries:
+Core2 pins `promptpile-react@0.1.0-beta.5` and exposes one `CoreEvent` v1 boundary. It consumes the ordered Process Pile v1 on FD3 and projects Thought, Observe, Check, and Final as live application events.
 
-- `core-event-v1` remains the compatibility default and consumes Agent Event v1;
-- `core-event-v2` consumes the ordered Process Pile on FD3 and exposes Thought, Observe, Check, and Final as live application events.
-
-Select v2 when creating the runtime:
+Create the runtime without a protocol selector:
 
 ```ts
 const core = await createDayloomCore({
   worldRoot,
   llmConfigPath,
-  eventProtocol: 'core-event-v2',
 });
 ```
 
-Every v2 `send` or `submit` receives an independent `operationId`. Work events carry a temporary `workPath` for presentation only; Core2 never creates, reads, persists, or deletes that directory. Promptpile React owns it under its default cleanup lifecycle. The path may be displayed while the operation is live and must be considered expired at operation terminal.
+Every `send` or `submit` receives an independent `operationId`. Work events carry a temporary `workPath` for presentation only; Core2 never creates, reads, persists, or deletes that directory. Promptpile React owns it under its default cleanup lifecycle. The path may be displayed while the operation is live and must be considered expired at operation terminal.
 
 Core2 owns the remaining integration invariants:
 

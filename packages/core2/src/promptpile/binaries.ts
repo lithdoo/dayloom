@@ -6,7 +6,6 @@ import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
 export interface PackagedBoundaries {
   promptpileBin: string;
   reactBin: string;
-  validateAgentEvent: ValidateFunction;
   validateProcessPile: ValidateFunction;
 }
 const localRequire = createRequire(__filename);
@@ -23,7 +22,6 @@ function bin(metadata: Record<string, unknown>, name: string, root: string): str
 export async function resolvePackagedBoundaries(): Promise<PackagedBoundaries> {
   const promptpile = await packageRoot('promptpile');
   const react = await packageRoot('promptpile-react');
-  const agentSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'agent-event-v1.schema.json'), 'utf8'));
   const processSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'process-pile-v1.schema.json'), 'utf8'));
   // The packaged normative schema intentionally uses `required` inside `not`
   // branches without redeclaring those properties in every branch.
@@ -31,7 +29,6 @@ export async function resolvePackagedBoundaries(): Promise<PackagedBoundaries> {
   return Object.freeze({
     promptpileBin: bin(promptpile.metadata, 'promptpile', promptpile.root),
     reactBin: bin(react.metadata, 'promptpile-react', react.root),
-    validateAgentEvent: ajv.compile(agentSchema),
     validateProcessPile: ajv.compile(processSchema),
   });
 }

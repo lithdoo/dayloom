@@ -49,11 +49,20 @@ function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false
   return { root, config, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 function eventStream(content) {
-  const id = 'react-session';
+  const process_id = `react_${'1'.repeat(32)}`, work_id = `work_${'2'.repeat(32)}`, work_path = 'C:/tmp/react/work';
   return [
-    { schema_version: 1, type: 'session.started', session_id: id, sequence: 0, max_steps: 1 },
-    { schema_version: 1, type: 'final.delta', session_id: id, sequence: 1, content },
-    { schema_version: 1, type: 'session.completed', session_id: id, sequence: 2, stop_reason: 'final', steps_completed: 1, final: { status: 'completed', content } },
+    { schema_version: 1, process_id, sequence: 0, type: 'process.started', max_steps: 1, work_id, work_path, work_lifecycle: 'cleanup' },
+    { schema_version: 1, process_id, sequence: 1, type: 'phase.started', phase: 'thought', step_index: 0 },
+    { schema_version: 1, process_id, sequence: 2, type: 'phase.completed', phase: 'thought', step_index: 0 },
+    { schema_version: 1, process_id, sequence: 3, type: 'phase.started', phase: 'observe', step_index: 0 },
+    { schema_version: 1, process_id, sequence: 4, type: 'phase.completed', phase: 'observe', step_index: 0 },
+    { schema_version: 1, process_id, sequence: 5, type: 'phase.started', phase: 'check', step_index: 0 },
+    { schema_version: 1, process_id, sequence: 6, type: 'phase.completed', phase: 'check', step_index: 0, continue: false },
+    { schema_version: 1, process_id, sequence: 7, type: 'work.ready', work_id, work_path, status: 'checked' },
+    { schema_version: 1, process_id, sequence: 8, type: 'phase.started', phase: 'final' },
+    { schema_version: 1, process_id, sequence: 9, type: 'phase.delta', phase: 'final', channel: 'assistant_text', content },
+    { schema_version: 1, process_id, sequence: 10, type: 'phase.completed', phase: 'final' },
+    { schema_version: 1, process_id, sequence: 11, type: 'process.completed', stop_reason: 'final', steps_completed: 1, final: { status: 'completed', content } },
   ].map(JSON.stringify).join('\n') + '\n';
 }
 class FakeRunner {
@@ -61,8 +70,8 @@ class FakeRunner {
   async run(bin, args, options = {}) {
     this.calls.push({ bin, args: [...args], stdin: options.stdin });
     if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
-    const stdout = eventStream(this.finals.shift() ?? ''); options.onStdout?.(stdout);
-    return { code: 0, stdout, stderr: '' };
+    const stream = eventStream(this.finals.shift() ?? ''); options.onExtraPipe?.(stream);
+    return { code: 0, stdout: '', stderr: '' };
   }
 }
 module.exports = { archiveFixture, FakeRunner, eventStream };

@@ -31,7 +31,7 @@ function processPile(final = 'visible final') {
   ].map(JSON.stringify).join('\n') + '\n';
 }
 
-test('Process Pile v2 streams work and delays output.completed until child settlement', async () => {
+test('Process Pile v1 streams work and delays output.completed until child settlement', async () => {
   const boundaries = await resolvePackagedBoundaries();
   const stream = processPile('answer'); let release; const observed = [];
   const runner = { run: async (_bin, args, options) => new Promise((resolve) => {
@@ -41,8 +41,8 @@ test('Process Pile v2 streams work and delays output.completed until child settl
     release = () => resolve({ code: 0, stdout: 'ignored stdout', stderr: '' });
   }) };
   const running = runReact({
-    runner, reactBin: 'react', validate: boundaries.validateAgentEvent, validateProcessPile: boundaries.validateProcessPile,
-    eventProtocol: 'core-event-v2', config: 'c', context: 'x', conversation: 'y', observer: {
+    runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile,
+    config: 'c', context: 'x', conversation: 'y', observer: {
       workStarted: (path) => observed.push(['work.started', path]),
       workDelta: (phase, step, text) => observed.push(['work.delta', phase, step, text]),
       workCompleted: (path) => observed.push(['work.completed', path]),
@@ -70,12 +70,12 @@ class ProcessPileRunner {
   }
 }
 
-test('CoreEvent v2 isolates consecutive operations and only forwards workPath as metadata', async (t) => {
+test('CoreEvent v1 isolates consecutive operations and only forwards workPath as metadata', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
   const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');
   const runner = new ProcessPileRunner(['first', 'second']);
   const core = await createDayloomCoreInternal(
-    { worldRoot: fixture.root, llmConfigPath: fixture.config, eventProtocol: 'core-event-v2' },
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
     { runner, boundaries: await resolvePackagedBoundaries() },
   );
   t.after(() => core.dispose());
@@ -104,7 +104,7 @@ test('Process Pile validation failure fails closed and never completes output', 
     options.onExtraPipe(bad); return { code: 0, stdout: '', stderr: '' };
   } };
   const core = await createDayloomCoreInternal(
-    { worldRoot: fixture.root, llmConfigPath: fixture.config, eventProtocol: 'core-event-v2' },
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
     { runner, boundaries: await resolvePackagedBoundaries() },
   );
   t.after(() => core.dispose()); const events = []; core.subscribe((event) => events.push(event));
@@ -115,7 +115,7 @@ test('Process Pile validation failure fails closed and never completes output', 
   assert.equal(core.getState().session, null);
 });
 
-test('CoreEvent v2 cancel emits one terminal presentation event and suppresses late deltas', async (t) => {
+test('CoreEvent v1 cancel emits one terminal presentation event and suppresses late deltas', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
   const lines = processPile('late final').split('\n'); let release;
   const runner = { async run(_bin, args, options = {}) {
@@ -124,7 +124,7 @@ test('CoreEvent v2 cancel emits one terminal presentation event and suppresses l
     return new Promise((resolve) => { release = () => { options.onExtraPipe(`${lines.slice(3).join('\n')}`); resolve({ code: 0, stdout: '', stderr: '' }); }; });
   } };
   const core = await createDayloomCoreInternal(
-    { worldRoot: fixture.root, llmConfigPath: fixture.config, eventProtocol: 'core-event-v2' },
+    { worldRoot: fixture.root, llmConfigPath: fixture.config },
     { runner, boundaries: await resolvePackagedBoundaries() },
   );
   t.after(() => core.dispose()); const events = []; core.subscribe((event) => events.push(event));

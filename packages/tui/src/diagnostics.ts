@@ -2,18 +2,26 @@ import type { CoreEvent } from '@dayloom/core2';
 import type { TuiDriverState } from './types.js';
 
 export function summarizeCoreEvent(event: CoreEvent): Record<string, unknown> {
-  if (event.type === 'output.delta') {
-    return { eventType: event.type, sessionId: event.sessionId, deltaLength: event.text.length };
+  if (event.type === 'state.changed') {
+    return {
+      eventType: event.type,
+      worldStatus: event.state.world.status,
+      worldRevision: event.state.world.status === 'published' ? event.state.world.revision : undefined,
+      worldPhase: event.state.world.status === 'published' ? event.state.world.phase : undefined,
+      sessionId: event.state.session?.id,
+      sessionKind: event.state.session?.kind,
+      sessionStatus: event.state.session?.status,
+      capabilities: event.state.capabilities,
+    };
   }
   return {
     eventType: event.type,
-    worldStatus: event.state.world.status,
-    worldRevision: event.state.world.status === 'published' ? event.state.world.revision : undefined,
-    worldPhase: event.state.world.status === 'published' ? event.state.world.phase : undefined,
-    sessionId: event.state.session?.id,
-    sessionKind: event.state.session?.kind,
-    sessionStatus: event.state.session?.status,
-    capabilities: event.state.capabilities,
+    sessionId: event.sessionId,
+    operationId: event.operationId,
+    ...(event.type === 'work.delta' || event.type === 'output.delta' ? { deltaLength: event.text.length } : {}),
+    ...(event.type === 'work.delta' ? { phase: event.phase, stepIndex: event.stepIndex } : {}),
+    ...('messageId' in event ? { messageId: event.messageId } : {}),
+    ...('status' in event ? { status: event.status } : {}),
   };
 }
 

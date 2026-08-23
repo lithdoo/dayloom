@@ -58,10 +58,28 @@ export interface TuiSessionControls {
 
 export interface TuiMessage {
   id: string;
+  operationId?: string;
   role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
   text: string;
   status: 'streaming' | 'complete' | 'error';
 }
+
+export interface TuiWorkingItem {
+  kind: 'working';
+  id: string;
+  sessionId: string;
+  operationId: string;
+  phase: 'thought' | 'observe' | 'check' | null;
+  stepIndex: number | null;
+  text: string;
+  truncated: boolean;
+  status: 'streaming' | 'completed' | 'failed' | 'cancelled';
+  workPath: string | null;
+  pathStatus: 'live' | 'expired';
+  detail: string | null;
+}
+
+export type TuiPresentationItem = TuiMessage | TuiWorkingItem;
 
 export interface TuiRecentResult {
   kind: 'completed' | 'cancelled' | 'failed';
@@ -77,7 +95,9 @@ export interface TuiDriverState {
   hubActions: readonly TuiHubAction[];
   selectedHubActionId: string | null;
   recent: TuiRecentResult | null;
+  presentationItems: readonly TuiPresentationItem[];
   messages: readonly TuiMessage[];
 }
 
 export type TuiInputMode = 'hidden' | 'text';
+export type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';

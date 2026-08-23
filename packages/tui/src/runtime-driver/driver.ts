@@ -2,8 +2,9 @@ import type { CoreError, CoreEvent, CoreResult, CoreSessionKind, CoreState, Dayl
 import type { DiagnosticLogger } from '@bindtty/terminal';
 import { summarizeCoreEvent, summarizeDriverState } from '../diagnostics.js';
 import { projectHubActions } from '../hub/actions.js';
+import { closePresentation, isWorking, reducePresentation, type PresentationState } from './presentation-reducer.js';
 import type {
-  HubMode, TuiBusinessActionId, TuiDriverState, TuiHubAction, TuiMessage,
+  HubMode, TuiBusinessActionId, TuiDriverState, TuiHubAction, TuiMessage, TuiPresentationItem, WorkVisibility,
   TuiRecentResult, TuiSessionControls, TuiSessionPresentation, TuiWorldView,
 } from '../types.js';
 
@@ -32,6 +33,7 @@ export function createDriverFromCore(options: {
   worldRoot: string;
   core: DayloomCore;
   diagnostic?: DiagnosticLogger;
+  workVisibility?: WorkVisibility;
 }): TuiRuntimeDriver {
   const { core, diagnostic } = options;
   const listeners = new Set<(state: TuiDriverState) => void>();
@@ -44,6 +46,7 @@ export function createDriverFromCore(options: {
   let recent: TuiRecentResult | null = null;
   let presentedSession: TuiSessionPresentation | null = null;
   let messages: TuiMessage[] = [];
+  let presentation: PresentationState = { items: [], operation: null };
   let page: TuiDriverState['page'] = { kind: 'hub', mode: hubMode, busy: null };
   let nextMessageId = 1;
   let disposed = false;
@@ -156,6 +159,7 @@ export function createDriverFromCore(options: {
       hubActions: projection.actions,
       selectedHubActionId: projection.selectedId,
       recent: recent ? { ...recent } : null,
+      presentationItems: presentation.items.map(clonePresentationItem),
       messages: messages.map((message) => ({ ...message })),
     };
   }
@@ -179,14 +183,11 @@ export function createDriverFromCore(options: {
       return;
     }
     const request = activeSendRequest;
-    if (!request || request.cancelRequested || request.sessionId !== event.sessionId || presentedSession?.id !== event.sessionId) return;
-    if (request.assistantMessageId === null) {
-      request.assistantMessageId = messageId('assistant');
-      messages.push({ id: request.assistantMessageId, role: 'assistant', text: event.text, status: 'streaming' });
-    } else {
-      const message = messages.find((candidate) => candidate.id === request.assistantMessageId);
-      if (message?.status === 'streaming') message.text += event.text;
-    }
+    if (presentedSession?.id !== event.sessionId) return;
+    const projected = event.type === 'work.delta' && !isPhaseVisible(options.workVisibility ?? 'all', event.phase) ? { ...event, text: '' } : event;
+    presentation = reducePresentation(presentation, projected);
+    messages = presentation.items.filter((item): item is TuiMessage => !isWorking(item));
+    if (event.type === 'output.started' && request?.sessionId === event.sessionId) request.assistantMessageId = event.messageId;
     enforceTranscriptLimits();
   }
 
@@ -220,6 +221,7 @@ export function createDriverFromCore(options: {
     appendLocal('user', text);
     const request: ActiveSendRequest = { sessionId: session.id, assistantMessageId: null, cancelRequested: false };
     activeSendRequest = request;
+    presentation = { ...presentation, operation: { sessionId: session.id, operationId: null, closed: false } };
     emit();
     let result: CoreResult;
     try { result = await core.send(text); }
@@ -234,6 +236,7 @@ export function createDriverFromCore(options: {
       ? messages.find((message) => message.id === request.assistantMessageId)
       : null;
     activeSendRequest = null;
+    presentation = closePresentation(presentation);
     if (result.ok && latestCoreState.session?.id === request.sessionId && latestCoreState.session.status === 'ready') {
       if (assistant?.status === 'streaming') assistant.status = 'complete';
       presentedSession = { ...presentedSession, status: 'ready', error: null };
@@ -266,10 +269,12 @@ export function createDriverFromCore(options: {
   async function requestSubmit(): Promise<void> {
     const session = presentedSession;
     if (!session || !sessionControls().submit) { appendLocal('warn', '当前会话不可提交。'); emit(); return; }
+    presentation = { ...presentation, operation: { sessionId: session.id, operationId: null, closed: false } };
     let result: CoreResult;
     try { result = await core.submit(); }
     catch (error) { result = internalFailure(error); }
     latestCoreState = core.getState();
+    presentation = closePresentation(presentation);
     if (presentedSession?.id !== session.id) return;
     if (result.ok && latestCoreState.session === null) {
       discardTranscript(); presentedSession = null; page = { kind: 'hub', mode: 'status', busy: null }; hubMode = 'status';
@@ -334,17 +339,19 @@ export function createDriverFromCore(options: {
   }
 
   function appendLocal(role: TuiMessage['role'], text: string): void {
-    messages.push({ id: messageId(role), role, text: normalize(text), status: 'complete' });
+    const message: TuiMessage = { id: messageId(role), role, text: normalize(text), status: 'complete' };
+    messages.push(message); presentation = { ...presentation, items: [...presentation.items, message] };
     enforceTranscriptLimits();
   }
   function messageId(role: string): string { return `tui:${role}:${nextMessageId++}`; }
-  function discardTranscript(): void { messages = []; activeSendRequest = null; }
+  function discardTranscript(): void { messages = []; presentation = { items: [], operation: null }; activeSendRequest = null; }
   function enforceTranscriptLimits(): void {
     const textChars = () => messages.reduce((total, message) => total + message.text.length, 0);
     while (messages.length > MAX_MESSAGES || textChars() > MAX_TEXT_CHARS) {
       const removable = messages.findIndex((message, index) => message.status !== 'streaming' && index !== messages.length - 1);
       if (removable < 0) break;
-      messages.splice(removable, 1);
+      const [removed] = messages.splice(removable, 1);
+      presentation = { ...presentation, items: presentation.items.filter((item) => item.id !== removed?.id) };
     }
   }
   function emit(): void {
@@ -394,3 +401,7 @@ function internalFailure(error: unknown): { ok: false; error: CoreError } {
   return { ok: false, error: { code: 'INTERNAL_ERROR', message: error instanceof Error ? error.message : 'Unexpected Core failure.' } };
 }
 function normalize(text: string): string { return text.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, ''); }
+function clonePresentationItem(item: TuiPresentationItem): TuiPresentationItem { return { ...item }; }
+function isPhaseVisible(visibility: WorkVisibility, phase: 'thought' | 'observe' | 'check'): boolean {
+  return visibility === 'all' || visibility === 'thought-observe' && phase !== 'check' || visibility === 'thought' && phase === 'thought';
+}

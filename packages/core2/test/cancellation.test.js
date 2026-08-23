@@ -31,11 +31,10 @@ function blockedReactRunner({ finishOnKill = true } = {}) {
           get settled() { return settled; },
           fail: () => settle({ code: 1, stdout: '', stderr: 'failed' }),
           complete(content = 'done') {
-            const stdout = eventStream(content);
-            options.onStdout?.(stdout);
-            settle({ code: 0, stdout, stderr: '' });
+            options.onExtraPipe?.(eventStream(content));
+            settle({ code: 0, stdout: '', stderr: '' });
           },
-          stream(raw) { options.onStdout?.(raw); },
+          stream(raw) { options.onExtraPipe?.(raw); },
         };
         options.onChild?.(child);
       });

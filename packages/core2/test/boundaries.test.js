@@ -61,8 +61,7 @@ test('play workspace isolates compression requests and marks summaries as untrus
   const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core2-workspace-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
   const session = await createPlayWorkspace(runtime, 'session', await readPublishedWorld(fixture.root), await readCallerConfig(fixture.config));
   assert.equal(path.dirname(session.requestsDir), path.join(session.root, 'compression'));
-  assert.equal(session.reactWorkRoot, path.join(session.root, 'react-work'));
-  assert.equal(fs.existsSync(session.reactWorkRoot), false);
+  assert.equal(fs.existsSync(path.join(session.root, 'react-work')), false);
   assert.equal(fs.statSync(session.requestsDir).isDirectory(), true);
   assert.equal(fs.readFileSync(session.summaryPromptPath, 'utf8').includes('Return exactly one JSON object'), true);
   assert.equal(TOML.parse(fs.readFileSync(session.summaryConfigPath, 'utf8')).llm_api[0].name, 'test');
@@ -113,69 +112,69 @@ test('lifecycle workspaces own exact markers, empty Init context, and concrete b
 });
 test('React runner rejects malformed, schema-invalid, gaps, session changes and Final mismatch', async () => {
   const boundaries = await resolvePackagedBoundaries();
-  const base = { runner: null, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' };
-  for (const stdout of [
+  const base = { runner: null, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y' };
+  for (const stream of [
     '{bad\n',
-    JSON.stringify({ schema_version: 1, type: 'bad', session_id: 'x', sequence: 0 }) + '\n',
+    JSON.stringify({ schema_version: 1, type: 'bad', process_id: 'x', sequence: 0 }) + '\n',
     eventStream('ok').replace('"sequence":1', '"sequence":2'),
-    eventStream('ok').replace('"session_id":"react-session","sequence":1', '"session_id":"changed","sequence":1'),
+    eventStream('ok').replace(`"process_id":"react_${'1'.repeat(32)}","sequence":1`, `"process_id":"react_${'3'.repeat(32)}","sequence":1`),
     eventStream('ok').replace('"content":"ok"}}', '"content":"different"}}'),
   ]) {
-    const runner = { run: async (_bin, _args, options) => { options.onStdout?.(stdout); return { code: 0, stdout, stderr: '' }; } };
+    const runner = { run: async (_bin, _args, options) => { options.onExtraPipe?.(stream); return { code: 0, stdout: '', stderr: '' }; } };
     await assert.rejects(() => runReact({ ...base, runner }));
   }
 });
-test('React runner consumes JSONL incrementally across stdout chunks', async () => {
+test('React runner consumes Process Pile incrementally across FD3 chunks', async () => {
   const boundaries = await resolvePackagedBoundaries(), received = [];
   const stream = eventStream('hello'), split = stream.indexOf('hello') + 2;
   const runner = { run: async (_bin, _args, options) => {
-    options.onStdout(stream.slice(0, split)); options.onStdout(stream.slice(split));
-    return { code: 0, stdout: stream, stderr: '' };
+    options.onExtraPipe(stream.slice(0, split)); options.onExtraPipe(stream.slice(split));
+    return { code: 0, stdout: '', stderr: '' };
   } };
-  const final = await runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w', onDelta: (text) => received.push(text) });
+  const final = await runReact({ runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y', observer: { outputDelta: (text) => received.push(text) } });
   assert.equal(final, 'hello'); assert.deepEqual(received, ['hello']);
 });
 test('React runner emits Final delta before the child process closes', async () => {
   const boundaries = await resolvePackagedBoundaries(), lines = eventStream('live').trimEnd().split('\n'); let close;
   const runner = { run: async (_bin, _args, options) => new Promise((resolve) => {
-    options.onStdout(`${lines[0]}\n${lines[1]}\n`);
-    close = () => { options.onStdout(`${lines[2]}\n`); resolve({ code: 0, stdout: eventStream('live'), stderr: '' }); };
+    options.onExtraPipe(`${lines.slice(0, 10).join('\n')}\n`);
+    close = () => { options.onExtraPipe(`${lines.slice(10).join('\n')}\n`); resolve({ code: 0, stdout: '', stderr: '' }); };
   }) };
   let delta = '', settled = false;
-  const running = runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w', onDelta: (text) => { delta += text; } }).finally(() => { settled = true; });
+  const running = runReact({ runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y', observer: { outputDelta: (text) => { delta += text; } } }).finally(() => { settled = true; });
   while (!close) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(delta, 'live'); assert.equal(settled, false); close(); assert.equal(await running, 'live');
 });
 test('React runner rejects truncated JSONL at EOF', async () => {
-  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('x').slice(0, -3);
-  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
-  await assert.rejects(() => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }), /truncated JSONL/);
+  const boundaries = await resolvePackagedBoundaries(), stream = eventStream('x').slice(0, -3);
+  const runner = { run: async (_bin, _args, options) => { options.onExtraPipe(stream); return { code: 0, stdout: '', stderr: '' }; } };
+  await assert.rejects(() => runReact({ runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y' }), /truncated Process Pile JSONL/);
 });
-test('React runner preserves the concrete session failure message', async () => {
-  const boundaries = await resolvePackagedBoundaries(), id = 'react-session';
-  const stdout = [
-    { schema_version: 1, type: 'session.started', session_id: id, sequence: 0, max_steps: 1 },
-    { schema_version: 1, type: 'session.failed', session_id: id, sequence: 1, phase: 'thought', steps_completed: 0, error: { code: 'promptpile_exit_nonzero', message: 'provider rejected the API key' } },
+test('React runner preserves the concrete Process Pile failure message', async () => {
+  const boundaries = await resolvePackagedBoundaries(), process_id = `react_${'1'.repeat(32)}`, work_id = `work_${'2'.repeat(32)}`, work_path = 'C:/tmp/react/work';
+  const stream = [
+    { schema_version: 1, process_id, sequence: 0, type: 'process.started', max_steps: 1, work_id, work_path, work_lifecycle: 'cleanup' },
+    { schema_version: 1, process_id, sequence: 1, type: 'process.failed', phase: 'thought', steps_completed: 0, work: { work_id, status: 'failed', work_path }, error: { code: 'promptpile_exit_nonzero', message: 'provider rejected the API key' } },
   ].map(JSON.stringify).join('\n') + '\n';
-  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 1, stdout, stderr: '' }; } };
+  const runner = { run: async (_bin, _args, options) => { options.onExtraPipe(stream); return { code: 1, stdout: '', stderr: '' }; } };
   await assert.rejects(
-    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }),
+    () => runReact({ runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y' }),
     /provider rejected the API key/,
   );
 });
 test('React runner rejects a completed but empty Final', async () => {
-  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('   ');
-  const runner = { run: async (_bin, _args, options) => { options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
+  const boundaries = await resolvePackagedBoundaries(), stream = eventStream('   ');
+  const runner = { run: async (_bin, _args, options) => { options.onExtraPipe(stream); return { code: 0, stdout: '', stderr: '' }; } };
   await assert.rejects(
-    () => runReact({ runner, reactBin: 'react', validate: boundaries.validateAgentEvent, config: 'c', context: 'x', conversation: 'y', workRoot: 'w' }),
+    () => runReact({ runner, reactBin: 'react', validateProcessPile: boundaries.validateProcessPile, config: 'c', context: 'x', conversation: 'y' }),
     /React Final was empty/,
   );
 });
 test('React invocation keeps the frozen context/output topology and enables no input, tools, or hook', async () => {
-  const boundaries = await resolvePackagedBoundaries(), stdout = eventStream('ok'); let captured;
-  const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onStdout(stdout); return { code: 0, stdout, stderr: '' }; } };
-  await runReact({ runner, reactBin: 'packaged-react', validate: boundaries.validateAgentEvent, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir', workRoot: 'work-root' });
-  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--work-root', 'work-root', '--continue', '--max-step', '1', '--quiet', '--output-format', 'stream-json']);
+  const boundaries = await resolvePackagedBoundaries(), stream = eventStream('ok'); let captured;
+  const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onExtraPipe(stream); return { code: 0, stdout: '', stderr: '' }; } };
+  await runReact({ runner, reactBin: 'packaged-react', validateProcessPile: boundaries.validateProcessPile, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir' });
+  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--continue', '--max-step', '1', '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json']);
   assert.equal(captured.args.includes('--input'), false); assert.equal(captured.args.includes('--tools-file'), false); assert.equal(captured.args.includes('--after-hook-path'), false);
 });
 test('architecture guard rejects legacy and deep imports', () => {

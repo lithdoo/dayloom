@@ -1,6 +1,6 @@
 # Dayloom TUI：React 过程流透明展示改造草案
 
-> 状态：Draft / CoreEvent v2 冻结后可直接分阶段实施
+> 状态：Implemented / CoreEvent v1 闭环落地
 > 日期：2026-08-23
 > 所有者：`dayloom/packages/tui`
 > 上游契约：`dayloom/packages/core2/REACT_PROCESS_PILE_ADAPTER_PLAN.md`
@@ -16,7 +16,7 @@ TUI 在用户与 AI 对话期间按需展示 Thought、Observe、Check 实时过
 → Final 独立流式输出
 ```
 
-TUI 只消费 CoreEvent v2，不读取 Process Pile。它只显示 Core2 转发的临时路径字符串，不主动读取目录内容。
+TUI 只消费 CoreEvent v1，不读取 Process Pile。它只显示 Core2 转发的临时路径字符串，不主动读取目录内容。
 
 ## 2. 职责边界
 
@@ -74,7 +74,7 @@ assistant message = 正式 Final transcript
 ## 4. 输入契约
 
 ```ts
-type TuiCoreEventV2 =
+type TuiCoreEventV1 =
   | { type: 'state.changed'; state: CoreState }
   | { type: 'work.started'; sessionId: string; operationId: string; workPath: string }
   | {
@@ -115,10 +115,8 @@ interface WorkingItem {
 }
 
 interface TuiMessage {
-  kind: 'message';
   id: string;
-  sessionId: string;
-  operationId: string;
+  operationId?: string;
   role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
   text: string;
   status: 'streaming' | 'complete' | 'error';
@@ -292,7 +290,7 @@ dispose 幂等；迟到事件不能复活页面状态。
 
 ## 9. 可选监听
 
-Core2 v2 提供完整过程流，TUI 可以按用户配置选择展示级别：
+CoreEvent v1 提供完整过程流，TUI 可以按调用方配置选择展示级别：
 
 ```ts
 type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
@@ -307,7 +305,7 @@ type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
 
 ### Phase 0：冻结契约
 
-- 锁定 CoreEvent v2 和 Core2 最低版本；
+- 锁定 CoreEvent v1 和 Core2 最低版本；
 - 冻结 operationId/messageId、Final skipped、failure、cancel fixtures；
 - 明确 presentation generation 生命周期。
 
@@ -321,7 +319,7 @@ type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
 
 ### Phase 2：Runtime driver
 
-- CoreEvent v2 subscription；
+- CoreEvent v1 subscription；
 - visibility filter；
 - cancel/dispose generation token；
 - effect 与 reducer 分离。
@@ -354,7 +352,7 @@ Rendering/E2E：中文宽字符、快速 delta、resize、滚动；各阶段 can
 
 ## 12. 完成定义
 
-1. TUI 只消费 CoreEvent v2，不理解 Process Pile 或 React FSM。
+1. TUI 只消费 CoreEvent v1，不理解 Process Pile 或 React FSM。
 2. Thought、Observe、Check 显示为一个明确标注的临时 working item。
 3. work.completed 后原位显示临时目录地址，operation 终态后明确标记 expired。
 4. Final 使用独立 messageId 和正式 transcript message。
@@ -363,3 +361,13 @@ Rendering/E2E：中文宽字符、快速 delta、resize、滚动；各阶段 can
 7. reducer 纯净，副作用由 driver/effect 层负责。
 8. TUI 不创建、读取或删除 React 临时文件；路径打开只能由用户明确触发安全平台 API。
 9. 真实 Promptpile React → Core2 → TUI E2E 在 Windows/Linux 通过。
+
+## 13. 实施结果
+
+- `presentation-reducer.ts` 提供纯 reducer、精确身份归属、终态关闭和 64K 过程正文上限；
+- `TuiDriverState.messages` 只包含正式 transcript，`presentationItems` 保存有序 UI presentation；
+- `workVisibility` 支持 `hidden`、`thought`、`thought-observe`、`all`，默认 `all`；
+- working 与 Final 分别使用 operation ID 和 Core2 message ID，不复用 UI 身份；
+- driver 在 cancel、dispose、页面切换和新 operation 时关闭或丢弃旧 generation；
+- UI 明示过程为临时、非最终、不归档内容，并在终态将路径标记为 expired；
+- reducer、driver、PTY 和真实 Promptpile React → Core2 → TUI 集成测试共同覆盖正常、失败、取消、迟到和容量路径。

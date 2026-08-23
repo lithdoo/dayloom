@@ -2,7 +2,7 @@ import { computed, createSignal } from 'bindtty';
 import type { InteractionNodeFocusChangeEvent } from '@bindtty/interaction';
 import { VScrollView } from '@bindtty/widgets';
 import type { ViewModel } from '../view-model.js';
-import type { TuiMessage } from '../message-history.js';
+import type { TuiMessage, TuiPresentationItem, TuiWorkingItem } from '../types.js';
 import { roleColor, roleLabel } from '../theme.js';
 import { MESSAGE_SCROLL_ID } from './constants.js';
 
@@ -41,10 +41,12 @@ export function MessageList(props: { vm: ViewModel }) {
             <vstack gap={0}>
               <for
                 each={vm.visibleMessages}
-                key={(item) => (item as TuiMessage).id}
+                key={(item) => (item as TuiPresentationItem).id}
               >
                 {(item) => {
-                  const message = item as TuiMessage;
+                  const presentation = item as TuiPresentationItem;
+                  if ('kind' in presentation && presentation.kind === 'working') return <WorkingPresentation item={presentation} />;
+                  const message = presentation as TuiMessage;
                   return (
                     <hstack gap={0}>
                       <text
@@ -70,5 +72,23 @@ export function MessageList(props: { vm: ViewModel }) {
         </VScrollView>
       </vstack>
     </box>
+  );
+}
+
+function WorkingPresentation(props: { item: TuiWorkingItem }) {
+  const { item } = props;
+  const label = item.status === 'streaming'
+    ? `WORKING · ${(item.phase ?? 'STARTING').toUpperCase()}`
+    : item.status === 'completed' ? `WORK · TEMPORARY · ${item.pathStatus.toUpperCase()}` : `WORKING · ${item.status.toUpperCase()}`;
+  const body = item.status === 'streaming'
+    ? `${item.truncated ? '部分较早过程已折叠\n\n' : ''}临时过程 · 非最终内容 · 不进入存档${item.text ? `\n\n${item.text}` : ''}`
+    : item.status === 'completed'
+      ? `${item.workPath ?? '临时工作目录不可用'}\n仅在本次处理运行期间有效`
+      : item.detail ?? '工作过程未完成';
+  return (
+    <vstack gap={0}>
+      <text value={`[${label}]`} color={item.status === 'failed' ? 'red' : item.status === 'cancelled' ? 'yellow' : 'cyan'} bold={true} wrap="truncate-end" />
+      <text value={body} color="gray" wrap="wrap" />
+    </vstack>
   );
 }

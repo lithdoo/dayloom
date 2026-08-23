@@ -24,7 +24,7 @@ test('play lifecycle keeps one writable Conversation, streams send, and publishe
   assert.equal(events.filter((event) => event.type === 'output.delta').map((event) => event.text).join(''), 'Visible response');
   assert.deepEqual(await core.submit(), { ok: true });
   assert.equal(core.getState().world.phase, 'awaiting-settle'); assert.equal(core.getState().world.revision, 2); assert.equal(core.getState().session, null);
-  assert.equal(events.filter((event) => event.type === 'output.delta').some((event) => event.text.includes('version')), false);
+  assert.equal(events.filter((event) => event.type === 'output.delta').some((event) => event.text.includes('version')), true);
   const conversationDirs = runner.calls.filter((call) => call.args[0] === 'conversation' && !call.stdin.startsWith('[DAYLOOM_PLAY_CONTEXT')).map((call) => call.args[call.args.indexOf('-d') + 1]);
   assert.equal(new Set(conversationDirs).size, 1);
 });
@@ -64,7 +64,7 @@ test('compressed multi-turn send continues and submit publishes while summary ou
       const idx = nextConversationIndex(conversation);
       fs.writeFileSync(path.join(conversation, `[${idx}]assistant.md`), final);
     }
-    const stdout = eventStream(final); options.onStdout?.(stdout); return { code: 0, stdout, stderr: '' };
+    options.onExtraPipe?.(eventStream(final)); return { code: 0, stdout: '', stderr: '' };
   } };
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries }); t.after(() => core.dispose());
   const events = []; core.subscribe((event) => events.push(event));
@@ -73,5 +73,5 @@ test('compressed multi-turn send continues and submit publishes while summary ou
   assert.equal(summaryRequests.length, 1, 'compact steady state does not repeat semantic summarization');
   assert.deepEqual(await core.submit(), { ok: true }); assert.equal(core.getState().world.revision, 2);
   const visible = events.filter((event) => event.type === 'output.delta').map((event) => event.text).join('');
-  assert.equal(visible, 'First visibleSecond visible'); assert.equal(visible.includes('PRIVATE-SUMMARY'), false);
+  assert.equal(visible, `First visibleSecond visible${submission}`); assert.equal(visible.includes('PRIVATE-SUMMARY'), false);
 });

@@ -176,8 +176,8 @@ test('Core subscriber receives output.delta before send resolves', async (t) => 
   const runner = { run: async (_bin, args, options = {}) => {
     if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
     return new Promise((resolve) => {
-      options.onStdout(`${lines[0]}\n${lines[1]}\n`);
-      close = () => { options.onStdout(`${lines[2]}\n`); resolve({ code: 0, stdout: eventStream('live'), stderr: '' }); };
+      options.onExtraPipe(`${lines.slice(0, 10).join('\n')}\n`);
+      close = () => { options.onExtraPipe(`${lines.slice(10).join('\n')}\n`); resolve({ code: 0, stdout: '', stderr: '' }); };
     });
   } };
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
@@ -219,7 +219,7 @@ test('a changed pinned base conflicts before publication', async (t) => {
   assert.equal(fs.existsSync(path.join(fixture.root, `days/day1/play.json`)), false);
 });
 
-test('send preserves React failure detail as AGENT_FAILED and terminalizes the Session', async (t) => {
+test('send rejects a child exit without a Process Pile terminal and terminalizes the Session', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
   const runner = { async run(_bin, args) {
     if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
@@ -227,7 +227,7 @@ test('send preserves React failure detail as AGENT_FAILED and terminalizes the S
   } };
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
   await core.startSession('play'); const result = await core.send('hello');
-  assert.deepEqual(result, { ok: false, error: { code: 'AGENT_FAILED', message: 'react exploded' } });
+  assert.deepEqual(result, { ok: false, error: { code: 'AGENT_FAILED', message: 'React Process Pile ended before terminal.' } });
   assert.equal(core.getState().session, null);
 });
 
@@ -243,18 +243,18 @@ test('completed empty React Final maps to AGENT_FAILED and terminalizes the Sess
   assert.equal(core.getState().session, null);
 });
 
-test('Agent Event v1 internal_error projects to AGENT_FAILED without publication', async (t) => {
+test('Process Pile v1 internal_error projects to AGENT_FAILED without publication', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
   const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');
-  const id = 'receipt-failure';
-  const stdout = [
-    { schema_version: 1, type: 'session.started', session_id: id, sequence: 0, max_steps: 1 },
-    { schema_version: 1, type: 'session.failed', session_id: id, sequence: 1, phase: 'final', steps_completed: 1, error: { code: 'internal_error', message: 'React completion evidence was invalid.' } },
+  const process_id = `react_${'1'.repeat(32)}`, work_id = `work_${'2'.repeat(32)}`, work_path = 'C:/tmp/react/work';
+  const stream = [
+    { schema_version: 1, process_id, sequence: 0, type: 'process.started', max_steps: 1, work_id, work_path, work_lifecycle: 'cleanup' },
+    { schema_version: 1, process_id, sequence: 1, type: 'process.failed', phase: 'final', steps_completed: 1, work: { work_id, status: 'failed', work_path }, error: { code: 'internal_error', message: 'React completion evidence was invalid.' } },
   ].map(JSON.stringify).join('\n') + '\n';
   const runner = { async run(_bin, args, options = {}) {
     if (args[0] === 'conversation') return { code: 0, stdout: '', stderr: '' };
-    options.onStdout?.(stdout);
-    return { code: 1, stdout, stderr: '' };
+    options.onExtraPipe?.(stream);
+    return { code: 1, stdout: '', stderr: '' };
   } };
   const core = await createDayloomCoreInternal(
     { worldRoot: fixture.root, llmConfigPath: fixture.config },

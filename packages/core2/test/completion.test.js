@@ -98,7 +98,7 @@ test('full headless lifecycle reaches day2 planned without a stable dead end', a
   await core.startSession('revise'); await core.send('revise'); await core.submit(); assert.equal(core.getState().world.phase, 'idle');
   await core.startSession('planning'); await core.submit();
   assert.equal(core.getState().world.day, 'day2'); assert.equal(core.getState().world.revision, 6);
-  assert.deepEqual(deltas, ['init-visible', 'planning-visible', 'play-visible', 'revise-visible']);
+  assert.deepEqual(deltas, ['init-visible', init, 'planning-visible', planning(), 'play-visible', play, 'revise-visible', revise, planning('Second day')]);
 });
 
 test('abandon from planned and awaiting-settle removes visible current day and reuses identity', async (t) => {

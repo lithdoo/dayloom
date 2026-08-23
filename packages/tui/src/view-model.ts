@@ -1,9 +1,8 @@
 import { computed, createSignal, type ReadableSignal, type Signal } from 'bindtty';
 import { hubMessageFor } from './hub/content.js';
-import type { TuiMessage } from './message-history.js';
 import { phaseLabel, sessionKindLabel, sessionStatusLabel } from './theme.js';
 import type { TuiRuntimeDriver } from './runtime-driver/index.js';
-import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage } from './types.js';
+import type { TuiDriverState, TuiHubAction, TuiInputMode, TuiPage, TuiPresentationItem } from './types.js';
 
 export interface ViewModel {
   worldRoot: string;
@@ -12,7 +11,7 @@ export interface ViewModel {
   page: ReadableSignal<TuiPage>;
   hubActions: ReadableSignal<readonly TuiHubAction[]>;
   selectedHubActionId: ReadableSignal<string | null>;
-  visibleMessages: ReadableSignal<readonly TuiMessage[]>;
+  visibleMessages: ReadableSignal<readonly TuiPresentationItem[]>;
   headerPrimary: ReadableSignal<string>;
   headerSecondary: ReadableSignal<string>;
   loadingLabel: ReadableSignal<string | null>;
@@ -126,7 +125,7 @@ export function createViewModel(
           status: 'complete',
         }];
       }
-      return current.messages;
+      return current.presentationItems;
     }),
     headerPrimary: computed(() => {
       return `World: ${state.get().world.worldRoot}`;

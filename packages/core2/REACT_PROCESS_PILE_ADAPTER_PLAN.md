@@ -13,7 +13,7 @@
 ```text
 Promptpile React Process Pile v1
 → Core2 transport + validator
-→ CoreEvent v2
+→ CoreEvent v1
 → TUI 按需展示
 ```
 
@@ -45,7 +45,7 @@ React 使用默认 `work_lifecycle=cleanup`，自行闭环其临时目录。
 
 ### 3.1 单一机器事实流
 
-启用 v2 后：
+改造后：
 
 ```text
 Process Pile = 唯一 React 机器事件源
@@ -92,27 +92,14 @@ React 的 `process_id` 用于流身份校验，`work_id` 在适配器内部校�
 
 ## 4. 公共 API
 
-协议版本在 Core 实例创建时冻结：
+Core2 只公开一个无版本选择器的 `CoreEvent` v1 契约。旧 Agent Event 接口和运行时降级分支均删除；这是一次明确的破坏性更新。
 
-```ts
-export interface CreateDayloomCoreOptions {
-  worldRoot: string;
-  llmConfigPath: string;
-  eventProtocol?: 'core-event-v1' | 'core-event-v2';
-}
-```
-
-- 默认保持 `core-event-v1`，兼容现有调用者；
-- v2 调用者必须显式选择；
-- 同一个 Core 实例运行期间不得切换协议；
-- 不支持运行时静默降级。
-
-### 4.1 CoreEvent v2
+### 4.1 CoreEvent v1
 
 ```ts
 export type ReactWorkPhase = 'thought' | 'observe' | 'check';
 
-export type CoreEventV2 =
+export type CoreEvent =
   | { type: 'state.changed'; state: CoreState }
   | { type: 'work.started'; sessionId: string; operationId: string; workPath: string }
   | { type: 'work.delta'; sessionId: string; operationId: string; phase: ReactWorkPhase; stepIndex: number; text: string }
@@ -273,7 +260,7 @@ Conversation/Archive/World 输入
 
 ### Phase 0：冻结契约
 
-- 冻结 CoreEvent v2、operationId/messageId 规则；
+- 冻结 CoreEvent v1、operationId/messageId 规则；
 - 锁定 beta.5、schema、fixtures；
 - 冻结错误映射与联合终态。
 
@@ -283,11 +270,11 @@ Conversation/Archive/World 输入
 - JSONL/schema/sequence/FSM validator；
 - terminal/EOF/exit 联合判定。
 
-### Phase 2：CoreEvent v2
+### Phase 2：CoreEvent v1
 
 - operation generation；
 - work/output 事件投影；
-- v1/v2 实例级选择；
+- 单一事件契约与无降级路径；
 - late/duplicate event guards。
 
 ### Phase 3：authority firewall
@@ -309,7 +296,7 @@ Protocol：malformed JSON、schema error、sequence gap/duplicate/reorder、非�
 
 Identity：连续 send 使用不同 operationId；submit 不继承 send generation；late event 不进入下一 operation；messageId 只属于一个 Final。
 
-Authority：work delta 不写 Conversation；Archive 无过程正文和 React ID/path；failure/cancel 不归档过程；开启 v2 不改变 World publication。
+Authority：work delta 不写 Conversation；Archive 无过程正文和 React ID/path；failure/cancel 不归档过程；过程事件不改变 World publication。
 
 Lifecycle：cancel/dispose 幂等；cancel 后无新投影但完整 drain；stderr 有上限；Core2 不创建或删除 React work 目录。
 
@@ -321,5 +308,5 @@ Lifecycle：cancel/dispose 幂等；cancel 后无新投影但完整 drain；stde
 4. Final 与过程流共享严格时序，只有联合终态成功才发 `output.completed`。
 5. Core2 不创建、读取或清理 React 临时工作目录；仅透明转发运行期间有效的 workPath。
 6. 过程正文和 React 内部 ID/path 不进入 Conversation、Archive 或 World。
-7. v1/v2 迁移显式且实例级冻结，无静默降级。
+7. Core2 只有一个 CoreEvent v1 公共契约，无旧协议、选择器或静默降级。
 8. packaged React → Core2 E2E 在 Windows/Linux 通过。
