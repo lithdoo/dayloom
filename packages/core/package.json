@@ -1,37 +1,33 @@
 {
   "name": "@dayloom/core",
-  "version": "0.0.0",
-  "description": "Dayloom state machine, runtime, and session engine.",
+  "version": "1.0.0-beta.1",
+  "description": "Archive V2 Dayloom product lifecycle runtime.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc",
-    "test": "npm run build && npm run guard && npm run test:types && node --test test/*.test.js test/**/*.test.js",
-    "guard": "node scripts/check-archive-v2-architecture.mjs",
-    "test:types": "tsc -p test/tsconfig.types.json"
-  },
-  "keywords": [
-    "dayloom",
-    "runtime"
-  ],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
-  "files": [
-    "dist",
-    "README.md",
-    "package.json"
-  ],
+  "bin": { "dayloom-core": "./dist/migration/cli.js" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" },
+    "./migration": { "types": "./dist/migration/index.d.ts", "require": "./dist/migration/index.js", "default": "./dist/migration/index.js" }
+  },
+  "files": ["dist", "package.json", "README.md"],
+  "scripts": {
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && tsc",
+    "guard": "node scripts/check-architecture.mjs",
+    "test": "npm run build && npm run guard && node scripts/run-tests.mjs && npm run test:pack",
+    "test:pack": "node scripts/test-pack.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": { "node": ">=20" },
   "dependencies": {
-    "@dayloom/archive-protocol": "0.0.0",
-    "promptpile": "^0.1.0-beta.0"
+    "@dayloom/archive-protocol": "1.0.0-beta.1",
+    "@iarna/toml": "^2.2.5",
+    "ajv": "^8.17.1",
+    "promptpile": "0.1.0-beta.2",
+    "promptpile-compress": "0.1.0-beta.2",
+    "promptpile-react": "0.1.0-beta.5",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

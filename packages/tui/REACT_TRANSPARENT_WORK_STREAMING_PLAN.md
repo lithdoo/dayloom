@@ -3,7 +3,7 @@
 > 状态：Implemented / CoreEvent v1 闭环落地
 > 日期：2026-08-23
 > 所有者：`dayloom/packages/tui`
-> 上游契约：`dayloom/packages/core2/REACT_PROCESS_PILE_ADAPTER_PLAN.md`
+> 上游契约：`dayloom/packages/core/REACT_PROCESS_PILE_ADAPTER_PLAN.md`
 
 ## 1. 目标
 
@@ -16,13 +16,13 @@ TUI 在用户与 AI 对话期间按需展示 Thought、Observe、Check 实时过
 → Final 独立流式输出
 ```
 
-TUI 只消费 CoreEvent v1，不读取 Process Pile。它只显示 Core2 转发的临时路径字符串，不主动读取目录内容。
+TUI 只消费 CoreEvent v1，不读取 Process Pile。它只显示 Core 转发的临时路径字符串，不主动读取目录内容。
 
 ## 2. 职责边界
 
 TUI 负责：
 
-- 订阅 Core2 的 `work.*` 和 `output.*`；
+- 订阅 Core 的 `work.*` 和 `output.*`；
 - 将一个 operation 的过程显示为一个可更新 presentation item；
 - 按 phase 更新标题并追加正文；
 - 在完成、失败或取消时原位收束；
@@ -93,7 +93,7 @@ type TuiCoreEventV1 =
   | { type: 'output.failed'; sessionId: string; operationId: string; messageId: string; message: string };
 ```
 
-TUI 信任 Core2 已完成上游协议验证，只验证自身 presentation 状态。遇到不可能事件时忽略 mutation 并记录受限 diagnostic，不尝试修复上游时序。
+TUI 信任 Core 已完成上游协议验证，只验证自身 presentation 状态。遇到不可能事件时忽略 mutation 并记录受限 diagnostic，不尝试修复上游时序。
 
 ## 5. View model
 
@@ -123,7 +123,7 @@ interface TuiMessage {
 }
 ```
 
-Working item 使用稳定 ID `operation:<sessionId>:<operationId>`。Final 使用 Core2 提供的 messageId，绝不复用 working item ID。
+Working item 使用稳定 ID `operation:<sessionId>:<operationId>`。Final 使用 Core 提供的 messageId，绝不复用 working item ID。
 
 ## 6. Reducer
 
@@ -186,7 +186,7 @@ Reducer 必须是纯函数。订阅、取消请求、滚动和计时属于 drive
 - 过程正文设置 UI 内存上限；
 - 超限时在本地折叠最早文本，并显示“部分较早过程已折叠”；
 - `work.completed/failed` 后立即释放累积过程正文；
-- 内存限制不得影响 Core2 或 React 执行；
+- 内存限制不得影响 Core 或 React 执行；
 - working item 不进入 transcript export。
 
 ## 7. 展示设计
@@ -229,7 +229,7 @@ Final 正在流式输出……
 
 Final 是独立 transcript message。TUI 不把过程正文拼入 Final，也不从过程内容生成摘要。
 
-operation 终态后保留地址文本但标记为 `EXPIRED`，不得继续声称目录存在。可提供复制；若提供打开操作，必须由用户明确触发平台安全 API，禁止拼接 shell command。打开失败只更新本地提示，不改变 Core2 或 World 状态。
+operation 终态后保留地址文本但标记为 `EXPIRED`，不得继续声称目录存在。可提供复制；若提供打开操作，必须由用户明确触发平台安全 API，禁止拼接 shell command。打开失败只更新本地提示，不改变 Core 或 World 状态。
 
 ## 8. 页面生命周期
 
@@ -252,7 +252,7 @@ working stream
 → working path reference
 → Final JSON stream
 → output completed
-→ Core2 strict parse/publication
+→ Core strict parse/publication
 → invalidate presentation generation
 → Hub
 ```
@@ -268,8 +268,8 @@ Hub、submission receipt、Archive 和 World 不保存 working item。
 ### 8.4 Cancel
 
 ```text
-request Core2 cancel
-→ Core2 work.failed(cancelled)
+request Core cancel
+→ Core work.failed(cancelled)
 → reducer 原位收束
 → generation 失效
 → ignore late events
@@ -282,7 +282,7 @@ TUI 不自行 kill child，也不等待或删除 React 文件。
 ```text
 invalidate generation
 → unsubscribe observer
-→ await Core2 dispose
+→ await Core dispose
 → discard session presentation
 ```
 
@@ -297,7 +297,7 @@ type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
 ```
 
 - `hidden` 仍消费生命周期事件，但不渲染过程正文；
-- 其他模式仅影响展示，不影响 Core2 验证、取消和 Final；
+- 其他模式仅影响展示，不影响 Core 验证、取消和 Final；
 - 切换可见性不写 Conversation 或 Archive；
 - 默认策略由产品配置决定，不改变事件协议。
 
@@ -305,7 +305,7 @@ type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
 
 ### Phase 0：冻结契约
 
-- 锁定 CoreEvent v1 和 Core2 最低版本；
+- 锁定 CoreEvent v1 和 Core 最低版本；
 - 冻结 operationId/messageId、Final skipped、failure、cancel fixtures；
 - 明确 presentation generation 生命周期。
 
@@ -335,7 +335,7 @@ type WorkVisibility = 'hidden' | 'thought' | 'thought-observe' | 'all';
 
 ```text
 packaged Promptpile React
-→ Core2 Process Pile adapter
+→ Core Process Pile adapter
 → TUI driver
 → presentation reducer/view
 ```
@@ -360,14 +360,14 @@ Rendering/E2E：中文宽字符、快速 delta、resize、滚动；各阶段 can
 6. cancel、dispose、重复和迟到事件不能串流或复活旧 UI。
 7. reducer 纯净，副作用由 driver/effect 层负责。
 8. TUI 不创建、读取或删除 React 临时文件；路径打开只能由用户明确触发安全平台 API。
-9. 真实 Promptpile React → Core2 → TUI E2E 在 Windows/Linux 通过。
+9. 真实 Promptpile React → Core → TUI E2E 在 Windows/Linux 通过。
 
 ## 13. 实施结果
 
 - `presentation-reducer.ts` 提供纯 reducer、精确身份归属、终态关闭和 64K 过程正文上限；
 - `TuiDriverState.messages` 只包含正式 transcript，`presentationItems` 保存有序 UI presentation；
 - `workVisibility` 支持 `hidden`、`thought`、`thought-observe`、`all`，默认 `all`；
-- working 与 Final 分别使用 operation ID 和 Core2 message ID，不复用 UI 身份；
+- working 与 Final 分别使用 operation ID 和 Core message ID，不复用 UI 身份；
 - driver 在 cancel、dispose、页面切换和新 operation 时关闭或丢弃旧 generation；
 - UI 明示过程为临时、非最终、不归档内容，并在终态将路径标记为 expired；
-- reducer、driver、PTY 和真实 Promptpile React → Core2 → TUI 集成测试共同覆盖正常、失败、取消、迟到和容量路径。
+- reducer、driver、PTY 和真实 Promptpile React → Core → TUI 集成测试共同覆盖正常、失败、取消、迟到和容量路径。

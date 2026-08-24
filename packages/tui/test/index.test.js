@@ -41,7 +41,7 @@ test('tui-cli-help-needs-no-llm-config and production startup rejects missing co
   assert.equal(missing.status, 1); assert.match(missing.stderr, /Missing LLM config/);
 });
 
-test('tui projects Core2 world states and exact Hub actions', async () => {
+test('tui projects Core world states and exact Hub actions', async () => {
   const cases = [
     [new ScriptedDayloomCore(), 'uninitialized', ['init', 'status', 'help', 'quit'], 'init'],
     [new ScriptedDayloomCore({ world: published({ phase: 'idle' }) }), 'published', ['daily', 'revise', 'status', 'help', 'quit'], 'daily'],

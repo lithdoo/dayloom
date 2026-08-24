@@ -6,19 +6,27 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const docRoot = path.join(projectRoot, 'doc');
 const excludedDirectories = new Set(['.vitepress', 'archive', 'redirects']);
 const metadataExempt = new Set(['index.md']);
-const forbiddenPublishedTerms = ['@dayloom/cli', 'core-old', 'tui-old'];
+const forbiddenPublishedTerms = ['@dayloom/core2', 'packages/core2', '@dayloom/cli', 'core-old', 'tui-old'];
 const errors = [];
 
 const activeFiles = walk(docRoot).filter((file) => {
   const relative = path.relative(docRoot, file);
   return file.endsWith('.md') && !relative.split(path.sep).some((part) => excludedDirectories.has(part));
 });
+const publishedFiles = [
+  ...activeFiles,
+  path.join(projectRoot, 'README.md'),
+  path.join(projectRoot, 'packages', 'core', 'README.md'),
+  path.join(projectRoot, 'packages', 'tui', 'README.md'),
+  path.join(projectRoot, 'examples', 'dayloom-tui', 'README.md'),
+];
 
-for (const file of activeFiles) {
-  const relative = path.relative(docRoot, file).split(path.sep).join('/');
+for (const file of publishedFiles) {
+  const isSiteDocument = file.startsWith(docRoot + path.sep);
+  const relative = path.relative(isSiteDocument ? docRoot : projectRoot, file).split(path.sep).join('/');
   const source = fs.readFileSync(file, 'utf8');
 
-  if (!metadataExempt.has(relative)) {
+  if (isSiteDocument && !metadataExempt.has(relative)) {
     for (const marker of ['**\u72b6\u6001**', '**\u6700\u540e\u6838\u5bf9**']) {
       if (!source.includes(marker)) errors.push(`${relative}: missing ${marker}`);
     }
@@ -31,13 +39,13 @@ for (const file of activeFiles) {
   for (const match of source.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
     const target = match[1].split('#', 1)[0];
     if (!target || /^(https?:|mailto:)/.test(target)) continue;
-    if (target.startsWith('/')) {
+    if (isSiteDocument && target.startsWith('/')) {
       const candidate = path.join(docRoot, `${target.slice(1).replace(/\/$/, '/index')}.md`);
       if (!fs.existsSync(candidate)) errors.push(`${relative}: missing site target ${target}`);
       continue;
     }
     const candidate = path.resolve(path.dirname(file), target);
-    if (!candidate.startsWith(docRoot + path.sep)) {
+    if (isSiteDocument && !candidate.startsWith(docRoot + path.sep)) {
       errors.push(`${relative}: repository files must use an absolute GitHub URL (${target})`);
     } else if (!fs.existsSync(candidate)) {
       errors.push(`${relative}: missing relative target ${target}`);
@@ -49,7 +57,7 @@ if (errors.length > 0) {
   process.stderr.write(`${errors.join('\n')}\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write(`Checked ${activeFiles.length} published Markdown files.\n`);
+  process.stdout.write(`Checked ${publishedFiles.length} published Markdown files.\n`);
 }
 
 function walk(directory) {

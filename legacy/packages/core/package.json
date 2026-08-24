@@ -1,0 +1,40 @@
+{
+  "name": "@dayloom/core",
+  "version": "0.0.0",
+  "description": "Dayloom state machine, runtime, and session engine.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc",
+    "test": "npm run build && npm run guard && npm run test:types && node --test test/*.test.js test/**/*.test.js",
+    "guard": "node scripts/check-archive-v2-architecture.mjs",
+    "test:types": "tsc -p test/tsconfig.types.json"
+  },
+  "keywords": [
+    "dayloom",
+    "runtime"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "dependencies": {
+    "@dayloom/archive-protocol": "0.0.0",
+    "promptpile": "^0.1.0-beta.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  }
+}

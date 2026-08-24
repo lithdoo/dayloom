@@ -9,11 +9,11 @@ fi
 echo "[Dayloom] Building archive-protocol..."
 (cd "$DAY_LOOM_DIR" \
   && npm run build -w @dayloom/archive-protocol \
-  && echo "[Dayloom] Building core2..." \
-  && npm run build -w @dayloom/core2 \
+  && echo "[Dayloom] Building core..." \
+  && npm run build -w @dayloom/core \
   && echo "[Dayloom] Building TUI..." \
   && npm run build -w @dayloom/tui)
 
 [[ -f "$DAY_LOOM_DIR/packages/archive-protocol/dist/index.js" ]]
-[[ -f "$DAY_LOOM_DIR/packages/core2/dist/index.js" ]]
+[[ -f "$DAY_LOOM_DIR/packages/core/dist/index.js" ]]
 [[ -f "$DAY_LOOM_DIR/packages/tui/dist/main.js" ]]

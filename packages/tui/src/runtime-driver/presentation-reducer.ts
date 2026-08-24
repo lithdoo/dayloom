@@ -1,4 +1,4 @@
-import type { CoreEvent } from '@dayloom/core2';
+import type { CoreEvent } from '@dayloom/core';
 import type { TuiMessage, TuiPresentationItem, TuiWorkingItem } from '../types.js';
 
 export interface PresentationOperation {

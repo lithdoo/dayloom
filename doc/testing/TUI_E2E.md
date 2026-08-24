@@ -8,13 +8,13 @@
 
 ```bash
 npm run build -w @dayloom/archive-protocol
-npm run test -w @dayloom/core2
+npm run test -w @dayloom/core
 npm run test -w @dayloom/tui
 ```
 
 TUI 测试串行执行，包含三层证据：
 
-1. Core2 headless suite 验证真实 application lifecycle、publication、compression 和 running-cancel theorem。
+1. Core headless suite 验证真实 application lifecycle、publication、compression 和 running-cancel theorem。
 2. Scripted PTY 通过非公开入口注入 exact `DayloomCore`，复用 production driver、ViewModel、app 和组件，验证键盘、流式、失败、cancel、resize、focus 与 shutdown。
 3. Production PTY smoke 启动真实 `dist/main.js → createDayloomCore()`，使用 empty World 和合法 caller TOML，只访问 Hub，不依赖外部 LLM。
 

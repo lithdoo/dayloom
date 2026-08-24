@@ -10,7 +10,7 @@ const repoRoot = path.resolve(packageRoot, '..', '..');
 const productionMain = path.join(packageRoot, 'dist', 'main.js');
 const scriptedMain = path.join(packageRoot, 'test', 'support', 'pty-entry.mjs');
 
-test('production Core2 PTY smoke: empty Hub, help/status, resize, and clean quit', async (t) => {
+test('production Core PTY smoke: empty Hub, help/status, resize, and clean quit', async (t) => {
   const pty = await loadNodePty(t); if (!pty) return;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-tui-production-'));
   const world = path.join(root, 'world'), config = path.join(root, 'llm.toml');

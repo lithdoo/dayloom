@@ -1,17 +1,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const core = require('../dist/index.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const corePackage = require('../package.json');
 
-test('exports package marker', () => {
-  assert.equal(core.corePackageName, '@dayloom/core');
-  assert.equal(typeof core.coreStateMachine.transitionWorld, 'function');
-  assert.equal(typeof core.createDayloomRuntime, 'function');
-  assert.equal('CoreRuntime' in core, false);
-  assert.equal('WorldStore' in core, false);
-  assert.equal('createCoreNativeSessionFactory' in core, false);
-  assert.doesNotThrow(() => JSON.stringify({
-    code: 'ARCHIVE_CONFLICT',
-    message: 'conflict',
-    details: { revision: 1 },
-  }));
+test('public API exports only application contract', () => {
+  const api = require('../dist');
+  assert.deepEqual(Object.keys(api).sort(), ['CoreInitializationError', 'createDayloomCore']);
+  assert.deepEqual(Object.keys(require('../dist/migration')).sort(), ['migrateLegacyWorldProfileV1']);
+});
+
+test('core pins the frozen promptpile-compress release', () => {
+  assert.equal(corePackage.dependencies['promptpile-compress'], '0.1.0-beta.2');
+});
+
+test('core pins the verified promptpile-react release', () => {
+  assert.equal(corePackage.dependencies['promptpile-react'], '0.1.0-beta.5');
+});
+
+test('core package describes the complete product lifecycle', () => {
+  assert.doesNotMatch(corePackage.description, /play-only|minimal.*play runtime/i);
+});
+
+test('core CI builds its workspace protocol dependency before testing', () => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../../.github/workflows/core.yml'), 'utf8');
+  const protocolBuild = workflow.indexOf('npm run build -w @dayloom/archive-protocol');
+  const coreTest = workflow.indexOf('npm test -w @dayloom/core');
+  assert.notEqual(protocolBuild, -1);
+  assert.equal(protocolBuild < coreTest, true);
 });

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { DayloomCore } from '@dayloom/core2';
+import type { DayloomCore } from '@dayloom/core';
 import type { DiagnosticLogger } from '@bindtty/terminal';
 import type { WorkVisibility } from '../types.js';
 import { createDriverFromCore } from './driver.js';

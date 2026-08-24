@@ -1,4 +1,4 @@
-import type { CoreError, CoreEvent, CoreResult, CoreSessionKind, CoreState, DayloomCore } from '@dayloom/core2';
+import type { CoreError, CoreEvent, CoreResult, CoreSessionKind, CoreState, DayloomCore } from '@dayloom/core';
 import type { DiagnosticLogger } from '@bindtty/terminal';
 import { summarizeCoreEvent, summarizeDriverState } from '../diagnostics.js';
 import { projectHubActions } from '../hub/actions.js';

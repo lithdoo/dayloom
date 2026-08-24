@@ -16,7 +16,7 @@ const expectedFiles = new Set([
   'dayloom-tui/verify-resize.bat',
 ]);
 const forbiddenContent = [
-  { label: 'legacy package or path', pattern: /(?:@dayloom\/(?:cli|core(?:-old)?|tui-old)(?![\w-])|packages\/(?:core-old|tui-old)(?![\w-]))/i },
+  { label: 'legacy package or path', pattern: /(?:@dayloom\/(?:cli|core2|core-old|tui-old)(?![\w-])|packages\/(?:core2|core-old|tui-old)(?![\w-]))/i },
   { label: 'legacy command', pattern: /\bdayloom\s+(?:init|daily|revise|settle)\b/i },
   { label: 'legacy World layout', pattern: /(?:manifest\.yaml|current\.yaml|(?:^|[\\/])\.loom(?:[\\/]|$))/im },
   { label: 'legacy provider override', pattern: /DAYLOOM_LLM_(?:MODEL|BASE_URL|API_NAME|API_KEY_ENV)/ },
@@ -61,7 +61,7 @@ for (const launcher of launchers) {
 }
 for (const ensure of ['dayloom-tui/scripts/ensure-dayloom.sh', 'dayloom-tui/scripts/ensure-dayloom.bat']) {
   const source = await readFile(path.join(examplesRoot, ...ensure.split('/')), 'utf8');
-  if (!source.includes('@dayloom/archive-protocol') || !source.includes('@dayloom/core2') || !source.includes('@dayloom/tui')) {
+  if (!source.includes('@dayloom/archive-protocol') || !source.includes('@dayloom/core') || !source.includes('@dayloom/tui')) {
     violations.push(`examples/${ensure}: required current packages are not built in order`);
   }
 }

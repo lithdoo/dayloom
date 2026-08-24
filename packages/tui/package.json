@@ -1,6 +1,6 @@
 {
   "name": "@dayloom/tui",
-  "version": "0.0.0",
+  "version": "1.0.0-beta.1",
   "description": "Fullscreen TUI for the Dayloom runtime.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,9 @@
   "scripts": {
     "build": "tsc",
     "guard": "node scripts/check-architecture.mjs",
-    "test": "npm run build && npm run guard && node scripts/run-tests.mjs"
+    "test": "npm run build && npm run guard && node scripts/run-tests.mjs && npm run test:pack",
+    "test:pack": "node scripts/test-pack.mjs",
+    "prepack": "npm run build"
   },
   "files": [
     "dist",
@@ -31,7 +33,7 @@
     "@bindtty/terminal": "^0.1.0-beta.6",
     "@bindtty/vnode": "^0.1.0-beta.6",
     "@bindtty/widgets": "^0.1.0-beta.6",
-    "@dayloom/core2": "*",
+    "@dayloom/core": "1.0.0-beta.1",
     "bindtty": "^0.1.0-beta.6"
   },
   "devDependencies": {

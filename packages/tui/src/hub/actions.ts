@@ -1,4 +1,4 @@
-import type { CoreState } from '@dayloom/core2';
+import type { CoreState } from '@dayloom/core';
 import { commandLabel, commandSummary } from '../theme.js';
 import type { TuiBusinessActionId, TuiHubAction } from '../types.js';
 

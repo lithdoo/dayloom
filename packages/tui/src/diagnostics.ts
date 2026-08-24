@@ -1,4 +1,4 @@
-import type { CoreEvent } from '@dayloom/core2';
+import type { CoreEvent } from '@dayloom/core';
 import type { TuiDriverState } from './types.js';
 
 export function summarizeCoreEvent(event: CoreEvent): Record<string, unknown> {

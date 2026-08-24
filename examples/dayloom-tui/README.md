@@ -1,6 +1,6 @@
 # Dayloom TUI example
 
-通过 `@dayloom/tui` 使用正式 `@dayloom/core2`。示例从被忽略的空 `world/` 开始，由真实 Init Session 创建 World；脚本不预写 Archive、canon、plan、day 或 phase。
+通过 `@dayloom/tui` 使用正式 `@dayloom/core`。示例从被忽略的空 `world/` 开始，由真实 Init Session 创建 World；脚本不预写 Archive、canon、plan、day 或 phase。
 
 ## 前置条件
 
@@ -22,7 +22,7 @@ set DEEPSEEK_API_KEY=...
 open-world.bat
 ```
 
-launcher 只检查配置、创建空目录、按 `archive-protocol → core2 → tui` 构建并运行：
+launcher 只检查配置、创建空目录、按 `archive-protocol → core → tui` 构建并运行：
 
 ```text
 node packages/tui/dist/main.js <world> --llm-config <llm.toml>

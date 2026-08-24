@@ -22,7 +22,7 @@ test('tui Hub failure clears busy state and reconciles refreshed WORLD_CONFLICT 
   await driver.dispose();
 });
 
-test('tui-old-request-cannot-mutate-new-session and stale delta is ignored', async () => {
+test('stale request cannot mutate a new session and stale delta is ignored', async () => {
   const oldSend = deferred();
   const core = new ScriptedDayloomCore({ handlers: {
     async send(instance) {
@@ -69,7 +69,7 @@ test('tui submitting disables every Session control', async () => {
   gate.resolve(); await submitting; await driver.dispose();
 });
 
-test('tui status/help remain local and contain current Core2 terminology', async () => {
+test('tui status/help remain local and contain current Core terminology', async () => {
   const core = new ScriptedDayloomCore({ world: published({ revision: 3, phase: 'planned', day: 'day1' }) });
   const driver = await driverFor(core); const { createViewModel } = await import('../dist/index.js'); const vm = createViewModel(driver);
   driver.setHubMode('help'); assert.match(vm.visibleMessages.get()[0].text, /AI 回复中仍可用/);
@@ -89,7 +89,7 @@ test('tui cancel cleanup error with terminal Core does not resurrect Session', a
   await driver.dispose();
 });
 
-test('tui composed lifecycle reaches day2 planned through the public Core2 contract', async () => {
+test('tui composed lifecycle reaches day2 planned through the public Core contract', async () => {
   const core = new ScriptedDayloomCore({ sendScript: [{ deltas: ['init reply'] }, { deltas: ['play one'] }, { deltas: ['play two'] }] });
   const driver = await driverFor(core);
   await driver.runHubAction('init'); await driver.submitSessionText('world idea'); await driver.submitSessionText('/submit');
@@ -107,15 +107,15 @@ test('tui composed lifecycle reaches day2 planned through the public Core2 contr
   await driver.dispose();
 });
 
-test('tui clean CI orders protocol then core2 then tui and has a required Ubuntu PTY job', () => {
+test('tui clean CI orders protocol then core then tui and has a required Ubuntu PTY job', () => {
   const root = path.resolve(import.meta.dirname, '../../..');
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/tui.yml'), 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'packages/tui/package.json'), 'utf8'));
   const testRunner = fs.readFileSync(path.join(root, 'packages/tui/scripts/run-tests.mjs'), 'utf8');
   const protocol = workflow.indexOf('npm run build -w @dayloom/archive-protocol');
-  const core2 = workflow.indexOf('npm test -w @dayloom/core2', protocol);
-  const tui = workflow.indexOf('npm test -w @dayloom/tui', core2);
-  assert.ok(protocol >= 0 && protocol < core2 && core2 < tui);
+  const core = workflow.indexOf('npm test -w @dayloom/core', protocol);
+  const tui = workflow.indexOf('npm test -w @dayloom/tui', core);
+  assert.ok(protocol >= 0 && protocol < core && core < tui);
   assert.match(workflow, /os: \[ubuntu-latest, windows-latest\]/);
   assert.match(workflow, /node: \[20, 22\]/);
   assert.match(workflow, /required-pty:[\s\S]*DAYLOOM_TUI_REQUIRE_PTY: '1'/);

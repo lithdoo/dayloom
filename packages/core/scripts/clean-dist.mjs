@@ -1,4 +1,2 @@
-import { rmSync } from 'node:fs';
-import { resolve } from 'node:path';
-
-rmSync(resolve(import.meta.dirname, '..', 'dist'), { recursive: true, force: true });
+import { rm } from 'node:fs/promises';
+await rm(new URL('../dist', import.meta.url), { recursive: true, force: true });

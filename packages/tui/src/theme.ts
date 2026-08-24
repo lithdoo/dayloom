@@ -1,4 +1,4 @@
-import type { CoreSessionKind, PublishedWorldPhase } from '@dayloom/core2';
+import type { CoreSessionKind, PublishedWorldPhase } from '@dayloom/core';
 import type { TuiBusinessActionId, TuiMessage, TuiSessionPresentationStatus } from './types.js';
 
 export function phaseLabel(phase: PublishedWorldPhase | 'uninitialized' | 'invalid'): string {

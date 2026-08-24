@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = path.join(packageRoot, 'src');
 const forbiddenImports = [
-  /from\s+['"]@dayloom\/core['"]/, /from\s+['"]@dayloom\/core-old['"]/,
-  /from\s+['"]@dayloom\/core2\/(?:src|dist)\//,
+  /from\s+['"]@dayloom\/(?:core2|core-old)['"]/,
+  /from\s+['"]@dayloom\/core\/(?:src|dist)\//,
 ];
 const forbiddenNames = [
   'RuntimeBackend', 'CoreBackend', 'BackendProvider', 'CommandRegistry', 'EventNormalizer',
