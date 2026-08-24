@@ -13,7 +13,7 @@ function nextConversationIndex(directory) {
 
 test('play lifecycle keeps one writable Conversation, streams send, and publishes submit once', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: 'event1' }], events: [{ id: 'event1', beatId: 'beat1', userInput: 'hello', assistantOutput: 'world' }] });
+  const submission = JSON.stringify({ version: 2, events: [{ beatId: 'beat1', title: 'A day', locationId: null, participantIds: [], scene: 'world', dialogue: '', userAction: 'hello', result: { summary: 'A day', learnedFacts: [], timeAdvanced: null, completedBeatIds: ['beat1'], skippedBeatIds: [], endDay: true }, proposedPatch: [] }] });
   const runner = new FakeRunner(['Visible response', submission]);
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
   const originalCurrent = fs.readFileSync(`${fixture.root}/current.json`, 'utf8');
@@ -38,7 +38,7 @@ test('listener failures are isolated and dispose is idempotent', async (t) => {
 
 test('compressed multi-turn send continues and submit publishes while summary output stays private', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); const boundaries = await resolvePackagedBoundaries();
-  const submission = JSON.stringify({ version: 1, summary: 'Compressed day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = JSON.stringify({ version: 2, events: [{ beatId: 'beat1', title: 'Compressed day', locationId: null, participantIds: [], scene: 'Done', dialogue: '', userAction: 'Act', result: { summary: 'Compressed day', learnedFacts: [], timeAdvanced: null, completedBeatIds: ['beat1'], skippedBeatIds: [], endDay: true }, proposedPatch: [] }] });
   const finals = ['First visible', 'Second visible', submission], summaryRequests = []; let conversationAppends = 0, reactCalls = 0;
   const runner = { async run(bin, args, options = {}) {
     if (args[0] === 'conversation') {

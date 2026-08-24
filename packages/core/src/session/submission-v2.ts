@@ -1,7 +1,7 @@
-import { parseInitSubmissionV1, parsePlanningSubmissionV1, type CanonSubmission } from './submission';
 import { exact, isRecord } from '../world/read';
 
 type Scalar = string | number | boolean | null;
+export interface CanonSubmission { premise: string; rules: string; style: string; userRole: string }
 export interface InitSubmissionV2 {
   version: 2; title: string; canon: CanonSubmission;
   worldState: { status: string; elapsed: string | null; variables: Record<string, Scalar> };
@@ -41,7 +41,6 @@ export interface ReviseSubmissionV2 { version: 2; operations: ReviseOperationV1[
 
 export function parseInitSubmissionV2(text: string): InitSubmissionV2 {
   const value = parseJson(text);
-  if (isRecord(value) && value.version === 1) return upgradeInitV1(parseInitSubmissionV1(text));
   if (!isRecord(value) || !exact(value, ['version', 'title', 'canon', 'worldState', 'characters', 'locations', 'arcs', 'initialFacts', 'unresolvedThreads', 'storySeeds']) || value.version !== 2 || !nonempty(value.title)) throw new Error('InitSubmissionV2 is invalid.');
   const canon = parseCanon(value.canon), worldState = parseWorldState(value.worldState);
   if (!Array.isArray(value.characters) || !Array.isArray(value.locations) || !Array.isArray(value.arcs)) throw new Error('InitSubmissionV2 entity collections are invalid.');
@@ -61,10 +60,6 @@ export function parseInitSubmissionV2(text: string): InitSubmissionV2 {
 
 export function parsePlanningSubmissionV2(text: string): PlanningSubmissionV2 {
   const value = parseJson(text);
-  if (isRecord(value) && value.version === 1) {
-    const legacy = parsePlanningSubmissionV1(text);
-    return { version: 2, intent: legacy.intent, knownContext: [], constraints: [], openQuestions: [], maxEvents: Math.max(1, legacy.beats.length), beats: legacy.beats.map((beat, index) => ({ key: `local${index + 1}`, intent: beat.intent, priority: 'required', dependsOn: [] })) };
-  }
   if (!isRecord(value) || !exact(value, ['version', 'intent', 'knownContext', 'constraints', 'openQuestions', 'maxEvents', 'beats']) || value.version !== 2 || !nonempty(value.intent) || !Number.isSafeInteger(value.maxEvents) || (value.maxEvents as number) < 1 || !Array.isArray(value.beats)) throw new Error('PlanningSubmissionV2 is invalid.');
   const beats = value.beats.map((raw) => {
     if (!isRecord(raw) || !exact(raw, ['key', 'intent', 'priority', 'dependsOn']) || !nonempty(raw.key) || !nonempty(raw.intent) || !['required', 'optional'].includes(String(raw.priority))) throw new Error('PlanningSubmissionV2 beat is invalid.');
@@ -115,9 +110,6 @@ export function parseDomainPatchV1(value: unknown): DomainPatchV1 {
   throw new Error('DomainPatchV1 is invalid.');
 }
 
-function upgradeInitV1(value: { title: string; canon: CanonSubmission }): InitSubmissionV2 {
-  return { version: 2, title: value.title, canon: value.canon, worldState: { status: 'active', elapsed: null, variables: {} }, characters: [], locations: [], arcs: [], initialFacts: [], unresolvedThreads: [], storySeeds: [] };
-}
 function parseCanon(value: unknown): CanonSubmission {
   if (!isRecord(value) || !exact(value, ['premise', 'rules', 'style', 'userRole']) || !Object.values(value).every((item) => typeof item === 'string')) throw new Error('InitSubmissionV2 canon is invalid.');
   return value as unknown as CanonSubmission;

@@ -9,7 +9,6 @@ import {
   validateCommitParentRelationV2, validateContentV1, validateOperationStagingRelationV2, validatePreparedTargetRelationV2,
   type ArchiveMediaTypeV1, type StagedChangeV1,
 } from '@dayloom/archive-protocol';
-import type { PlayDocuments } from '../session/submission';
 import { classifyWorld, readPublishedWorld, validatePublishedProfile, type PublishedWorld } from './read';
 import { assertMutationPathAllowedV1, expectedMediaTypeV1 } from './profile/policy';
 
@@ -17,7 +16,7 @@ export type WorldChange =
   | { op: 'put'; path: string; mediaType: ArchiveMediaTypeV1; bytes: Uint8Array }
   | { op: 'delete'; path: string };
 export interface PublishMutationInput {
-  operationType: 'init' | 'planning' | 'play' | 'revise' | 'settle' | 'abandon-day' | 'migration';
+  operationType: 'init' | 'planning' | 'play' | 'revise' | 'settle' | 'abandon-day';
   base: PublishedWorld | null;
   initialManifest?: { worldId: string; title: string };
   changes: readonly WorldChange[];
@@ -52,7 +51,6 @@ async function atomic(target: string, bytes: Uint8Array, exclusive = false) {
     if (exclusive) await link(temporary, target); else await rename(temporary, target);
   } finally { await rm(temporary, { force: true }); }
 }
-
 export async function publishMutation(worldRoot: string, input: PublishMutationInput, options: PublicationOptions = {}): Promise<PublishedWorld> {
   validateInput(input);
   const timestamp = new Date().toISOString(), operationId = id('op'), commitId = id('commit');
@@ -110,7 +108,7 @@ export async function publishMutation(worldRoot: string, input: PublishMutationI
 }
 
 function validateInput(input: PublishMutationInput) {
-  if ((input.base === null) !== (input.operationType === 'init' || input.operationType === 'migration') || (input.base === null) !== (input.initialManifest !== undefined)) throw new Error('Publication base and initial manifest are inconsistent.');
+  if ((input.base === null) !== (input.operationType === 'init') || (input.base === null) !== (input.initialManifest !== undefined)) throw new Error('Publication base and initial manifest are inconsistent.');
   const paths = new Set<string>();
   for (const change of input.changes) {
     const documentPath = assertMutationPathAllowedV1(input.operationType, parseWorldDocumentPathV1(change.path));
@@ -124,12 +122,3 @@ function validateInput(input: PublishMutationInput) {
 }
 function coded(code: 'WORLD_CONFLICT' | 'WORLD_INVALID', message: string, cause?: unknown) { return Object.assign(new Error(message, { cause }), { code }); }
 function codeOf(error: unknown): string { return typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : ''; }
-
-export function publishPlay(worldRoot: string, pinned: PublishedWorld, day: string, documents: PlayDocuments, options: PublicationOptions = {}) {
-  const playPath = `days/${day}/play.json`, summaryPath = `days/${day}/summary.md`;
-  if (pinned.tree.entries.some((entry) => entry.path === playPath || entry.path === summaryPath)) throw Object.assign(new Error('Published Play history must not be overwritten.'), { code: 'SUBMISSION_INVALID' });
-  return publishMutation(worldRoot, { operationType: 'play', base: pinned, changes: [
-    { op: 'put', path: playPath, mediaType: 'application/json', bytes: documents.play },
-    { op: 'put', path: summaryPath, mediaType: 'text/markdown', bytes: documents.summary },
-  ], control: { phase: 'awaiting-settle', day, lastSettledDay: pinned.commit.control.lastSettledDay } }, options);
-}

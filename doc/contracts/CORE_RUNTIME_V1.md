@@ -3,7 +3,7 @@
 **状态**：稳定契约
 **最后核对**：2026-08-24
 
-本文定义 `@dayloom/core` 1.x 的应用边界。公开入口只暴露 `createDayloomCore`、`CoreInitializationError` 以及对应的结果、状态和事件类型；迁移工具只从 `@dayloom/core/migration` 暴露。
+本文定义 `@dayloom/core` 1.x 的应用边界。公开入口只暴露 `createDayloomCore`、`CoreInitializationError` 以及对应的结果、状态和事件类型。
 
 ## 创建与所有权
 
@@ -31,6 +31,6 @@ Core 固定使用 Promptpile React Process Pile v1，并通过 CLI 唯一传入 
 
 终止证据必须与 Check 决策精确耦合：Check 返回 `false` 时只接受 `stop_reason=final`；Check 返回 `true` 且一步预算耗尽时只接受 `stop_reason=max_step`。两条路径都必须包含已完成、非空且与 Final 增量完全一致的内容。事件缺失、乱序、跨 process、步数不一致、Final 跳过或证据不匹配均失败关闭。
 
-## 兼容性
+## 版本边界
 
-1.x 内不删除或改变公开字段含义；新增字段只能是向后兼容的可选字段。Archive 与 World Profile 的兼容边界由 [World Profile V1](./WORLD_PROFILE_V1.md) 定义。深层 `dist/` 导入、内部 Promptpile 适配器和测试构造器不属于公开 API。
+Core 只实现当前运行路径，不提供旧格式回退或自动升级。Archive 与 World Profile 的格式边界由 [World Profile V1](./WORLD_PROFILE_V1.md) 定义。深层 `dist/` 导入、内部 Promptpile 适配器和测试构造器不属于公开 API。

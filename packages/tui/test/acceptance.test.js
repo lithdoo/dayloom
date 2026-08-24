@@ -119,7 +119,7 @@ test('tui clean CI orders protocol then core then tui and has a required Ubuntu 
   assert.match(workflow, /os: \[ubuntu-latest, windows-latest\]/);
   assert.match(workflow, /node: \[20, 22\]/);
   assert.match(workflow, /required-pty:[\s\S]*DAYLOOM_TUI_REQUIRE_PTY: '1'/);
-  assert.equal(packageJson.scripts.test, 'npm run build && npm run guard && node scripts/run-tests.mjs');
+  assert.equal(packageJson.scripts.test, 'npm run build && npm run guard && node scripts/run-tests.mjs && npm run test:pack');
   assert.match(testRunner, /readdir\(testDirectory\)/);
   assert.match(testRunner, /'--test-concurrency=1'/);
 });

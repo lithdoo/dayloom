@@ -7,7 +7,7 @@ import { CoreInitializationError, CoreOperationError, failure, success, type Cor
 import type { CoreEvent } from './events';
 import { buildState, type CoreSessionKind, type CoreState, type CoreWorldState } from './state';
 import { classifyWorld, type ClassifiedWorld, type PublishedWorld } from './world/read';
-import { publishMutation, publishPlay, type PublishMutationInput, type WorldChange } from './world/publish';
+import { publishMutation, type WorldChange } from './world/publish';
 import { resolvePackagedBoundaries, type PackagedBoundaries } from './promptpile/binaries';
 import { readCallerConfig, type CallerConfig } from './promptpile/config';
 import { appendUser, nodeProcessRunner, type ProcessRunner } from './promptpile/conversation';
@@ -16,10 +16,6 @@ import { runReact } from './promptpile/react-runner';
 import { buildContextMessage, createPlayWorkspace } from './session/play';
 import { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } from './session/lifecycle';
 import type { CoreSession } from './session/common';
-import {
-  parsePlanningSubmissionV1, parsePlaySubmissionV1, parseReviseSubmissionV1,
-  validateAndBuildPlayDocuments,
-} from './session/submission';
 import { parseInitSubmissionV2, parsePlanningSubmissionV2, parsePlaySubmissionV2, parseReviseSubmissionV2 } from './session/submission-v2';
 import { buildInitMutationV1 } from './world/builders/init';
 import { buildSessionAuditV1 } from './world/builders/audit';
@@ -43,13 +39,10 @@ export interface DayloomCore {
 }
 interface InternalOptions {
   runner?: ProcessRunner; boundaries?: PackagedBoundaries;
-  publisher?: typeof publishPlay; mutationPublisher?: typeof publishMutation;
+  mutationPublisher?: typeof publishMutation;
   remove?: typeof rm;
   classifier?: typeof classifyWorld;
 }
-const encoder = new TextEncoder();
-const json = (value: unknown) => encoder.encode(`${JSON.stringify(value, null, 2)}\n`);
-
 class DayloomCoreImpl implements DayloomCore {
   private world: PublishedWorld | null;
   private worldState: CoreWorldState;
@@ -67,8 +60,8 @@ class DayloomCoreImpl implements DayloomCore {
   constructor(
     classified: ClassifiedWorld, private readonly worldRoot: string, private readonly runtimeRoot: string,
     private readonly config: CallerConfig, private readonly boundaries: PackagedBoundaries,
-    private readonly runner: ProcessRunner, private readonly playPublisher: typeof publishPlay,
-    private readonly mutationPublisher: typeof publishMutation, private readonly remove: typeof rm,
+    private readonly runner: ProcessRunner, private readonly mutationPublisher: typeof publishMutation,
+    private readonly remove: typeof rm,
     private readonly classifier: typeof classifyWorld,
   ) { this.world = classified.published; this.worldState = classified.state; }
   getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed, this.cancelRequestedSessionId); }
@@ -237,8 +230,7 @@ class DayloomCoreImpl implements DayloomCore {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
     const base = this.world, day = base.commit.control.day as string;
     let changes: WorldChange[] = [];
-    if (base.profileVersion === 1 && base.tree.entries.some((entry) => entry.path === `days/${day}/play-index.json`)) {
-      if (base.profileV1 === null) throw new Error('Profile V1 is unavailable during settlement.');
+    if (base.tree.entries.some((entry) => entry.path === `days/${day}/play-index.json`)) {
       // Awaiting-settle deliberately exposes no playContext, so read and validate the
       // persisted plan from the verified tree through the structured event reader's input.
       const { parsePlayPlanV1, readTextDocument } = await import('./world/read');
@@ -253,23 +245,17 @@ class DayloomCoreImpl implements DayloomCore {
   abandonDay() { return this.operation(async () => {
     if (!this.world || this.worldState.status !== 'published' || this.session !== null || !['planned', 'awaiting-settle'].includes(this.world.commit.control.phase) || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'abandonDay is not available.');
     const base = this.world, day = base.commit.control.day;
-    const paths = base.profileVersion === 1 ? base.tree.entries.map((entry) => entry.path).filter((candidate) => candidate.startsWith(`days/${day}/`)) : [`days/${day}/plan.json`, `days/${day}/play.json`, `days/${day}/summary.md`].filter((candidate) => base.tree.entries.some((entry) => entry.path === candidate));
+    const paths = base.tree.entries.map((entry) => entry.path).filter((candidate) => candidate.startsWith(`days/${day}/`));
     const published = await this.mutationPublisher(this.worldRoot, { operationType: 'abandon-day', base, changes: paths.map((documentPath) => ({ op: 'delete' as const, path: documentPath })), control: { phase: 'idle', day: null, lastSettledDay: base.commit.control.lastSettledDay } });
     this.installPublished(published); return success();
   }); }
   private async publishSubmission(session: CoreSession, final: string): Promise<PublishedWorld> {
     if (session.kind === 'play') {
-      if (session.pinned!.profileVersion === 1) {
-        let rich: { submission: ReturnType<typeof parsePlaySubmissionV2>; changes: ReturnType<typeof buildPlayMutationV1> } | null = null;
-        try {
-          const submission = parsePlaySubmissionV2(final); rich = { submission, changes: buildPlayMutationV1(session.pinned!, submission) };
-        } catch { /* Profile V0 submission compatibility falls through during staged rollout. */ }
-        if (rich !== null) return this.mutationPublisher(this.worldRoot, { operationType: 'play', base: session.pinned!, changes: [...rich.changes, ...await buildSessionAuditV1(session, rich.submission, final)], control: { phase: 'awaiting-settle', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
-      }
-      let documents;
-      try { documents = validateAndBuildPlayDocuments(session.pinned!.playContext!.plan, parsePlaySubmissionV1(final)); }
+      let submission;
+      try { submission = parsePlaySubmissionV2(final); }
       catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-      return this.playPublisher(this.worldRoot, session.pinned!, session.day!, documents);
+      const changes = [...buildPlayMutationV1(session.pinned!, submission), ...await buildSessionAuditV1(session, submission, final)];
+      return this.mutationPublisher(this.worldRoot, { operationType: 'play', base: session.pinned!, changes, control: { phase: 'awaiting-settle', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
     }
     if (session.kind === 'init') {
       let submission; try { submission = parseInitSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
@@ -277,28 +263,13 @@ class DayloomCoreImpl implements DayloomCore {
       return this.mutationPublisher(this.worldRoot, { operationType: 'init', base: null, initialManifest: { worldId: `world_${randomUUID().replaceAll('-', '')}`, title: submission.title.trim() }, changes, control: { phase: 'idle', day: null, lastSettledDay: null } });
     }
     if (session.kind === 'planning') {
-      if (session.pinned!.profileVersion === 1) {
-        let submission; try { submission = parsePlanningSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-        const changes = [...buildPlanningMutationV1(session.day!, submission), ...await buildSessionAuditV1(session, submission, final)];
-        return this.mutationPublisher(this.worldRoot, { operationType: 'planning', base: session.pinned!, changes, control: { phase: 'planned', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
-      }
-      let submission; try { submission = parsePlanningSubmissionV1(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-      const plan = { intent: submission.intent, beats: submission.beats.map((beat, index) => ({ id: `beat${index + 1}`, intent: beat.intent })) };
-      return this.mutationPublisher(this.worldRoot, { operationType: 'planning', base: session.pinned!, changes: [{ op: 'put', path: `days/${session.day}/plan.json`, mediaType: 'application/json', bytes: json(plan) }], control: { phase: 'planned', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
+      let submission; try { submission = parsePlanningSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
+      const changes = [...buildPlanningMutationV1(session.day!, submission), ...await buildSessionAuditV1(session, submission, final)];
+      return this.mutationPublisher(this.worldRoot, { operationType: 'planning', base: session.pinned!, changes, control: { phase: 'planned', day: session.day, lastSettledDay: session.pinned!.commit.control.lastSettledDay } });
     }
-    if (session.pinned!.profileVersion === 1) {
-      try {
-        const submission = parseReviseSubmissionV2(final);
-        const changes = [...buildReviseMutationV1(session.pinned!, submission), ...await buildSessionAuditV1(session, submission, final)];
-        return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes, control: { ...session.pinned!.commit.control } });
-      } catch (error) {
-        // Temporary compatibility for worlds initialized through the former V1 prompt.
-        try { const legacy = parseReviseSubmissionV1(final); return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes: canonChanges(legacy.canon), control: { ...session.pinned!.commit.control } }); }
-        catch { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-      }
-    }
-    let submission; try { submission = parseReviseSubmissionV1(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
-    return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes: canonChanges(submission.canon), control: { ...session.pinned!.commit.control } });
+    let submission; try { submission = parseReviseSubmissionV2(final); } catch (error) { throw new CoreOperationError('SUBMISSION_INVALID', messageOf(error)); }
+    const changes = [...buildReviseMutationV1(session.pinned!, submission), ...await buildSessionAuditV1(session, submission, final)];
+    return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes, control: { ...session.pinned!.commit.control } });
   }
   private canStart(kind: CoreSessionKind): boolean {
     if (this.session !== null) return false;
@@ -359,14 +330,6 @@ class DayloomCoreImpl implements DayloomCore {
   }
 }
 
-function canonChanges(canon: { premise: string; rules: string; style: string; userRole: string }): PublishMutationInput['changes'] {
-  return [
-    { op: 'put', path: 'canon/premise.md', mediaType: 'text/markdown', bytes: encoder.encode(canon.premise) },
-    { op: 'put', path: 'canon/rules.md', mediaType: 'text/markdown', bytes: encoder.encode(canon.rules) },
-    { op: 'put', path: 'canon/style.md', mediaType: 'text/markdown', bytes: encoder.encode(canon.style) },
-    { op: 'put', path: 'canon/user-role.md', mediaType: 'text/markdown', bytes: encoder.encode(canon.userRole) },
-  ];
-}
 function codeOf(error: unknown): string { return typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : ''; }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : 'Internal Core error.'; }
 
@@ -381,6 +344,6 @@ export async function createDayloomCoreInternal(options: CreateDayloomCoreOption
     const classifier = internal.classifier ?? classifyWorld;
     const classified = await classifier(worldRoot), runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-core-'));
     await mkdir(path.join(runtimeRoot, 'sessions'));
-    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.publisher ?? publishPlay, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier);
+    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier);
   } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not initialize Core runtime.', { cause: error }); }
 }

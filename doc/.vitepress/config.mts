@@ -6,7 +6,6 @@ export default defineConfig({
   description: '以天为单位推进的 AI 叙事与生活模拟运行时',
   lang: 'zh-CN',
   cleanUrls: true,
-  srcExclude: ['archive/**', 'redirects/**'],
   themeConfig: {
     nav: [
       { text: '指南', link: '/guide/GETTING_STARTED' },
@@ -21,7 +20,6 @@ export default defineConfig({
         { text: 'World 生命周期', link: '/guide/WORLD_LIFECYCLE' },
         { text: 'TUI', link: '/guide/TUI' },
         { text: '故障排查', link: '/guide/TROUBLESHOOTING' },
-        { text: '迁移', link: '/guide/MIGRATION' },
       ] },
       { text: '稳定契约', items: [
         { text: 'Core Runtime V1', link: '/contracts/CORE_RUNTIME_V1' },
@@ -34,7 +32,6 @@ export default defineConfig({
         { text: '配置', link: '/reference/CONFIGURATION' },
         { text: 'Archive', link: '/reference/ARCHIVE_FORMAT' },
         { text: '测试', link: '/testing/OVERVIEW' },
-        { text: '1.0 beta 发布说明', link: '/reference/RELEASE_NOTES_1.0.0-beta.1' },
       ] },
     ],
     search: { provider: 'local' },

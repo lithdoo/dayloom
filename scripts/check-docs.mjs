@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const docRoot = path.join(projectRoot, 'doc');
-const excludedDirectories = new Set(['.vitepress', 'archive', 'redirects']);
+const excludedDirectories = new Set(['.vitepress']);
 const metadataExempt = new Set(['index.md']);
-const forbiddenPublishedTerms = ['@dayloom/core2', 'packages/core2', '@dayloom/cli', 'core-old', 'tui-old'];
+const forbiddenPublishedTerms = ['@dayloom/core2', 'packages/core2', '@dayloom/cli', 'core-old', 'tui-old', '@dayloom/core/migration', 'profile v0', 'submissionv1'];
 const errors = [];
 
 const activeFiles = walk(docRoot).filter((file) => {

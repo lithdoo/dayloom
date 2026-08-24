@@ -26,21 +26,17 @@ test('Profile V1 operation policy protects history and private namespaces', () =
   assert.equal(assertMutationPathAllowedV1('planning', 'days/day1/plan.json'), 'days/day1/plan.json');
   assert.equal(assertMutationPathAllowedV1('play', 'days/day1/events/event1/result.yaml'), 'days/day1/events/event1/result.yaml');
   assert.equal(assertMutationPathAllowedV1('settle', 'characters/alice/state.yaml'), 'characters/alice/state.yaml');
-  assert.equal(assertMutationPathAllowedV1('migration', 'legacy/files/logs/errors.md'), 'legacy/files/logs/errors.md');
   assert.throws(() => assertMutationPathAllowedV1('planning', 'characters/alice/state.yaml'), /cannot mutate/);
   assert.throws(() => assertMutationPathAllowedV1('revise', 'days/day1/summary.md'), /cannot mutate/);
   assert.throws(() => assertMutationPathAllowedV1('settle', 'canon/premise.md'), /cannot mutate/);
-  assert.throws(() => assertMutationPathAllowedV1('init', 'legacy/files/unknown.txt'), /cannot mutate/);
+  assert.throws(() => assertMutationPathAllowedV1('init', 'legacy/files/unknown.txt'), /outside/);
 });
 
-test('published World dispatches explicitly between Profile V0 and V1', async (t) => {
-  const v0 = archiveFixture();
-  const v1 = archiveFixture({ profileVersion: 1 });
+test('published World requires the current Profile V1 descriptor', async (t) => {
+  const v1 = archiveFixture();
   const unsupported = archiveFixture({ profileVersion: 2 });
-  t.after(() => { v0.cleanup(); v1.cleanup(); unsupported.cleanup(); });
-  assert.equal((await readPublishedWorld(v0.root)).profileVersion, 0);
+  t.after(() => { v1.cleanup(); unsupported.cleanup(); });
   const rich = await readPublishedWorld(v1.root);
-  assert.equal(rich.profileVersion, 1);
   assert.deepEqual(rich.profileV1.characterIds, []);
   assert.equal(rich.profileV1.state.world.title, 'World');
   const classified = await classifyWorld(unsupported.root);

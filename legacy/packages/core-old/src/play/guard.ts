@@ -1,3 +1,0 @@
-import fs from 'fs'; import path from 'path';
-export function resolveWorldRoot(dir:string):string{return path.resolve(dir);}
-export function readCurrent(worldRoot:string):{day:string;phase:string}{const file=path.join(worldRoot,'current.yaml');if(!fs.existsSync(path.join(worldRoot,'manifest.yaml')))throw new Error('World save is not initialized: '+worldRoot);const text=fs.readFileSync(file,'utf8');const day=text.match(/^day:\s*(\S+)/m)?.[1];const phase=text.match(/^phase:\s*(\S+)/m)?.[1];if(!day||!phase)throw new Error('current.yaml missing day or phase');if(phase!=='planned'&&phase!=='playing')throw new Error('Play requires current phase planned or playing, got: '+phase);return{day,phase};}

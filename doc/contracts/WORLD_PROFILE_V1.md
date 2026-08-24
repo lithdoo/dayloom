@@ -3,7 +3,7 @@
 **状态**：稳定契约
 **最后核对**：2026-08-24
 
-World Profile V1 是 `@dayloom/core` 1.x 在 Archive V2 上使用的唯一新建与写入格式。Archive V2 负责对象、树、commit、current 指针和原子发布；Profile V1 负责业务文档的路径、结构和跨文档约束。
+World Profile V1 是 `@dayloom/core` 1.x 在 Archive V2 上使用的唯一读取与写入格式。Archive V2 负责对象、树、commit、current 指针和原子发布；Profile V1 负责业务文档的路径、结构和跨文档约束。
 
 ## 标识与布局
 
@@ -23,8 +23,6 @@ Profile 描述符必须声明版本 1。World、Day、Beat、Entity 和 Event �
 
 任一条件不满足时 World 为无效或本次操作失败，不得尝试猜测、自动修补或部分发布。
 
-## 迁移边界
+## 版本边界
 
-官方迁移入口是 `@dayloom/core/migration` 的 `migrateLegacyWorldProfileV1`，CLI 为 `dayloom-core archive migrate-world-profile-v1 --source <legacy-world> --target <archive-v2-world>`。迁移只读取旧文件系统布局并创建新的独立 Archive V2/Profile V1 目标；不原地覆盖源目录，不跟随符号链接，源与目标不得重叠，并返回完整文件清单与警告。
-
-现有 Archive V2 Profile V0 仍由 1.x 的隔离兼容分支读写，以保证已经存在的 World 可继续完成生命周期；所有新建 World 使用 Profile V1。V0 不获得新业务能力，也不会在普通启动路径中被静默升级。后续移除它之前必须提供显式、可审计、写入独立目标的升级器，并经过一个主版本的弃用周期。
+缺少 Profile V1 描述符、声明其它 Profile 版本或使用非当前日文档结构的 World 均判定为 `WORLD_INVALID`。Core 不猜测格式、不自动升级，也不回退到其它读写路径。

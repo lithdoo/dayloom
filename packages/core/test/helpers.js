@@ -9,16 +9,15 @@ function write(root, relative, bytes) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, bytes);
 }
-function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false, profileVersion = 0 } = {}) {
+function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false, profileVersion = 1 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-world-'));
   const documents = new Map([
     ['canon/premise.md', Buffer.from('Premise')], ['canon/rules.md', Buffer.from('Rules')],
     ['canon/style.md', Buffer.from('Style')], ['canon/user-role.md', Buffer.from('User role')],
-    [`days/${day}/plan.json`, Buffer.from(JSON.stringify(malformedPlan ? { intent: '' } : profileVersion === 1 ? { version: 1, intent: 'Live the day', knownContext: [], constraints: [], openQuestions: [], maxEvents: 1, beats: [{ id: 'beat1', intent: 'Begin', priority: 'required', dependsOn: [] }] } : { intent: 'Live the day', beats: [{ id: 'beat1', intent: 'Begin' }] }))],
+    [`days/${day}/plan.json`, Buffer.from(JSON.stringify(malformedPlan ? { intent: '' } : { version: 1, intent: 'Live the day', knownContext: [], constraints: [], openQuestions: [], maxEvents: 1, beats: [{ id: 'beat1', intent: 'Begin', priority: 'required', dependsOn: [] }] }))],
   ]);
-  if (profileVersion !== 0) {
-    documents.set('profile/dayloom.json', Buffer.from(JSON.stringify({ schemaVersion: 1, profile: 'dayloom', profileVersion })));
-    if (profileVersion === 1) for (const [documentPath, content] of [
+  documents.set('profile/dayloom.json', Buffer.from(JSON.stringify({ schemaVersion: 1, profile: 'dayloom', profileVersion })));
+  if (profileVersion === 1) for (const [documentPath, content] of [
       ['state/world.yaml', 'schemaVersion: 1\ntitle: World\nstatus: active\n'],
       ['state/calendar.yaml', 'schemaVersion: 1\ncurrentDay: null\nelapsed: null\n'],
       ['state/progress.yaml', 'schemaVersion: 1\nactiveArcIds: []\n'],
@@ -31,8 +30,7 @@ function archiveFixture({ phase = 'planned', day = 'day1', malformedPlan = false
       ['memory/unresolved-threads.yaml', 'schemaVersion: 1\nthreads: []\n'],
       ['memory/important-events.yaml', 'schemaVersion: 1\nevents: []\n'],
       ['story-seeds/active.yaml', 'schemaVersion: 1\nseeds: []\n'],
-    ]) documents.set(documentPath, Buffer.from(content));
-  }
+  ]) documents.set(documentPath, Buffer.from(content));
   const entries = [...documents].map(([documentPath, bytes]) => {
     const blobHash = protocol.hashBlobV1(bytes); write(root, protocol.formatBlobObjectPathV1(blobHash), bytes);
     const mediaType = documentPath.endsWith('.json') ? 'application/json' : documentPath.endsWith('.yaml') ? 'application/yaml' : 'text/markdown';

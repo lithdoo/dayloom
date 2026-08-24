@@ -5,10 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "commonjs",
-  "bin": { "dayloom-core": "./dist/migration/cli.js" },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" },
-    "./migration": { "types": "./dist/migration/index.d.ts", "require": "./dist/migration/index.js", "default": "./dist/migration/index.js" }
+    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" }
   },
   "files": ["dist", "package.json", "README.md"],
   "scripts": {

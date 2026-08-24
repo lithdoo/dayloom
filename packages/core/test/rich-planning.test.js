@@ -20,7 +20,7 @@ test('Rich Planning publishes PlayPlanV1 and survives restart', async (t) => {
   await core.startSession('init'); assert.deepEqual(await core.submit(), { ok: true });
   await core.startSession('planning'); assert.deepEqual(await core.submit(), { ok: true });
   const world = await readPublishedWorld(root);
-  assert.equal(world.profileVersion, 1); assert.equal(world.commit.control.phase, 'planned');
+  assert.equal(world.commit.control.phase, 'planned');
   assert.equal(world.playContext.plan.version, 1); assert.equal(world.playContext.plan.maxEvents, 4);
   assert.deepEqual(world.playContext.plan.beats[1].dependsOn, ['beat1']);
   assert.equal(await readTextDocument(root, world.tree, 'days/day1/timeline.md'), '');

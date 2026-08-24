@@ -109,7 +109,7 @@ test('real beta.5 isolates two consecutive Play sends and hands Observe to Final
   assert.equal(provider.requests.length, 8);
   for (const requestIndex of [0, 4]) {
     const thoughtMessages = provider.requests[requestIndex].messages;
-    assert.equal(thoughtMessages.some((message) => message.content.includes('[DAYLOOM_PLAY_CONTEXT_V0]')), true);
+    assert.equal(thoughtMessages.some((message) => message.content.includes('[DAYLOOM_PLAY_CONTEXT_V1]')), true);
     const observeMessages = provider.requests[requestIndex + 1].messages;
     assert.equal(observeMessages.some((message) => message.role === 'assistant' && message.content === `RAW_THOUGHT_${requestIndex / 4 + 1}`), true);
     const finalMessages = provider.requests[requestIndex + 3].messages;
@@ -146,8 +146,8 @@ test('real beta.5 returns a completed Final with max_step when Check continues a
 });
 
 test('real beta.5 completes Play and Planning publication through Core', { timeout: 25_000 }, async (t) => {
-  const playSubmission = JSON.stringify({ version: 1, summary: 'Day completed', beats: [{ id: 'beat1', status: 'completed', eventId: 'event1' }], events: [{ id: 'event1', beatId: 'beat1', userInput: 'Act', assistantOutput: 'Done' }] });
-  const planningSubmission = JSON.stringify({ version: 1, intent: 'Continue the story', beats: [{ intent: 'Open the next scene' }] });
+  const playSubmission = JSON.stringify({ version: 2, events: [{ beatId: 'beat1', title: 'Day completed', locationId: null, participantIds: [], scene: 'Done', dialogue: '', userAction: 'Act', result: { summary: 'Day completed', learnedFacts: [], timeAdvanced: null, completedBeatIds: ['beat1'], skippedBeatIds: [], endDay: true }, proposedPatch: [] }] });
+  const planningSubmission = JSON.stringify({ version: 2, intent: 'Continue the story', knownContext: [], constraints: [], openQuestions: [], maxEvents: 1, beats: [{ key: 'open', intent: 'Open the next scene', priority: 'required', dependsOn: [] }] });
   const provider = await fixtureProvider(t, ['visible-send', playSubmission, planningSubmission]);
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
   const core = await createDayloomCoreInternal({ worldRoot: archive.root, llmConfigPath: archive.config }); t.after(() => core.dispose());

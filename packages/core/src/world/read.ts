@@ -13,21 +13,14 @@ import { validateWorldProfileV1, type WorldProfileV1 } from './profile/validate'
 import { readStructuredDayEventsV1 } from './profile/events';
 import { parseYamlObjectV1 } from './profile/yaml';
 
-export interface PlayPlanV0 { intent: string; beats: Array<{ id: string; intent: string }> }
 export interface PlayPlanV1 { version: 1; intent: string; knownContext: string[]; constraints: string[]; openQuestions: string[]; maxEvents: number; beats: Array<{ id: string; intent: string; priority: 'required' | 'optional'; dependsOn: string[] }> }
-export interface PersistedPlayV1 {
-  version: 1;
-  beats: Array<{ id: string; intent: string; status: 'pending' | 'completed' | 'skipped'; eventId: string | null }>;
-  events: Array<{ id: string; beatId: string | null; userInput: string; assistantOutput: string }>;
-}
-export interface CanonV0 { premise: string; rules: string; style: string; userRole: string }
-export interface PlayContextV0 extends CanonV0 { plan: PlayPlanV0 | PlayPlanV1 }
+export interface Canon { premise: string; rules: string; style: string; userRole: string }
+export interface PlayContext extends Canon { plan: PlayPlanV1 }
 export interface PublishedWorld {
   manifest: Readonly<ArchiveManifestV2>; commit: Readonly<ArchiveCommitV2>; tree: Readonly<RootTreeV1>;
-  profileVersion: 0 | 1;
-  profileV1: Readonly<WorldProfileV1> | null;
+  profileV1: Readonly<WorldProfileV1>;
   view: Extract<CoreWorldState, { status: 'published' }>;
-  canon: Readonly<CanonV0>; lastSettledSummary: string | null; playContext: PlayContextV0 | null;
+  canon: Readonly<Canon>; lastSettledSummary: string | null; playContext: PlayContext | null;
 }
 export type ClassifiedWorld =
   | { state: Extract<CoreWorldState, { status: 'uninitialized' }>; published: null }
@@ -102,8 +95,8 @@ export async function readPublishedWorld(root: string): Promise<PublishedWorld> 
 }
 
 export async function validatePublishedProfile(root: string, manifest: Readonly<ArchiveManifestV2>, commit: Readonly<ArchiveCommitV2>, tree: Readonly<RootTreeV1>): Promise<PublishedWorld> {
-  const profileVersion = await readProfileVersion(root, tree);
-  const profileV1 = profileVersion === 1 ? await validateWorldProfileV1(root, tree) : null;
+  parseDayloomProfileDescriptorV1(await readJsonDocument(root, tree, DAYLOOM_PROFILE_DESCRIPTOR_PATH));
+  const profileV1 = await validateWorldProfileV1(root, tree);
   const control = commit.control;
   if (control.phase === 'idle' && control.day !== null) throw new Error('Idle World must not have a current day.');
   if (control.lastSettledDay !== null) parseDayId(control.lastSettledDay);
@@ -120,30 +113,23 @@ export async function validatePublishedProfile(root: string, manifest: Readonly<
   });
   let lastSettledSummary: string | null = null;
   if (control.lastSettledDay !== null) {
-    if (profileVersion === 1 && hasDocument(tree, `days/${control.lastSettledDay}/play-index.json`)) await readSettledDayV1(root, tree, control.lastSettledDay, profileV1!);
-    else await readDayDocuments(root, tree, control.lastSettledDay, true);
+    await readSettledDayV1(root, tree, control.lastSettledDay, profileV1);
     lastSettledSummary = await readSummary(root, tree, control.lastSettledDay);
   }
-  let playContext: PlayContextV0 | null = null;
+  let playContext: PlayContext | null = null;
   if (control.day !== null) {
     const day = control.day, planPath = `days/${day}/plan.json`;
-    const plan = profileVersion === 1 ? parsePlayPlanV1(await readJsonDocument(root, tree, planPath)) : parsePlayPlanV0(await readJsonDocument(root, tree, planPath));
+    const plan = parsePlayPlanV1(await readJsonDocument(root, tree, planPath));
     const hasPlay = hasDocument(tree, `days/${day}/play.json`), hasSummary = hasDocument(tree, `days/${day}/summary.md`), hasStructuredPlay = hasDocument(tree, `days/${day}/play-index.json`);
     if (control.phase === 'planned' && (hasPlay || hasSummary || hasStructuredPlay)) throw new Error('Planned current day contains completed Play documents.');
     if (control.phase === 'awaiting-settle') {
-      if (profileVersion === 1 && hasStructuredPlay) await readStructuredDayEventsV1(root, tree, day, plan as PlayPlanV1, profileV1!);
-      else await readDayDocuments(root, tree, day, true, plan);
+      if (!hasStructuredPlay) throw new Error('Awaiting-settle World is missing structured Play documents.');
+      await readStructuredDayEventsV1(root, tree, day, plan, profileV1);
     }
     playContext = control.phase === 'planned' ? Object.freeze({ ...canon, plan }) : null;
   }
   const view = Object.freeze({ status: 'published' as const, worldId: manifest.worldId, title: manifest.title, revision: commit.revision, commitId: commit.id, phase: control.phase, day: control.day, lastSettledDay: control.lastSettledDay });
-  return Object.freeze({ manifest, commit, tree, profileVersion, profileV1, view, canon, lastSettledSummary, playContext });
-}
-
-async function readProfileVersion(root: string, tree: Readonly<RootTreeV1>): Promise<0 | 1> {
-  if (!hasDocument(tree, DAYLOOM_PROFILE_DESCRIPTOR_PATH)) return 0;
-  parseDayloomProfileDescriptorV1(await readJsonDocument(root, tree, DAYLOOM_PROFILE_DESCRIPTOR_PATH));
-  return 1;
+  return Object.freeze({ manifest, commit, tree, profileV1, view, canon, lastSettledSummary, playContext });
 }
 
 function validateDayTreeStructure(tree: Readonly<RootTreeV1>, currentDay: string | null, lastSettledDay: string | null): void {
@@ -172,25 +158,6 @@ async function readSummary(root: string, tree: Readonly<RootTreeV1>, day: string
   if (summary.trim() === '') throw new Error('Day summary must be non-empty.');
   return summary;
 }
-async function readDayDocuments(root: string, tree: Readonly<RootTreeV1>, day: string, completed: boolean, knownPlan?: PlayPlanV0 | PlayPlanV1) {
-  const rawPlan = knownPlan ?? await readJsonDocument(root, tree, `days/${day}/plan.json`);
-  const plan = knownPlan ?? (isRecord(rawPlan) && rawPlan.version === 1 ? parsePlayPlanV1(rawPlan) : parsePlayPlanV0(rawPlan));
-  if (completed) {
-    parsePersistedPlayV1(await readJsonDocument(root, tree, `days/${day}/play.json`), plan);
-    await readSummary(root, tree, day);
-  }
-  return plan;
-}
-
-export function parsePlayPlanV0(value: unknown): PlayPlanV0 {
-  if (!isRecord(value) || !exact(value, ['intent', 'beats']) || typeof value.intent !== 'string' || value.intent.trim() === '' || !Array.isArray(value.beats)) throw new Error('PlayPlanV0 is invalid.');
-  const ids = new Set<string>();
-  const beats = value.beats.map((item) => {
-    if (!isRecord(item) || !exact(item, ['id', 'intent']) || typeof item.id !== 'string' || item.id.trim() === '' || typeof item.intent !== 'string' || item.intent.trim() === '' || ids.has(item.id)) throw new Error('PlayPlanV0 beat is invalid.');
-    ids.add(item.id); return Object.freeze({ id: item.id, intent: item.intent });
-  });
-  return Object.freeze({ intent: value.intent, beats: Object.freeze(beats) as unknown as PlayPlanV0['beats'] });
-}
 async function readSettledDayV1(root: string, tree: Readonly<RootTreeV1>, day: string, profile: Readonly<WorldProfileV1>): Promise<void> {
   const plan = parsePlayPlanV1(await readJsonDocument(root, tree, `days/${day}/plan.json`));
   const events = await readStructuredDayEventsV1(root, tree, day, plan, profile);
@@ -211,24 +178,6 @@ export function parsePlayPlanV1(value: unknown): PlayPlanV1 {
     ids.add(item.id); return { id: item.id, intent: item.intent, priority: item.priority as 'required' | 'optional', dependsOn: item.dependsOn as string[] };
   });
   return Object.freeze({ version: 1, intent: value.intent, knownContext: value.knownContext as string[], constraints: value.constraints as string[], openQuestions: value.openQuestions as string[], maxEvents: value.maxEvents as number, beats });
-}
-export function parsePersistedPlayV1(value: unknown, plan: PlayPlanV0): PersistedPlayV1 {
-  if (!isRecord(value) || !exact(value, ['version', 'beats', 'events']) || value.version !== 1 || !Array.isArray(value.beats) || !Array.isArray(value.events) || value.beats.length !== plan.beats.length) throw new Error('PersistedPlayV1 is invalid.');
-  const events = new Map<string, PersistedPlayV1['events'][number]>();
-  const parsedEvents = value.events.map((item) => {
-    if (!isRecord(item) || !exact(item, ['id', 'beatId', 'userInput', 'assistantOutput']) || !nonempty(item.id) || !(item.beatId === null || nonempty(item.beatId)) || !nonempty(item.userInput) || !nonempty(item.assistantOutput) || events.has(item.id)) throw new Error('PersistedPlayV1 event is invalid.');
-    const event = { id: item.id, beatId: item.beatId, userInput: item.userInput, assistantOutput: item.assistantOutput };
-    events.set(event.id, event); return event;
-  });
-  const planIds = new Set(plan.beats.map((beat) => beat.id));
-  for (const event of parsedEvents) if (event.beatId !== null && !planIds.has(event.beatId)) throw new Error('PersistedPlayV1 event relation is invalid.');
-  const beats = value.beats.map((item, index) => {
-    const expected = plan.beats[index];
-    if (!isRecord(item) || !exact(item, ['id', 'intent', 'status', 'eventId']) || item.id !== expected.id || item.intent !== expected.intent || !['pending', 'completed', 'skipped'].includes(item.status as string) || !(item.eventId === null || nonempty(item.eventId))) throw new Error('PersistedPlayV1 beat is invalid.');
-    if (item.eventId !== null) { const event = events.get(item.eventId); if (!event || event.beatId !== item.id) throw new Error('PersistedPlayV1 beat relation is invalid.'); }
-    return { id: item.id, intent: item.intent, status: item.status as PersistedPlayV1['beats'][number]['status'], eventId: item.eventId };
-  });
-  return Object.freeze({ version: 1, beats, events: parsedEvents });
 }
 function nonempty(value: unknown): value is string { return typeof value === 'string' && value.trim() !== ''; }
 export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);

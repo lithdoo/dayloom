@@ -42,16 +42,6 @@ Do not emit PlanningSubmission JSON during ordinary interaction.
 ${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
-const PLANNING_SUBMIT_FINAL = `Finalize the candidate plan for the pinned target day.
-${FINAL_VISIBILITY_NOTE}
-Return exactly one PlanningSubmissionV1 JSON object and nothing else. Do not use Markdown fences.
-Do not output day ids or beat ids; Core deterministically creates them.
-
-Schema:
-{ "version": 1, "intent": "non-empty string", "beats": [{ "intent": "non-empty string" }] }
-${OBSERVE_HANDOFF_AUTHORITY_NOTE}
-${WRITABLE_SUMMARY_AUTHORITY_NOTE}
-`;
 const PLANNING_SUBMIT_FINAL_V2 = `Finalize the candidate rich plan for the pinned target day.
 ${FINAL_VISIBILITY_NOTE}
 Return exactly one PlanningSubmissionV2 JSON object and nothing else. Do not use Markdown fences.
@@ -77,20 +67,10 @@ Do not emit ReviseSubmission JSON during ordinary interaction.
 ${OBSERVE_HANDOFF_AUTHORITY_NOTE}
 ${WRITABLE_SUMMARY_AUTHORITY_NOTE}
 `;
-const REVISE_SUBMIT_FINAL = `Finalize a complete replacement canon snapshot.
-${FINAL_VISIBILITY_NOTE}
-Return exactly one ReviseSubmissionV1 JSON object and nothing else. Do not use Markdown fences.
-Do not output manifest identity, title, day history, or patch operations.
-
-Schema:
-{ "version": 1, "canon": { "premise": "string", "rules": "string", "style": "string", "userRole": "string" } }
-${OBSERVE_HANDOFF_AUTHORITY_NOTE}
-${WRITABLE_SUMMARY_AUTHORITY_NOTE}
-`;
 const REVISE_SUBMIT_FINAL_V2 = `Finalize typed semantic World revisions.
 ${FINAL_VISIBILITY_NOTE}
 Return exactly one ReviseSubmissionV2 JSON object and nothing else. Do not use Markdown fences.
-Every replacement or state update must include the exact current value as a precondition. Core rejects conflicting writes, unknown entity references, settled-day changes, audit/legacy changes, and control-plane changes.
+Every replacement or state update must include the exact current value as a precondition. Core rejects conflicting writes, unknown entity references, settled-day changes, audit changes, and control-plane changes.
 
 Schema:
 { "version": 2, "operations": [
@@ -116,21 +96,19 @@ export function createInitWorkspace(runtimeRoot: string, id: string, config: Cal
 }
 export function createPlanningWorkspace(runtimeRoot: string, id: string, world: PublishedWorld, config: CallerConfig) {
   const day = nextDay(world.commit.control.lastSettledDay);
-  const rich = world.profileVersion === 1;
-  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'planning', thought: PLANNING_THOUGHT, sendFinal: PLANNING_SEND_FINAL, submitFinal: rich ? PLANNING_SUBMIT_FINAL_V2 : PLANNING_SUBMIT_FINAL, submitMarker: `[DAYLOOM_PLANNING_SUBMIT_V${rich ? 2 : 1}]\nFinalize this Session now using the Core Planning submission Final contract.`, pinned: world, day });
+  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'planning', thought: PLANNING_THOUGHT, sendFinal: PLANNING_SEND_FINAL, submitFinal: PLANNING_SUBMIT_FINAL_V2, submitMarker: '[DAYLOOM_PLANNING_SUBMIT_V2]\nFinalize this Session now using the Core Planning submission Final contract.', pinned: world, day });
 }
 export function createReviseWorkspace(runtimeRoot: string, id: string, world: PublishedWorld, config: CallerConfig) {
-  const rich = world.profileVersion === 1;
-  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'revise', thought: REVISE_THOUGHT, sendFinal: REVISE_SEND_FINAL, submitFinal: rich ? REVISE_SUBMIT_FINAL_V2 : REVISE_SUBMIT_FINAL, submitMarker: `[DAYLOOM_REVISE_SUBMIT_V${rich ? 2 : 1}]\nFinalize this Session now using the Core Revise submission Final contract.`, pinned: world });
+  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'revise', thought: REVISE_THOUGHT, sendFinal: REVISE_SEND_FINAL, submitFinal: REVISE_SUBMIT_FINAL_V2, submitMarker: '[DAYLOOM_REVISE_SUBMIT_V2]\nFinalize this Session now using the Core Revise submission Final contract.', pinned: world });
 }
 export function buildLifecycleContext(session: CoreSession): string | null {
   if (session.kind === 'init') return null;
   const world = session.pinned!, marker = session.kind === 'planning' ? 'PLANNING' : 'REVISE';
-  let value = `[DAYLOOM_${marker}_CONTEXT_V0]\n\n[WORLD]\nworld_id: ${world.manifest.worldId}\n`;
+  let value = `[DAYLOOM_${marker}_CONTEXT_V1]\n\n[WORLD]\nworld_id: ${world.manifest.worldId}\n`;
   if (session.kind === 'planning') value += `target_day: ${session.day}\n`;
   value += `last_settled_day: ${world.commit.control.lastSettledDay ?? '<none>'}\n\n[CANON_PREMISE]\n${world.canon.premise}\n\n[CANON_RULES]\n${world.canon.rules}\n\n[CANON_STYLE]\n${world.canon.style}\n\n[CANON_USER_ROLE]\n${world.canon.userRole}`;
   if (world.lastSettledSummary !== null) value += `\n\n[LAST_SETTLED_SUMMARY]\n${world.lastSettledSummary}`;
-  if (world.profileV1 !== null) value += `\n\n[WORLD_PROFILE_V1]\n${JSON.stringify({ state: world.profileV1.state, characterIds: world.profileV1.characterIds, locationIds: world.profileV1.locationIds, arcIds: world.profileV1.arcIds }, null, 2)}\n\n[VERIFIED_WORLD_DOCUMENTS]\n${formatContextDocuments(world.profileV1.contextDocuments)}`;
+  value += `\n\n[WORLD_PROFILE_V1]\n${JSON.stringify({ state: world.profileV1.state, characterIds: world.profileV1.characterIds, locationIds: world.profileV1.locationIds, arcIds: world.profileV1.arcIds }, null, 2)}\n\n[VERIFIED_WORLD_DOCUMENTS]\n${formatContextDocuments(world.profileV1.contextDocuments)}`;
   return value;
 }
 

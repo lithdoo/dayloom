@@ -6,7 +6,7 @@ import type { WorldChange } from '../publish';
 import { markdown, yamlDocument } from './encode';
 
 export function buildSettlementMutationV1(world: PublishedWorld, events: readonly PersistedEventV1[]): WorldChange[] {
-  if (world.profileV1 === null || world.commit.control.day === null || events.length === 0) throw new Error('Profile V1 settlement input is invalid.');
+  if (world.commit.control.day === null || events.length === 0) throw new Error('Profile V1 settlement input is invalid.');
   const documents = world.profileV1.contextDocuments, structured = new Map<string, Record<string, unknown>>(), changed = new Set<string>(), writes = new Set<string>();
   const object = (path: string) => { let value = structured.get(path); if (!value) { value = parseYamlObjectV1(required(documents, path), path); structured.set(path, value); } return value; };
   const applied: DomainPatchV1[] = [];

@@ -5,7 +5,7 @@
 
 `@dayloom/core` 是 Dayloom 唯一产品运行时，拥有 World 生命周期、会话工作区、子进程、取消、事件投影与 Archive 发布。应用通过 `createDayloomCore({ worldRoot, llmConfigPath })` 创建实例，通过 `getState()` 和 `capabilities` 驱动界面，通过 `subscribe()` 接收 `CoreEvent` v1，并在退出时调用 `dispose()`。
 
-主入口只导出应用契约；旧 World 导入位于 `@dayloom/core/migration`。内部 Promptpile、World reader、submission builder 和测试 driver 不属于公开 API。
+主入口只导出应用契约。内部 Promptpile、World reader、submission builder 和测试 driver 不属于公开 API。运行时只接受 Archive V2 + World Profile V1 与 Submission V2。
 
 ```bash
 npm run build -w @dayloom/core

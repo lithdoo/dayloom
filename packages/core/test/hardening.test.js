@@ -5,9 +5,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { createDayloomCoreInternal } = require('../dist/core');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
-const { publishPlay } = require('../dist/world/publish');
+const { publishMutation } = require('../dist/world/publish');
 const { classifyWorld } = require('../dist/world/read');
 const { archiveFixture, FakeRunner, eventStream } = require('./helpers');
+const currentPlaySubmission = JSON.stringify({ version: 2, events: [{ beatId: 'beat1', title: 'A day', locationId: null, participantIds: [], scene: 'The day unfolds.', dialogue: '', userAction: 'Act', result: { summary: 'A day', learnedFacts: [], timeAdvanced: null, completedBeatIds: ['beat1'], skippedBeatIds: [], endDay: true }, proposedPatch: [] }] });
 
 test('a second mutation returns BUSY immediately', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup); let release;
@@ -43,7 +44,7 @@ test('listener-reentrant dispose from running state prevents a later child from 
 });
 test('post-publication workspace cleanup failure keeps truth successful and Session terminal', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = currentPlaySubmission;
   const remove = async (target, options) => {
     if (target.includes(`${path.sep}sessions${path.sep}`)) throw new Error('session cleanup denied');
     return fs.promises.rm(target, options);
@@ -123,15 +124,15 @@ test('recovery classification failure cannot reject a public operation', async (
   const fixture = archiveFixture(); t.after(fixture.cleanup); let classifications = 0;
   const classifier = async (root) => { if (classifications++ === 0) return classifyWorld(root); throw new Error('recovery read failed'); };
   const publisher = async () => { throw Object.assign(new Error('disk failed'), { code: 'EIO' }); };
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
-  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), publisher, classifier }); t.after(() => core.dispose());
+  const submission = currentPlaySubmission;
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), mutationPublisher: publisher, classifier }); t.after(() => core.dispose());
   await core.startSession('play');
   assert.deepEqual(await core.submit(), { ok: false, error: { code: 'INTERNAL_ERROR', message: 'disk failed' } });
 });
 test('core-concurrent-init-conflict-refreshes-winning-world', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-concurrent-init-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const config = path.join(root, 'llm.toml'); fs.writeFileSync(config, '[[llm_api]]\nname="test"\nmodel="test"\n');
-  const submission = JSON.stringify({ version: 1, title: 'Winning World', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' } });
+  const submission = JSON.stringify({ version: 2, title: 'Winning World', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' }, worldState: { status: 'active', elapsed: null, variables: {} }, characters: [], locations: [], arcs: [], initialFacts: [], unresolvedThreads: [], storySeeds: [] });
   const boundaries = await resolvePackagedBoundaries();
   const winner = await createDayloomCoreInternal({ worldRoot: root, llmConfigPath: config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => winner.dispose());
   const stale = await createDayloomCoreInternal({ worldRoot: root, llmConfigPath: config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => stale.dispose());
@@ -145,7 +146,7 @@ test('core-concurrent-init-conflict-refreshes-winning-world', async (t) => {
 });
 test('core-stale-play-conflict-refreshes-latest-world', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = currentPlaySubmission;
   const boundaries = await resolvePackagedBoundaries();
   const winner = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => winner.dispose());
   const stale = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries }); t.after(() => stale.dispose());
@@ -159,9 +160,9 @@ test('core-stale-play-conflict-refreshes-latest-world', async (t) => {
 });
 test('generic publication I/O failure is INTERNAL_ERROR, not AGENT_FAILED', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = currentPlaySubmission;
   const publisher = async () => { const error = new Error('disk I/O failed'); error.code = 'EIO'; throw error; };
-  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), publisher }); t.after(() => core.dispose());
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), mutationPublisher: publisher }); t.after(() => core.dispose());
   await core.startSession('play'); const result = await core.submit(); assert.equal(result.error.code, 'INTERNAL_ERROR'); assert.equal(core.getState().session, null);
 });
 test('disposed planned Core exposes no capabilities', async (t) => {
@@ -187,16 +188,16 @@ test('Core subscriber receives output.delta before send resolves', async (t) => 
 });
 test('post-current diagnostic failure remains a successful visible publication', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
-  const publisher = (root, pinned, day, documents) => publishPlay(root, pinned, day, documents, { writeDiagnostic: async () => { throw new Error('diagnostic failed'); } });
-  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), publisher }); t.after(() => core.dispose());
+  const submission = currentPlaySubmission;
+  const publisher = (root, input) => publishMutation(root, input, { writeDiagnostic: async () => { throw new Error('diagnostic failed'); } });
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries(), mutationPublisher: publisher }); t.after(() => core.dispose());
   await core.startSession('play'); assert.deepEqual(await core.submit(), { ok: true }); assert.equal(core.getState().world.revision, 2);
   const reloaded = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner(), boundaries: await resolvePackagedBoundaries() }); t.after(() => reloaded.dispose());
   assert.equal(reloaded.getState().world.revision, 2); assert.equal(reloaded.getState().world.phase, 'awaiting-settle');
 });
 test('publish lock conflicts fail closed and leave current unchanged', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = currentPlaySubmission;
   const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner: new FakeRunner([submission]), boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
   await core.startSession('play'); const before = fs.readFileSync(path.join(fixture.root, 'current.json'), 'utf8');
   fs.mkdirSync(path.join(fixture.root, '.locks'), { recursive: true }); fs.writeFileSync(path.join(fixture.root, '.locks', 'publish.lock'), 'held');
@@ -210,7 +211,7 @@ test('cancel leaves World unchanged and invalid input preserves ready Session', 
 });
 test('a changed pinned base conflicts before publication', async (t) => {
   const fixture = archiveFixture(); t.after(fixture.cleanup);
-  const submission = JSON.stringify({ version: 1, summary: 'A day', beats: [{ id: 'beat1', status: 'completed', eventId: null }], events: [] });
+  const submission = currentPlaySubmission;
   const runner = new FakeRunner([submission]); const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries() }); t.after(() => core.dispose());
   await core.startSession('play');
   const currentPath = path.join(fixture.root, 'current.json'), before = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
@@ -299,7 +300,7 @@ test('submit compression failure never starts React or publication', async (t) =
     reactCalls += 1; return { code: 1, stdout: '', stderr: 'must not run' };
   } };
   const publisher = async () => { publications += 1; throw new Error('must not publish'); };
-  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries(), publisher }); t.after(() => core.dispose());
+  const core = await createDayloomCoreInternal({ worldRoot: fixture.root, llmConfigPath: fixture.config }, { runner, boundaries: await resolvePackagedBoundaries(), mutationPublisher: publisher }); t.after(() => core.dispose());
   await core.startSession('play'); const result = await core.submit();
   assert.equal(result.error.code, 'CONVERSATION_FAILED'); assert.equal(reactCalls, 0); assert.equal(publications, 0); assert.equal(core.getState().session, null);
 });

@@ -5,7 +5,6 @@ import { parseYamlObjectV1 } from '../profile/yaml';
 import { markdown, yamlDocument } from './encode';
 
 export function buildReviseMutationV1(world: PublishedWorld, submission: ReviseSubmissionV2): WorldChange[] {
-  if (world.profileV1 === null) throw new Error('Profile V1 revise requires Profile V1.');
   const docs = world.profileV1.contextDocuments, objects = new Map<string, Record<string, unknown>>(), changed = new Set<string>(), text = new Map<string, string>(), targets = new Set<string>();
   const allocated = { character: [...world.profileV1.characterIds], location: [...world.profileV1.locationIds], arc: [...world.profileV1.arcIds] };
   const object = (path: string) => { let value = objects.get(path); if (!value) { value = parseYamlObjectV1(required(docs, path), path); objects.set(path, value); } return value; };
@@ -28,7 +27,7 @@ function applyState(world: PublishedWorld, op: DomainPatchV1, object: (path: str
   requireId(world, 'arc', op.arcId); const path = `arcs/${op.arcId}/state.yaml`, doc = object(path); expect(doc.stage, op.expected); doc.stage = op.value; changed.add(path);
 }
 function targetOf(op: ReviseSubmissionV2['operations'][number]): string { return JSON.stringify(op.op === 'set-world-variable' ? [op.op, op.key] : op.op === 'replace-canon' ? [op.op, op.field] : op.op === 'add-story-seed' ? [op.op, op.text] : op.op === 'remove-story-seed' ? ['story-seed', op.seedId] : op.op === 'create-character' || op.op === 'create-location' || op.op === 'create-arc' ? [op.op] : 'characterId' in op ? [op.op, op.characterId] : 'locationId' in op ? [op.op, op.locationId] : [op.op, op.arcId]); }
-function requireId(world: PublishedWorld, kind: string, id: string) { const ids = kind === 'character' ? world.profileV1!.characterIds : kind === 'location' ? world.profileV1!.locationIds : world.profileV1!.arcIds; if (!ids.includes(id)) throw new Error(`Revise ${kind} reference is invalid.`); }
+function requireId(world: PublishedWorld, kind: string, id: string) { const ids = kind === 'character' ? world.profileV1.characterIds : kind === 'location' ? world.profileV1.locationIds : world.profileV1.arcIds; if (!ids.includes(id)) throw new Error(`Revise ${kind} reference is invalid.`); }
 function required(docs: Readonly<Record<string, string>>, path: string) { const value = docs[path]; if (value === undefined) throw new Error(`Revise document is missing: ${path}`); return value; }
 function expect(actual: unknown, expected: unknown) { if (!Object.is(actual, expected)) throw new Error('Revise precondition failed.'); }
 function array(value: unknown): unknown[] { if (!Array.isArray(value)) throw new Error('Revise collection is invalid.'); return value; }

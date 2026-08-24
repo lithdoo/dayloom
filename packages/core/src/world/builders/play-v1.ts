@@ -4,7 +4,7 @@ import type { WorldChange } from '../publish';
 import { jsonDocument, markdown, yamlDocument } from './encode';
 
 export function buildPlayMutationV1(world: PublishedWorld, submission: PlaySubmissionV2): WorldChange[] {
-  if (world.profileV1 === null || world.playContext === null || !('version' in world.playContext.plan)) throw new Error('PlaySubmissionV2 requires a Profile V1 plan.');
+  if (world.playContext === null) throw new Error('PlaySubmissionV2 requires a planned World.');
   const plan = world.playContext.plan as PlayPlanV1, beatIds = new Set(plan.beats.map((beat) => beat.id)), characters = new Set(world.profileV1.characterIds), locations = new Set(world.profileV1.locationIds), arcs = new Set(world.profileV1.arcIds);
   const changes: WorldChange[] = [], eventIds = submission.events.map((_, index) => `event${index + 1}`), timeline: string[] = [];
   for (const [index, event] of submission.events.entries()) {

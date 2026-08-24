@@ -5,15 +5,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { createDayloomCoreInternal } = require('../dist/core');
 const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
-const { classifyWorld, nextDay, parsePersistedPlayV1 } = require('../dist/world/read');
+const { classifyWorld, nextDay } = require('../dist/world/read');
 const { publishMutation } = require('../dist/world/publish');
-const { parseInitSubmissionV1, parsePlanningSubmissionV1, parseReviseSubmissionV1 } = require('../dist/session/submission');
+const { parseInitSubmissionV2, parsePlanningSubmissionV2, parseReviseSubmissionV2 } = require('../dist/session/submission-v2');
+const { buildInitMutationV1 } = require('../dist/world/builders/init');
 const { archiveFixture, FakeRunner } = require('./helpers');
 
-const init = JSON.stringify({ version: 1, title: '  New World  ', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' } });
-const planning = (intent = 'Day intent') => JSON.stringify({ version: 1, intent, beats: [{ intent: 'Begin' }] });
-const play = JSON.stringify({ version: 1, summary: 'Day summary', beats: [{ id: 'beat1', status: 'completed', eventId: 'event1' }], events: [{ id: 'event1', beatId: 'beat1', userInput: 'Act', assistantOutput: 'Done' }] });
-const revise = JSON.stringify({ version: 1, canon: { premise: 'Revised', rules: '', style: 'Style 2', userRole: 'User 2' } });
+const init = JSON.stringify({ version: 2, title: '  New World  ', canon: { premise: 'Premise', rules: '', style: 'Style', userRole: 'User' }, worldState: { status: 'active', elapsed: null, variables: {} }, characters: [], locations: [], arcs: [], initialFacts: [], unresolvedThreads: [], storySeeds: [] });
+const planning = (intent = 'Day intent') => JSON.stringify({ version: 2, intent, knownContext: [], constraints: [], openQuestions: [], maxEvents: 1, beats: [{ key: 'begin', intent: 'Begin', priority: 'required', dependsOn: [] }] });
+const play = JSON.stringify({ version: 2, events: [{ beatId: 'beat1', title: 'Begin', locationId: null, participantIds: [], scene: 'The day begins.', dialogue: '', userAction: 'Act', result: { summary: 'Day summary', learnedFacts: [], timeAdvanced: null, completedBeatIds: ['beat1'], skippedBeatIds: [], endDay: true }, proposedPatch: [] }] });
+const revise = JSON.stringify({ version: 2, operations: [{ op: 'replace-canon', field: 'premise', expected: 'Premise', value: 'Revised' }] });
 
 async function emptyCore(t, finals) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-completion-'));
@@ -35,10 +36,10 @@ test('empty and housekeeping-only roots are uninitialized while durable residue 
 });
 
 test('submission parsers are exact and Core owns day and beat identity', () => {
-  assert.equal(parseInitSubmissionV1(init).title, '  New World  ');
-  assert.deepEqual(parsePlanningSubmissionV1(planning()).beats, [{ intent: 'Begin' }]);
-  assert.equal(parseReviseSubmissionV1(revise).canon.premise, 'Revised');
-  assert.throws(() => parsePlanningSubmissionV1(JSON.stringify({ version: 1, intent: 'x', beats: [], day: 'day9' })));
+  assert.equal(parseInitSubmissionV2(init).title, '  New World  ');
+  assert.equal(parsePlanningSubmissionV2(planning()).beats[0].intent, 'Begin');
+  assert.equal(parseReviseSubmissionV2(revise).operations[0].value, 'Revised');
+  assert.throws(() => parsePlanningSubmissionV2(JSON.stringify({ version: 1, intent: 'x', beats: [] })));
   assert.equal(nextDay(null), 'day1'); assert.equal(nextDay('day1'), 'day2');
   assert.equal(nextDay('day9007199254740992'), 'day9007199254740993');
 });
@@ -65,21 +66,13 @@ test('publication primitive rejects duplicate business paths before filesystem m
 
 test('failed initial publication cleans its own pre-current durable files back to uninitialized', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-init-cleanup-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const markdown = (documentPath, value) => ({ op: 'put', path: documentPath, mediaType: 'text/markdown', bytes: Buffer.from(value) });
   await assert.rejects(() => publishMutation(root, {
     operationType: 'init', base: null, initialManifest: { worldId: 'world1', title: 'World' },
-    changes: [markdown('canon/premise.md', 'p'), markdown('canon/rules.md', 'r'), markdown('canon/style.md', 's'), markdown('canon/user-role.md', 'u')],
+    changes: buildInitMutationV1(parseInitSubmissionV2(init)),
     control: { phase: 'idle', day: null, lastSettledDay: null },
   }, { writeCurrent: async () => { throw new Error('current write failed'); } }), /current write failed/);
   assert.equal((await classifyWorld(root)).state.status, 'uninitialized');
   assert.equal(fs.existsSync(path.join(root, 'manifest.json')), false);
-});
-
-test('PersistedPlayV1 parser enforces pinned plan relations', () => {
-  const plan = { intent: 'x', beats: [{ id: 'beat1', intent: 'begin' }] };
-  const valid = { version: 1, beats: [{ id: 'beat1', intent: 'begin', status: 'completed', eventId: 'e1' }], events: [{ id: 'e1', beatId: 'beat1', userInput: 'u', assistantOutput: 'a' }] };
-  assert.equal(parsePersistedPlayV1(valid, plan).events[0].id, 'e1');
-  assert.throws(() => parsePersistedPlayV1({ ...valid, beats: [{ ...valid.beats[0], intent: 'changed' }] }, plan));
 });
 
 test('full headless lifecycle reaches day2 planned without a stable dead end', async (t) => {

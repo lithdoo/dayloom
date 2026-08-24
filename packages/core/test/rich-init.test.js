@@ -41,7 +41,6 @@ test('Rich Init V2 publishes a complete restart-safe World Profile V1', async (t
   const restarted = await createDayloomCoreInternal({ worldRoot: root, llmConfigPath: config }, { runner: new FakeRunner(), boundaries: await resolvePackagedBoundaries() });
   t.after(() => restarted.dispose());
   const published = await readPublishedWorld(root);
-  assert.equal(published.profileVersion, 1);
   assert.deepEqual(published.profileV1.characterIds, ['character1', 'character2']);
   assert.deepEqual(published.profileV1.locationIds, ['location1', 'location2']);
   assert.deepEqual(published.profileV1.arcIds, ['arc1']);

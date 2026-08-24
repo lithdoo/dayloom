@@ -21,5 +21,5 @@
 
 ## 历史计划
 
-已完成的 Core 重构计划和实施 checklist 保存在 GitHub `doc/archive/plans/`，不作为现行契约发布。
+已完成的 Core 重构计划和实施 checklist 由 Git 历史保存，不作为现行契约发布。
 

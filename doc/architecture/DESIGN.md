@@ -19,4 +19,4 @@ Dayloom 只有一条产品依赖链：TUI 依赖 Core 的应用契约，Core 依
 @dayloom/archive-protocol
 ```
 
-TUI 不解析错误文本决定业务跳转；Core 不拥有终端布局；Archive Protocol 不依赖产品业务。迁移工具是 Core 的离线子入口，不是第二个运行时。具体契约见 [Core Runtime V1](/contracts/CORE_RUNTIME_V1) 与 [World Profile V1](/contracts/WORLD_PROFILE_V1)。
+TUI 不解析错误文本决定业务跳转；Core 不拥有终端布局；Archive Protocol 不依赖产品业务。具体契约见 [Core Runtime V1](/contracts/CORE_RUNTIME_V1) 与 [World Profile V1](/contracts/WORLD_PROFILE_V1)。

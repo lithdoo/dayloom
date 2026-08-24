@@ -7,7 +7,6 @@ const corePackage = require('../package.json');
 test('public API exports only application contract', () => {
   const api = require('../dist');
   assert.deepEqual(Object.keys(api).sort(), ['CoreInitializationError', 'createDayloomCore']);
-  assert.deepEqual(Object.keys(require('../dist/migration')).sort(), ['migrateLegacyWorldProfileV1']);
 });
 
 test('core pins the frozen promptpile-compress release', () => {

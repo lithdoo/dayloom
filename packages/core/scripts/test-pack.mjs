@@ -20,14 +20,9 @@ try {
   execFileSync('npm', ['install', '--ignore-scripts', '--prefix', consumer, protocolTarball, coreTarball], { stdio: 'inherit', shell: true });
   const smoke = `
     const core = require('@dayloom/core');
-    const migration = require('@dayloom/core/migration');
     if (Object.keys(core).sort().join(',') !== 'CoreInitializationError,createDayloomCore') process.exit(1);
-    if (Object.keys(migration).join(',') !== 'migrateLegacyWorldProfileV1') process.exit(1);
   `;
   execFileSync(process.execPath, ['-e', smoke], { cwd: consumer, stdio: 'inherit' });
-  const cli = join(consumer, 'node_modules', '@dayloom', 'core', 'dist', 'migration', 'cli.js');
-  const help = execFileSync(process.execPath, [cli, '--help'], { cwd: consumer, encoding: 'utf8' });
-  if (!help.includes('dayloom-core archive migrate-world-profile-v1')) throw new Error('Packed migration CLI help is invalid.');
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

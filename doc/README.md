@@ -17,9 +17,4 @@
 - [配置](/reference/CONFIGURATION)
 - [环境变量](/reference/ENVIRONMENT_VARIABLES)
 - [故障排查](/guide/TROUBLESHOOTING)
-- [迁移到正式 Core](/guide/MIGRATION)
-- [1.0.0-beta.1 发布说明](/reference/RELEASE_NOTES_1.0.0-beta.1)
 - [测试概览](/testing/OVERVIEW)
-
-历史设计与已实施计划位于 `doc/archive/`，不构成当前产品契约。
-
