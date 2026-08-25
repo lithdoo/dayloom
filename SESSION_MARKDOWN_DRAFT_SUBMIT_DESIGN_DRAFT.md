@@ -1,9 +1,14 @@
 # Dayloom Session 持久草稿与转换式提交设计
 
-> 状态：Implementation Baseline
+> 状态：FROZEN FOR IMPLEMENTATION (v1)
 > 日期：2026-08-25
 > 范围：`@dayloom/core` 的 Init / Planning / Play / Revise Session
 > 非目标：不修改 Archive V2、World Profile V1、原子发布、Settle 与 abandon 的产品语义
+> 规范契约：`doc/contracts/SESSION_SUBMISSION_V1.md`
+> 指令追踪：`doc/contracts/SESSION_PROMPT_TRACEABILITY_V1.md`
+> 冻结证据：`doc/contracts/SESSION_SUBMISSION_V1_FREEZE_REPORT.md`
+
+本文解释架构动机与端到端设计；精确格式、工具、路径、数值、ID、API、事件和时序以规范契约为准。冻结后，改变依赖、权限、Draft 格式、operation policy、校验权力、资源限制或公开行为必须先显式修订设计与契约。
 
 ## 1. 决策摘要
 
@@ -41,7 +46,7 @@ Dayloom 不再要求模型在 submit 的 Final 中一次性输出 SubmissionV2 J
 2. Draft 持久化，临时 Session、MCP gateway、Candidate 全部可丢弃重建。
 3. Candidate 是本次 operation 的受限 overlay，不是完整 pinned World 的可写副本。
 4. Core 将 pinned World 与 overlay 合成完整候选树；未授权路径永远继承 pinned World。
-5. 程序校验是唯一发布门槛；AI 内容审查只能触发尽力修复，不能绕过或永久阻塞程序校验通过的候选。
+5. 程序校验是唯一发布门槛；AI 内容审查只生成 advisory diagnostics，不修改 Candidate、不阻塞发布，也不提供调用方严格模式。
 6. 所有持久 ID 由 Core 根据 Draft 中显式稳定 key 确定性分配。
 7. 旧 SubmissionV2 的业务约束完整迁移到 Draft lint、转换契约、Candidate validator 和发布策略；旧 JSON 输出格式不迁移。
 8. 四类 Session 走同一条管线，不保留长期双轨实现。
@@ -78,7 +83,8 @@ runtimeRoot/
       gateways/<runtime-id>/
 ```
 
-- `runtimeRoot` 是显式 Core 配置；未提供时默认位于 `worldRoot/.dayloom-runtime`。
+- `runtimeRoot` 是显式 Core 配置；未提供时固定为 `worldRoot/.dayloom-runtime`。
+- 一个规范化 `worldRoot` 同时只允许一个 Core writer；锁获取、同主机失效锁回收和异主机失败语义由规范契约固定。
 - `dispose()` 只删除当前实例的 `transient/<core-instance-id>`，不删除 Draft。
 - Draft 成功发布后生成不可变快照写入 `archived/`，随后清空当前工作 Draft。
 - Candidate、转换 Conversation、修复 Conversation 与 gateway 均为临时资源。
@@ -124,10 +130,10 @@ Conversation 不要求跨进程恢复；恢复后的新 Conversation 以 Draft �
 工具名固定采用 `mcp__<server>__<tool>`。每个运行阶段只导出所需能力：
 
 - Archive：`list_directory`、`directory_tree`、`search_files`、`search_files_content`、`read_file_lines`。
-- Draft：`list_directory`、`read_file_lines`、`write_file`、`edit_file`。
-- Candidate：`list_directory`、`directory_tree`、`read_file_lines`、`write_file`、`edit_file`。
+- Draft：`list_directory`、`read_file_lines`、`write_file`。
+- Candidate：`list_directory`、`directory_tree`、`read_file_lines`、`write_file`。
 
-不导出 `move_file`、压缩包、媒体、目录统计和动态 Roots。当前固定 filesystem provider 没有删除工具，因此第一版 Candidate Overlay 使用声明式删除清单 `deletions.yaml`；只有 Core 解析并校验该文件，AI 无权物理删除 pinned 文件。
+不导出 `edit_file`、`move_file`、压缩包、媒体、目录统计、动态 Roots 或删除工具。四类 AI Session 的 v1 operation 都只需要 put；Revise 的逻辑删除通过重写集合文档表达，物理 Day 删除仍由无 AI 的 abandon 路径拥有。
 
 ### 4.1 写能力边界
 
@@ -260,9 +266,6 @@ ready
       -> validate
           -> repair -> validate       （最多 3 轮）
       -> review
-          -> optional repair
-          -> validate
-          -> final review             （最多 1 次）
       -> diff
       -> publish
   -> success: archive Draft, terminalize Session
@@ -286,13 +289,12 @@ Core 在转换前解析 stable keys，并基于 pinned IDs 分配下一可用 ID
 
 ### 6.3 Candidate Overlay
 
-Candidate 只包含本次 operation 允许新增、替换或删除的文件：
+Candidate 只包含本次 operation 允许新增或替换的文件：
 
 ```text
 candidate/
   files/
     <允许修改的 World 路径>
-  deletions.yaml
   task.json          # Core-owned, read-only
 ```
 
@@ -301,7 +303,6 @@ candidate/
 ```ts
 interface OperationDocumentPolicy {
   mayPut(path: string): boolean;
-  mayDelete(path: string): boolean;
   requiredOutputs: readonly string[];
   preservedNamespaces: readonly string[];
 }
@@ -311,9 +312,8 @@ Core 合成候选树时：
 
 1. 从完整 pinned tree 开始；Init 从空树和 Core 生成的 profile descriptor 开始。
 2. 应用经过策略校验的 overlay puts。
-3. 应用经过策略校验的声明式 deletes。
-4. 追加 Core 确定性生成的审计文件。
-5. 未授权路径原样继承，绝不因 archive-view 未投影而删除。
+3. 追加 Core 确定性生成的审计文件。
+4. 未授权路径原样继承，绝不因 archive-view 未投影而删除。
 
 ### 6.4 转换 AI
 
@@ -376,16 +376,15 @@ interface ValidationIssue {
 
 ```json
 {
-  "blocking": [{"code":"...","paths":["..."],"reason":"...","evidence":"..."}],
-  "advisory": [{"code":"...","paths":["..."],"reason":"..."}]
+  "advisory": [{"code":"...","paths":["..."],"reason":"...","evidence":"..."}]
 }
 ```
 
 审查只检查语义转换质量：遗漏、无来源新增、关系语义矛盾、时间线冲突。它不能修改程序规则，也不能宣布 World 合法。
 
-- 有 blocking：允许一次定点修复，再运行完整程序校验和最终审查；
-- 只有 advisory：记录审计并继续发布；
-- 审查失败、超时或最终仍报告 blocking：记录 diagnostics，但只要程序校验通过，Core 可以发布；调用方可通过配置选择更严格的产品策略，但默认契约保持确定性程序门槛。
+- 审查输出统一降格为 advisory：记录审计并继续发布。
+- 审查不触发 Candidate 修复；只有程序 validator 的 error 可以进入修复循环。
+- 审查失败或超时记录 diagnostics；只要程序校验通过，Core 继续发布。
 
 ### 6.7 发布
 
@@ -526,7 +525,7 @@ audit/sessions/<session-id>/
 
 ## 10. 资源与安全上限
 
-所有限制由 Core 固定，调用者不能通过 LLM 配置覆盖：
+所有限制由 Core 固定，调用者不能通过 LLM 配置覆盖；精确数值只定义在 `SESSION_FILE_LIMITS` 及规范契约中：
 
 - ReAct：每次 run 最多 10 steps；
 - 修复：最多 3 轮；内容审查修复最多 1 轮；
@@ -537,7 +536,7 @@ audit/sessions/<session-id>/
 - gateway 只绑定随机 token 的 loopback；
 - transient 启动时清理同实例孤儿目录，Draft 永不被孤儿清理误删。
 
-具体数值集中在单一 `SESSION_FILE_LIMITS` 常量，并有边界测试，不散落在提示词和实现中。
+`SESSION_FILE_LIMITS` 的 v1 数值已经冻结，提示词只说明行为，不重复数值。
 
 ## 11. 一次性迁移顺序
 

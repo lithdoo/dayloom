@@ -1,7 +1,7 @@
 # Core Runtime V1
 
 **状态**：稳定契约
-**最后核对**：2026-08-24
+**最后核对**：2026-08-25
 
 本文定义 `@dayloom/core` 1.x 的应用边界。公开入口只暴露 `createDayloomCore`、`CoreInitializationError` 以及对应的结果、状态和事件类型。
 
@@ -36,3 +36,9 @@ Core 固定使用 Promptpile React Process Pile v1，并通过 CLI 唯一传入 
 ## 版本边界
 
 Core 只实现当前运行路径，不提供旧格式回退或自动升级。Archive 与 World Profile 的格式边界由 [World Profile V1](./WORLD_PROFILE_V1.md) 定义。深层 `dist/` 导入、内部 Promptpile 适配器和测试构造器不属于公开 API。
+
+## 已冻结的 Session Submission V1 修订
+
+[Session Draft and Submission V1](./SESSION_SUBMISSION_V1.md) 已冻结为下一次 Session 提交实现契约，[指令追踪矩阵](./SESSION_PROMPT_TRACEABILITY_V1.md) 与[冻结报告](./SESSION_SUBMISSION_V1_FREEZE_REPORT.md)构成其验收依据。
+
+该修订只允许一次性全量切换：Init、Planning、Play、Revise 必须同时从 SubmissionV2 Final JSON 切换到持久 Draft 与 Candidate Pipeline，并在同一发布版本中删除旧 parser、builder、submit prompt 与兼容 fixture。实现完成前现行路径保持唯一；实现完成后新路径保持唯一。生产包不得包含可由调用方选择的新旧双轨。

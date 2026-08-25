@@ -15,6 +15,17 @@ inside the projection without revealing a physical Session path. This revision c
 only the executable spelling; provider, capabilities, defaults, containment, and security
 semantics remain frozen and are verified by real packed/runtime tests.
 
+Session authoring compatibility revision (2026-08-25):
+`SESSION_MARKDOWN_DRAFT_SUBMIT_DESIGN_DRAFT.md` and the normative
+`doc/contracts/SESSION_SUBMISSION_V1.md` introduce write-capable Draft and Candidate
+servers as a separate Session File Runtime capability. This explicitly revises the
+post-v1 exclusion in §16 without changing Archive Retrieval v1: the `archive` server,
+pinned projection, five read tools, evidence rules, hook closure, Final guard and
+publication authority remain exactly frozen. Write capability is never added to the
+Archive root; it is confined to separate Core-owned workspace roots, namespaced tools
+and operation-scoped policies. Any implementation that merely sets `ALLOW_WRITE=true`
+on the Archive Retrieval server violates both frozen contracts.
+
 This document is the implementation contract for the first Archive Retrieval release. It replaces the earlier exploratory draft semantics.
 
 After this freeze, implementation may tune local mechanics only when behavior remains equivalent. Changes to the frozen dependencies, authority model, archive visibility, runtime ownership, model-visible capabilities, React loop policy, hook/result contract, final integrity guard, or lifecycle semantics require an explicit design revision rather than an ad-hoc implementation decision.
@@ -1684,7 +1695,9 @@ The following are intentionally excluded from v1:
 - changing the five retrieval capability contract;
 - caller-configurable max-step/tool budgets;
 - Promptpile changes for globally fatal after-hook propagation;
-- write-capable MCP or candidate-file editing.
+- write-capable MCP or candidate-file editing inside Archive Retrieval v1. The later,
+  explicitly revised Session File Runtime contract may mount separate write-capable
+  Draft/Candidate roots; it MUST NOT make the pinned Archive root writable.
 
 Each requires a separate design change after production behavior is measured.
 
