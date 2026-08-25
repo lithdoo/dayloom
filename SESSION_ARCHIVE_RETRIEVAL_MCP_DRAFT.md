@@ -475,7 +475,7 @@ On POSIX create secret-bearing runtime files with owner-only permissions where s
 
 ### 6.6 Gateway identity and port
 
-Gateway is loopback-only on `127.0.0.1`.
+`promptpile-mcp@0.1.0-beta.3` itself binds the gateway to `127.0.0.1`; Dayloom MUST rely on and test that frozen public behavior rather than invent an unsupported `[gateway].host` field.
 
 Token generation:
 
@@ -496,13 +496,12 @@ The bearer token remains required even on loopback.
 
 ### 6.7 Frozen `mcp.toml`
 
-Generate the equivalent of:
+Generate exactly the supported gateway fields:
 
 ```toml
 version = 1
 
 [gateway]
-host = "127.0.0.1"
 port = <selected-port>
 token = "<random-token>"
 
@@ -545,7 +544,7 @@ allowed_tools = [
 ]
 ```
 
-If the installed `promptpile-mcp@0.1.0-beta.3` gateway config does not accept an explicit host field, omit it and rely on its documented loopback-only default. The implementation test MUST prove the bound address is loopback; it must never broaden to `0.0.0.0` to make a test pass.
+Unknown gateway fields MUST NOT be added; the frozen Promptpile MCP config parser rejects them.
 
 ### 6.8 Gateway startup/readiness
 
@@ -557,7 +556,7 @@ process.execPath <promptpileMcpBin> launch --config <mcp.toml>
 
 Do not use the existing wait-for-exit `ProcessRunner` for the long-lived gateway.
 
-Readiness uses one mechanism only: repeatedly invoke public `promptpile-mcp export-tools` through the existing `ProcessRunner` until it succeeds or the startup deadline expires.
+Readiness uses one mechanism only: repeatedly invoke public `promptpile-mcp export-tools --base-url ... --token ... -o <toolsFile>` through the existing `ProcessRunner` until it succeeds or the startup deadline expires.
 
 On success:
 
@@ -659,7 +658,7 @@ If the model somehow emits too many calls or a non-allowed name, do not execute 
 
 ### 7.5 Execution
 
-Invoke:
+Invoke the exact frozen public CLI:
 
 ```text
 process.execPath <promptpileMcpBin>
@@ -667,10 +666,10 @@ process.execPath <promptpileMcpBin>
   --base-url <baseUrl>
   --token <token>
   --input <exact calls file>
-  --request-timeout-ms <execRequestTimeoutMs>
+  --timeout-ms <execRequestTimeoutMs>
 ```
 
-Use the exact public CLI spelling supported by the frozen `promptpile-mcp` package; packed integration tests are authoritative for the flag contract.
+The `--timeout-ms` spelling is part of `promptpile-mcp@0.1.0-beta.3` and is covered by packed integration tests.
 
 ### 7.6 The complete-result invariant
 
