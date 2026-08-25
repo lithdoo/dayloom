@@ -7,6 +7,7 @@ export interface ProcessRunOptions {
   onStdout?: (chunk: string) => void;
   onExtraPipe?: (chunk: string) => void;
   onChild?: (child: ChildProcess) => void;
+  timeoutMs?: number;
 }
 export interface ProcessRunner {
   run(bin: string, args: readonly string[], options?: ProcessRunOptions): Promise<ProcessResult>;
@@ -14,27 +15,45 @@ export interface ProcessRunner {
 export const nodeProcessRunner: ProcessRunner = {
   run(bin, args, options = {}) {
     return new Promise((resolve, reject) => {
+      if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+        reject(new Error('Process timeoutMs must be a positive finite number.'));
+        return;
+      }
       const stdio: 'pipe'[] = options.onExtraPipe ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'];
       const child: ChildProcess = spawn(process.execPath, [bin, ...args], { stdio, windowsHide: true });
-      options.onChild?.(child);
+      let settled = false, callbackError: unknown, timedOut = false;
+      const failCallback = (error: unknown) => {
+        if (callbackError !== undefined || timedOut) return;
+        callbackError = error; child.kill();
+      };
+      try { options.onChild?.(child); } catch (error) { failCallback(error); }
       let stdout = '', stderr = '';
-      let callbackError: unknown;
+      const timer = options.timeoutMs === undefined ? undefined : setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        child.kill();
+      }, options.timeoutMs);
       child.stdout!.setEncoding('utf8').on('data', (chunk: string) => {
         stdout += chunk;
-        if (callbackError !== undefined) return;
-        try { options.onStdout?.(chunk); }
-        catch (error) { callbackError = error; child.kill(); }
+        if (callbackError !== undefined || timedOut) return;
+        try { options.onStdout?.(chunk); } catch (error) { failCallback(error); }
       });
       if (options.onExtraPipe) (child.stdio[3] as Readable).setEncoding('utf8').on('data', (chunk: string) => {
-        if (callbackError !== undefined) return;
-        try { options.onExtraPipe?.(chunk); }
-        catch (error) { callbackError = error; child.kill(); }
+        if (callbackError !== undefined || timedOut) return;
+        try { options.onExtraPipe?.(chunk); } catch (error) { failCallback(error); }
       });
       child.stderr!.setEncoding('utf8').on('data', (chunk: string) => {
         if (stderr.length < 64 * 1024) stderr += chunk.slice(0, 64 * 1024 - stderr.length);
       });
-      child.once('error', reject);
-      child.once('close', (code: number | null) => callbackError === undefined ? resolve({ code, stdout, stderr }) : reject(callbackError));
+      child.once('error', (error) => {
+        if (settled) return; settled = true; if (timer) clearTimeout(timer); reject(error);
+      });
+      child.once('close', (code: number | null) => {
+        if (settled) return; settled = true; if (timer) clearTimeout(timer);
+        if (callbackError !== undefined) reject(callbackError);
+        else if (timedOut) reject(new Error(`Process timed out after ${options.timeoutMs}ms.`));
+        else resolve({ code, stdout, stderr });
+      });
       child.stdin!.end(options.stdin ?? '');
     });
   },

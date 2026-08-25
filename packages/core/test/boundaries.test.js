@@ -27,12 +27,12 @@ test('derived config preserves profiles and owns prompt paths without duplicatin
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-config-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const caller = path.join(root, 'caller.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="profile"\nmodel="m"\n[promptpile]\nllm_api="profile"\nllm_api_temperature=0.3\n');
   const config = await readCallerConfig(caller);
-  const paths = { thought: path.join(root, 'thought.md'), observe: path.join(root, 'observe.md'), tools: path.join(root, 'tools.toml'), sendFinal: path.join(root, 'send.md'), submitFinal: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
+  const paths = { thoughtPrompt: path.join(root, 'thought.md'), observePrompt: path.join(root, 'observe.md'), toolsFile: path.join(root, 'tools.toml'), sendFinalPrompt: path.join(root, 'send.md'), submitFinalPrompt: path.join(root, 'submit.md'), sendConfig: path.join(root, 'send.toml'), submitConfig: path.join(root, 'submit.toml'), summaryConfig: path.join(root, 'summary.toml') };
   await writeDerivedConfigs(config, paths);
   const send = TOML.parse(fs.readFileSync(paths.sendConfig, 'utf8')), submit = TOML.parse(fs.readFileSync(paths.submitConfig, 'utf8'));
   assert.equal(send.llm_api[0].name, 'profile'); assert.equal(send.promptpile.llm_api_temperature, 0.3);
-  assert.deepEqual(send['promptpile-react'], { tools_file: paths.tools, thought_prompt: paths.thought, observe_prompt: paths.observe, final_prompt: paths.sendFinal });
-  assert.equal(submit['promptpile-react'].final_prompt, paths.submitFinal);
+  assert.deepEqual(send['promptpile-react'], { tools_file: paths.toolsFile, thought_prompt: paths.thoughtPrompt, observe_prompt: paths.observePrompt, final_prompt: paths.sendFinalPrompt });
+  assert.equal(submit['promptpile-react'].final_prompt, paths.submitFinalPrompt);
 });
 test('summary config preserves only provider identity and LLM selection', () => {
   const profile = [{ name: 'profile', model: 'model', api_key_env: 'KEY' }];
@@ -193,14 +193,14 @@ test('React invocation keeps the frozen context/output topology and enables no i
   const boundaries = await resolvePackagedBoundaries(), stream = eventStream('ok'); let captured;
   const runner = { run: async (bin, args, options) => { captured = { bin, args, options }; options.onExtraPipe(stream); return { code: 0, stdout: '', stderr: '' }; } };
   await runReact({ runner, reactBin: 'packaged-react', validateProcessPile: boundaries.validateProcessPile, config: 'send.toml', context: 'context-dir', conversation: 'conversation-dir' });
-  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--continue', '--max-step', '1', '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json']);
+  assert.deepEqual(captured.args, ['--config', 'send.toml', '-d', 'context-dir', '--output-dir', 'conversation-dir', '--continue', '--max-step', '10', '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json']);
   assert.equal(captured.args.includes('--input'), false); assert.equal(captured.args.includes('--tools-file'), false); assert.equal(captured.args.includes('--after-hook-path'), false);
 });
 test('architecture guard rejects legacy and deep imports', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-guard-'));
   try {
-    fs.writeFileSync(path.join(root, 'bad.ts'), "import '@dayloom/core';\nimport 'promptpile-react/dist/runtime';\nimport 'promptpile-compress/dist/compress';\n");
+    fs.writeFileSync(path.join(root, 'bad.ts'), "import '@dayloom/core';\nimport 'promptpile-react/dist/runtime';\nimport 'promptpile-compress/dist/compress';\nimport 'promptpile-protocol';\n");
     const result = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'check-architecture.mjs')], { env: { ...process.env, CORE_ARCHITECTURE_ROOT: root }, encoding: 'utf8' });
-    assert.notEqual(result.status, 0); assert.match(result.stderr, /forbidden import @dayloom\/core/); assert.match(result.stderr, /forbidden import promptpile-compress\/dist\/compress/);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /forbidden import @dayloom\/core/); assert.match(result.stderr, /forbidden import promptpile-compress\/dist\/compress/); assert.match(result.stderr, /package root may only be imported by archive-retrieval-artifacts/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

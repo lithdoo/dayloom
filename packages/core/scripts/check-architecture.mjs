@@ -8,7 +8,7 @@ const forbidden = [
   /^@dayloom\/archive-protocol\/(?:src|dist)\//,
   /^promptpile(?:-react)?\/(?:src|dist)\//,
   /^promptpile-compress\/(?:src|dist)\//,
-  /^promptpile-protocol(?:\/|$)/,
+  /^promptpile-protocol\/(?:src|dist)\//,
 ];
 const specifier = /(?:from\s+|import\s*(?:\(|)|require\s*\()\s*['"]([^'"]+)['"]/g;
 
@@ -26,6 +26,7 @@ const violations = [];
 for (const file of await files(root)) {
   const source = await readFile(file, 'utf8');
   for (const match of source.matchAll(specifier)) {
+    if (match[1] === 'promptpile-protocol' && !file.endsWith(`${path.sep}promptpile${path.sep}archive-retrieval-artifacts.ts`)) violations.push(`${file}: promptpile-protocol package root may only be imported by archive-retrieval-artifacts.ts`);
     if (forbidden.some((rule) => rule.test(match[1]))) violations.push(`${file}: forbidden import ${match[1]}`);
     if (file.endsWith(`${path.sep}session${path.sep}lifecycle.ts`) && match[1] === './play') violations.push(`${file}: shared Session policy must not be owned by Play`);
   }

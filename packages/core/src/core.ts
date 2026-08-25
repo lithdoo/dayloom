@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { CoreInitializationError, CoreOperationError, failure, success, type CoreResult } from './errors';
+import { ArchiveRetrievalError, CoreInitializationError, CoreOperationError, failure, success, type CoreResult } from './errors';
 import type { CoreEvent } from './events';
-import { buildState, type CoreSessionKind, type CoreState, type CoreWorldState } from './state';
+import { buildState, type CoreSessionKind, type CoreSessionStatus, type CoreState, type CoreWorldState } from './state';
 import { classifyWorld, type ClassifiedWorld, type PublishedWorld } from './world/read';
 import { publishMutation, type WorldChange } from './world/publish';
 import { resolvePackagedBoundaries, type PackagedBoundaries } from './promptpile/binaries';
@@ -13,6 +13,8 @@ import { readCallerConfig, type CallerConfig } from './promptpile/config';
 import { appendUser, nodeProcessRunner, type ProcessRunner } from './promptpile/conversation';
 import { runCompressedCompletion } from './promptpile/compression';
 import { runReact } from './promptpile/react-runner';
+import { startArchiveRetrievalRuntime, type ArchiveRetrievalRuntime } from './promptpile/archive-retrieval';
+import { materializeArchiveView } from './world/archive-view';
 import { buildContextMessage, createPlayWorkspace } from './session/play';
 import { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } from './session/lifecycle';
 import type { CoreSession } from './session/common';
@@ -39,15 +41,17 @@ export interface DayloomCore {
 }
 interface InternalOptions {
   runner?: ProcessRunner; boundaries?: PackagedBoundaries;
+  retrievalFactory?: typeof startArchiveRetrievalRuntime;
   mutationPublisher?: typeof publishMutation;
   remove?: typeof rm;
   classifier?: typeof classifyWorld;
 }
+interface ActiveSessionRuntime { readonly workspace: CoreSession; readonly retrieval: ArchiveRetrievalRuntime | null }
 class DayloomCoreImpl implements DayloomCore {
   private world: PublishedWorld | null;
   private worldState: CoreWorldState;
-  private session: CoreSession | null = null;
-  private sessionStatus: CoreState['session'] = null;
+  private activeSession: ActiveSessionRuntime | null = null;
+  private sessionPhase: CoreSessionStatus | null = null;
   private mutation = false;
   private disposed = false;
   private activeChild: ChildProcess | null = null;
@@ -63,8 +67,13 @@ class DayloomCoreImpl implements DayloomCore {
     private readonly runner: ProcessRunner, private readonly mutationPublisher: typeof publishMutation,
     private readonly remove: typeof rm,
     private readonly classifier: typeof classifyWorld,
+    private readonly retrievalFactory: typeof startArchiveRetrievalRuntime,
   ) { this.world = classified.published; this.worldState = classified.state; }
-  getState() { return buildState(this.worldState, this.sessionStatus, this.mutation, this.disposed, this.cancelRequestedSessionId); }
+  private workspace(): CoreSession | null { return this.activeSession?.workspace ?? null; }
+  private publicSession(): CoreState['session'] {
+    return this.activeSession && this.sessionPhase ? { id: this.activeSession.workspace.id, kind: this.activeSession.workspace.kind, status: this.sessionPhase } : null;
+  }
+  getState() { return buildState(this.worldState, this.publicSession(), this.mutation, this.disposed, this.cancelRequestedSessionId); }
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: CoreEvent) { if (this.disposed) return; for (const listener of [...this.listeners]) try { listener(event); } catch { /* listener isolation */ } }
   private changed() { this.emit({ type: 'state.changed', state: this.getState() }); }
@@ -102,6 +111,9 @@ class DayloomCoreImpl implements DayloomCore {
         runner: this.runner, reactBin: this.boundaries.reactBin,
         validateProcessPile: this.boundaries.validateProcessPile,
         config, context: session.contextDir, conversation: session.conversationDir,
+        assertBeforeFinal: this.activeSession?.workspace === session && this.activeSession.retrieval
+          ? (workPath) => this.activeSession?.retrieval?.assertReadyForFinal(workPath)
+          : undefined,
         onChild: (started) => { child = started; this.childStarted(started, session.id); },
         observer: {
           workStarted: (workPath) => { if (live()) { operation.workPath = workPath; this.emit({ type: 'work.started', sessionId: session.id, operationId: operation.id, workPath }); } },
@@ -141,6 +153,7 @@ class DayloomCoreImpl implements DayloomCore {
           return failure(code, messageOf(error));
         }
         if (error instanceof CoreOperationError) return failure(error.code, error.message);
+        if (error instanceof ArchiveRetrievalError) return failure('AGENT_FAILED', error.message);
         if (code === 'SUBMISSION_INVALID') return failure('SUBMISSION_INVALID', messageOf(error));
         await this.recoverWorldState();
         return failure('INTERNAL_ERROR', messageOf(error));
@@ -161,26 +174,37 @@ class DayloomCoreImpl implements DayloomCore {
   }
   startSession(kind: CoreSessionKind) { return this.operation(async () => {
     if (!this.canStart(kind)) return failure('NOT_AVAILABLE', `${kind} Session is not available.`);
-    const id = randomUUID(); let session: CoreSession;
+    const id = randomUUID(), sessionRoot = path.join(this.runtimeRoot, 'sessions', id);
+    let session: CoreSession | null = null, retrieval: ArchiveRetrievalRuntime | null = null;
     try {
       if (kind === 'init') session = await createInitWorkspace(this.runtimeRoot, id, this.config);
-      else if (kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config);
-      else if (kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config);
-      else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config);
-    } catch (error) { await this.cleanupSessionRoot(path.join(this.runtimeRoot, 'sessions', id)); return failure('INTERNAL_ERROR', messageOf(error)); }
-    try {
+      else {
+        const archiveView = await materializeArchiveView({ worldRoot: this.worldRoot, sessionRoot, world: this.world! });
+        retrieval = await this.retrievalFactory({ sessionId: id, sessionRoot, archiveView, promptpileMcpBin: this.boundaries.promptpileMcpBin, filesystemMcp: this.boundaries.filesystemMcp, runner: this.runner });
+        if (kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config, retrieval.binding);
+        else if (kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config, retrieval.binding);
+        else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config, retrieval.binding);
+      }
       const context = kind === 'play' ? buildContextMessage(this.world!) : buildLifecycleContext(session);
       if (context !== null) await this.appendConversation(session.contextDir, context);
-      if (this.disposed) { await this.cleanupSessionRoot(session.root); return failure('DISPOSED', 'Core is disposed.'); }
-      this.session = session; this.sessionStatus = { id, kind, status: 'ready' }; return success();
-    } catch (error) { await this.cleanupSessionRoot(session.root); return failure('CONVERSATION_FAILED', messageOf(error)); }
+      if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
+      this.activeSession = Object.freeze({ workspace: session, retrieval }); this.sessionPhase = 'ready'; return success();
+    } catch (error) {
+      if (retrieval) await retrieval.close().catch(() => undefined);
+      await this.cleanupSessionRoot(session?.root ?? sessionRoot);
+      if (error instanceof ArchiveRetrievalError) return failure('AGENT_FAILED', error.message);
+      if (error instanceof CoreOperationError) return failure(error.code, error.message);
+      return failure(session ? 'CONVERSATION_FAILED' : 'INTERNAL_ERROR', messageOf(error));
+    }
   }); }
   send(text: string) { return this.operation(async () => {
-    if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'send is not available.');
+    const active = this.activeSession;
+    if (!active || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'send is not available.');
     if (typeof text !== 'string' || text.trim() === '') return failure('INVALID_INPUT', 'Input must be non-empty.');
-    const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'running' }; this.changed();
+    const session = active.workspace; this.sessionPhase = 'running'; this.changed();
     try {
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
+      active.retrieval?.assertHealthy();
       try { await this.appendConversation(session.conversationDir, text, session.id); }
       catch (error) {
         if (this.isCancelRequested(session)) return this.cancelledResult();
@@ -190,17 +214,19 @@ class DayloomCoreImpl implements DayloomCore {
       await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig));
       if (this.isCancelRequested(session)) return this.cancelledResult();
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      this.sessionStatus = { id: session.id, kind: session.kind, status: 'ready' }; return success();
+      this.sessionPhase = 'ready'; return success();
     } catch (error) {
       if (this.isCancelRequested(session)) return this.cancelledResult();
       await this.terminalize(session); throw error;
     }
   }); }
   submit() { return this.operation(async () => {
-    if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
-    const session = this.session; this.sessionStatus = { ...this.sessionStatus, status: 'submitting' }; this.changed();
+    const active = this.activeSession;
+    if (!active || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
+    const session = active.workspace; this.sessionPhase = 'submitting'; this.changed();
     try {
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
+      active.retrieval?.assertHealthy();
       try { await this.appendConversation(session.conversationDir, session.submitMarker); }
       catch (error) { throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error)); }
       const final = await this.compressAndComplete(session, () => this.runSessionReact(session, session.submitConfig));
@@ -213,21 +239,22 @@ class DayloomCoreImpl implements DayloomCore {
   }); }
   cancel(): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
-    const session = this.session;
+    const session = this.workspace();
     if (session && this.cancelRequestedSessionId === session.id && this.interruptCancelPromise) {
       return this.interruptCancelPromise;
     }
-    if (session && this.sessionStatus?.id === session.id && this.sessionStatus.status === 'running') {
+    if (session && this.sessionPhase === 'running') {
       return this.beginInterruptCancel(session);
     }
     return this.operation(async () => {
-      if (!this.session || this.sessionStatus?.status !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
-      const cleanupError = await this.terminalize(this.session);
+      const current = this.workspace();
+      if (!current || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
+      const cleanupError = await this.terminalize(current);
       return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
     });
   }
   settle() { return this.operation(async () => {
-    if (!this.world || this.worldState.status !== 'published' || this.session !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
+    if (!this.world || this.worldState.status !== 'published' || this.activeSession !== null || this.world.commit.control.phase !== 'awaiting-settle' || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'settle is not available.');
     const base = this.world, day = base.commit.control.day as string;
     let changes: WorldChange[] = [];
     if (base.tree.entries.some((entry) => entry.path === `days/${day}/play-index.json`)) {
@@ -243,7 +270,7 @@ class DayloomCoreImpl implements DayloomCore {
     this.installPublished(published); return success();
   }); }
   abandonDay() { return this.operation(async () => {
-    if (!this.world || this.worldState.status !== 'published' || this.session !== null || !['planned', 'awaiting-settle'].includes(this.world.commit.control.phase) || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'abandonDay is not available.');
+    if (!this.world || this.worldState.status !== 'published' || this.activeSession !== null || !['planned', 'awaiting-settle'].includes(this.world.commit.control.phase) || this.world.commit.control.day === null) return failure('NOT_AVAILABLE', 'abandonDay is not available.');
     const base = this.world, day = base.commit.control.day;
     const paths = base.tree.entries.map((entry) => entry.path).filter((candidate) => candidate.startsWith(`days/${day}/`));
     const published = await this.mutationPublisher(this.worldRoot, { operationType: 'abandon-day', base, changes: paths.map((documentPath) => ({ op: 'delete' as const, path: documentPath })), control: { phase: 'idle', day: null, lastSettledDay: base.commit.control.lastSettledDay } });
@@ -272,7 +299,7 @@ class DayloomCoreImpl implements DayloomCore {
     return this.mutationPublisher(this.worldRoot, { operationType: 'revise', base: session.pinned!, changes, control: { ...session.pinned!.commit.control } });
   }
   private canStart(kind: CoreSessionKind): boolean {
-    if (this.session !== null) return false;
+    if (this.activeSession !== null) return false;
     if (this.worldState.status === 'uninitialized') return kind === 'init';
     if (this.worldState.status !== 'published') return false;
     if (this.worldState.phase === 'idle') return kind === 'planning' || kind === 'revise';
@@ -308,8 +335,12 @@ class DayloomCoreImpl implements DayloomCore {
     return cancelPromise;
   }
   private async terminalize(session: CoreSession): Promise<Error | null> {
-    if (this.session === session) { this.session = null; this.sessionStatus = null; this.changed(); }
-    return this.cleanupSessionRoot(session.root);
+    const active = this.activeSession?.workspace === session ? this.activeSession : null;
+    if (active) { this.activeSession = null; this.sessionPhase = null; this.changed(); }
+    let first: Error | null = null;
+    if (active?.retrieval) try { await active.retrieval.close(); } catch (error) { first = error instanceof Error ? error : new Error('Could not close Archive retrieval runtime.'); }
+    const cleanup = await this.cleanupSessionRoot(session.root);
+    return first ?? cleanup;
   }
   private async cleanupSessionRoot(root: string): Promise<Error | null> {
     try { await this.remove(root, { recursive: true, force: true }); return null; }
@@ -323,7 +354,9 @@ class DayloomCoreImpl implements DayloomCore {
       const operation = this.currentOperationDone;
       if (operation) await operation;
       if (interruptCancel) await interruptCancel;
-      this.activeChild = null; this.session = null; this.sessionStatus = null;
+      this.activeChild = null;
+      const active = this.activeSession; this.activeSession = null; this.sessionPhase = null;
+      if (active?.retrieval) await active.retrieval.close().catch(() => undefined);
       await this.remove(this.runtimeRoot, { recursive: true, force: true });
     })();
     return this.disposal;
@@ -344,6 +377,16 @@ export async function createDayloomCoreInternal(options: CreateDayloomCoreOption
     const classifier = internal.classifier ?? classifyWorld;
     const classified = await classifier(worldRoot), runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-core-'));
     await mkdir(path.join(runtimeRoot, 'sessions'));
-    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier);
+    // Internal runner injection is the existing unit-test seam. Keep those tests hermetic;
+    // production and uninjected integration paths always start the real pinned runtime.
+    const retrievalFactory = internal.retrievalFactory ?? (internal.runner ? startTestArchiveRetrievalRuntime : startArchiveRetrievalRuntime);
+    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier, retrievalFactory);
   } catch (error) { throw new CoreInitializationError('INTERNAL_ERROR', 'Could not initialize Core runtime.', { cause: error }); }
+}
+
+async function startTestArchiveRetrievalRuntime(input: Parameters<typeof startArchiveRetrievalRuntime>[0]): Promise<ArchiveRetrievalRuntime> {
+  const retrieval = path.join(input.sessionRoot, 'retrieval'); await mkdir(retrieval, { recursive: true });
+  const toolsFile = path.join(retrieval, 'tools.toml'), afterHookPath = path.join(retrieval, process.platform === 'win32' ? 'after-hook.cmd' : 'after-hook.sh');
+  await Promise.all([writeFile(toolsFile, 'tools = []\n'), writeFile(afterHookPath, process.platform === 'win32' ? '@exit /b 0\r\n' : '#!/bin/sh\nexit 0\n')]);
+  return Object.freeze({ binding: Object.freeze({ toolsFile, afterHookPath }), assertHealthy() {}, assertReadyForFinal() {}, async close() {} });
 }

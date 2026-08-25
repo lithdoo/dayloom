@@ -17,10 +17,22 @@ try {
   const coreTarball = pack(coreRoot);
   const consumer = join(temporary, 'consumer');
   await writeFile(join(temporary, 'package.json'), '{"private":true}\n');
-  execFileSync('npm', ['install', '--ignore-scripts', '--prefix', consumer, protocolTarball, coreTarball], { stdio: 'inherit', shell: true });
+  execFileSync('npm', ['install', '--prefix', consumer, protocolTarball, coreTarball], { stdio: 'inherit', shell: true });
   const smoke = `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const { execFileSync } = require('node:child_process');
     const core = require('@dayloom/core');
     if (Object.keys(core).sort().join(',') !== 'CoreInitializationError,createDayloomCore') process.exit(1);
+    const dist = path.dirname(require.resolve('@dayloom/core'));
+    const { resolvePackagedBoundaries } = require(path.join(dist, 'promptpile', 'binaries.js'));
+    resolvePackagedBoundaries().then((boundaries) => {
+      for (const target of [boundaries.promptpileBin, boundaries.reactBin, boundaries.promptpileMcpBin, ...boundaries.filesystemMcp.argsPrefix]) {
+        if (!path.isAbsolute(target) || !fs.statSync(target).isFile()) process.exit(2);
+      }
+      execFileSync(process.execPath, [boundaries.promptpileMcpBin, '--version'], { stdio: 'inherit' });
+      execFileSync(boundaries.filesystemMcp.command, [...boundaries.filesystemMcp.argsPrefix, '--version'], { stdio: 'inherit' });
+    }).catch((error) => { console.error(error); process.exit(3); });
   `;
   execFileSync(process.execPath, ['-e', smoke], { cwd: consumer, stdio: 'inherit' });
 } finally {

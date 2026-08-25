@@ -32,9 +32,10 @@ export interface RunReactInput {
   conversation: string;
   observer?: ReactProcessObserver;
   onChild?: (child: ChildProcess) => void;
+  assertBeforeFinal?: (workPath: string) => void;
 }
 
-const REACT_MAX_STEPS = 1;
+const REACT_MAX_STEPS = 10;
 
 type ReactProtocolErrorCode = 'JSONL' | 'SCHEMA' | 'SEQUENCE' | 'PHASE' | 'STOP_REASON' | 'FINAL_EVIDENCE' | 'CHILD_EXIT';
 
@@ -53,7 +54,7 @@ export async function runReact(input: RunReactInput): Promise<string> {
 
 async function runProcessPile(input: RunReactInput): Promise<string> {
   const args = [...baseArgs(input), '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json'];
-  const reducer = new ProcessPileReducer(input.validateProcessPile, input.observer);
+  const reducer = new ProcessPileReducer(input.validateProcessPile, input.observer, input.assertBeforeFinal);
   let buffer = '';
   let failedProjected = false;
   const projectLocalFailure = (message: string) => {
@@ -102,7 +103,7 @@ class ProcessPileReducer {
   workPath: string | null = null;
   protocolFailureProjected = false;
 
-  constructor(private readonly validate: ValidateFunction, private readonly observer?: ReactProcessObserver) {}
+  constructor(private readonly validate: ValidateFunction, private readonly observer?: ReactProcessObserver, private readonly assertBeforeFinal?: (workPath: string) => void) {}
 
   consume(line: string): void {
     if (line.length === 0) return;
@@ -123,6 +124,7 @@ class ProcessPileReducer {
     if (event.type === 'phase.completed') return this.phaseCompleted(event);
     if (event.type === 'work.ready') {
       if (this.active || this.expectedPhase !== 'ready' || event.work_id !== this.workId || event.work_path !== this.workPath) throw protocolError('PHASE', 'React Process Pile work.ready is out of order.');
+      this.assertBeforeFinal?.(this.workPath!);
       this.expectedPhase = 'final-or-terminal'; this.observer?.workCompleted?.(this.workPath!); return;
     }
     if (event.type === 'process.completed') {

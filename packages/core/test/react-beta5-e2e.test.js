@@ -49,7 +49,25 @@ async function fixtureProvider(t, finals, options = {}) {
 
 function respond(response, requestNumber, finals, options = {}) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
+  if (options.multiStepChecks) {
+    if (requestNumber <= 30) {
+      const phase = (requestNumber - 1) % 3;
+      if (phase === 2) {
+        response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: JSON.stringify({ decision: true }) } }] } }] })}\n\ndata: [DONE]\n\n`);
+        return;
+      }
+      const content = phase === 0 ? `RAW_THOUGHT_${Math.floor((requestNumber - 1) / 3) + 1}` : observeHandoff(Math.floor((requestNumber - 1) / 3) + 1);
+      response.end(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`);
+      return;
+    }
+    response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: finals[0] } }] })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   const phase = (requestNumber - 1) % 4;
+  if (phase === 0 && options.thoughtToolCall) {
+    response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `retrieval-${requestNumber}`, type: 'function', function: { name: 'list_directory', arguments: JSON.stringify({ path: '.' }) } }] } }] })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   if (phase === 2) {
     const decision = options.checkDecision ?? false;
     response.end(`data: ${JSON.stringify({ choices: [{ delta: { ...(options.checkContent ? { content: options.checkContent } : {}), tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: JSON.stringify({ decision }) } }] } }] })}\n\ndata: [DONE]\n\n`);
@@ -125,8 +143,21 @@ test('real beta.5 isolates two consecutive Play sends and hands Observe to Final
   }
 });
 
-test('real beta.5 returns a completed Final with max_step when Check continues at the one-step budget', { timeout: 20_000 }, async (t) => {
-  const provider = await fixtureProvider(t, ['visible-budget-final'], { checkDecision: true });
+test('real Core closes ToolCall through MCP before Observe and Final', { timeout: 25_000 }, async (t) => {
+  const provider = await fixtureProvider(t, ['retrieval-final'], { thoughtToolCall: true });
+  const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
+  const core = await createDayloomCoreInternal({ worldRoot: archive.root, llmConfigPath: archive.config }); t.after(() => core.dispose());
+  const projected = []; core.subscribe((event) => projected.push(event.type));
+  assert.deepEqual(await core.startSession('play'), { ok: true });
+  assert.deepEqual(await core.send('Inspect the pinned archive'), { ok: true });
+  assert.equal(provider.requests.length, 4);
+  assert.match(JSON.stringify(provider.requests[1]), /canon|state/i);
+  assert.ok(projected.indexOf('work.completed') < projected.indexOf('output.started'));
+  assert.deepEqual(await core.cancel(), { ok: true });
+});
+
+test('real beta.5 returns a completed Final with max_step at the frozen ten-step ceiling', { timeout: 30_000 }, async (t) => {
+  const provider = await fixtureProvider(t, ['visible-budget-final'], { multiStepChecks: true });
   const archive = archiveFixture(); t.after(archive.cleanup); writeConfig(archive.config, provider.baseUrl);
   const runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'core-react-max-step-')); t.after(() => fs.rmSync(runtime, { recursive: true, force: true }));
   const boundaries = await resolvePackagedBoundaries();
@@ -142,7 +173,7 @@ test('real beta.5 returns a completed Final with max_step when Check continues a
     conversation: session.conversationDir,
   });
   assert.equal(final, 'visible-budget-final');
-  assert.equal(provider.requests.length, 4);
+  assert.equal(provider.requests.length, 31);
 });
 
 test('real beta.5 completes Play and Planning publication through Core', { timeout: 25_000 }, async (t) => {

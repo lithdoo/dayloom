@@ -19,5 +19,12 @@ export class CoreOperationError extends Error {
     this.name = 'CoreOperationError';
   }
 }
+export type ArchiveRetrievalStage = 'projection' | 'startup' | 'tools' | 'hook' | 'artifacts' | 'runtime';
+export class ArchiveRetrievalError extends Error {
+  constructor(readonly stage: ArchiveRetrievalStage, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ArchiveRetrievalError';
+  }
+}
 export const success = (): CoreResult => ({ ok: true });
 export const failure = (code: CoreErrorCode, message: string): CoreResult => ({ ok: false, error: { code, message } });

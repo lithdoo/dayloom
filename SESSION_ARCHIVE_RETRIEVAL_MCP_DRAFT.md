@@ -5,6 +5,16 @@ Date: 2026-08-25
 Scope: `@dayloom/core` Session runtime, Archive V2 read projection, Promptpile/React MCP integration, agent prompts  
 Non-goal: no modification to `lithdoo/promptpile` source or Promptpile package internals
 
+Implementation compatibility revision (2026-08-25): the frozen Rust 0.4.3 CLI exposes
+`--allow-write` and `--enable-roots` as presence-only enable flags; passing a literal
+`false` is parsed as an allowed directory rather than a boolean value. The equivalent
+fail-closed launch contract is therefore explicit `ALLOW_WRITE=false` and
+`ENABLE_ROOTS=false` server environment plus omission of both enable flags. The server
+working directory is the copied `archive-view`, so model-visible relative paths remain
+inside the projection without revealing a physical Session path. This revision changes
+only the executable spelling; provider, capabilities, defaults, containment, and security
+semantics remain frozen and are verified by real packed/runtime tests.
+
 This document is the implementation contract for the first Archive Retrieval release. It replaces the earlier exploratory draft semantics.
 
 After this freeze, implementation may tune local mechanics only when behavior remains equivalent. Changes to the frozen dependencies, authority model, archive visibility, runtime ownership, model-visible capabilities, React loop policy, hook/result contract, final integrity guard, or lifecycle semantics require an explicit design revision rather than an ad-hoc implementation decision.
@@ -382,11 +392,12 @@ v1 deliberately uses normal copies because the projection is Session-scoped, det
 
 The provider root is exactly `<sessionRoot>/archive-view`.
 
-Provider argv is frozen to read-only/no-roots mode:
+Provider process configuration is frozen to read-only/no-roots mode:
 
 ```text
---allow-write false
---enable-roots false
+environment: ALLOW_WRITE=false
+environment: ENABLE_ROOTS=false
+cwd: <archive-view>
 <archive-view>
 ```
 
@@ -656,10 +667,9 @@ retry_safe_tools = [
 command = "<filesystemMcp.command>"
 args = [
   <filesystemMcp.argsPrefix...>,
-  "--allow-write", "false",
-  "--enable-roots", "false",
   "<archive-view>"
 ]
+cwd = "<archive-view>"
 allowed_tools = [
   "list_directory",
   "directory_tree",
@@ -667,6 +677,10 @@ allowed_tools = [
   "search_files_content",
   "read_file_lines",
 ]
+
+[servers.archive.env]
+ALLOW_WRITE = "false"
+ENABLE_ROOTS = "false"
 ```
 
 Unknown gateway fields MUST NOT be added; the frozen Promptpile MCP config parser rejects them.
@@ -1678,7 +1692,7 @@ Each requires a separate design change after production behavior is measured.
 
 ## Appendix A — Why the frozen provider is acceptable
 
-`@rustmcp/rust-mcp-filesystem@0.4.3` provides the required listing/path search/content search/ranged read capabilities, is read-only by default, supports explicit `--allow-write false`, keeps dynamic Roots disabled by default and exposes CLI control for them, and is distributed as an npm convenience package around the Rust binary.
+`@rustmcp/rust-mcp-filesystem@0.4.3` provides the required listing/path search/content search/ranged read capabilities, is read-only by default, keeps dynamic Roots disabled by default, exposes presence-only CLI flags to enable those capabilities, and is distributed as an npm convenience package around the Rust binary. Dayloom explicitly pins both corresponding environment values to `false` and omits the enable flags.
 
 The v1 design does not trust provider defaults alone: the provider is explicitly launched read-only/no-roots, rooted only at the copied Session projection, and sits behind the exact `promptpile-mcp` tool allowlist.
 
