@@ -8,12 +8,14 @@ Scope: `@dayloom/core` Session runtime, Promptpile/React tool exposure, Archive 
 
 Dayloom Sessions should allow the AI to inspect the current World archive on demand instead of requiring Core to eagerly inject most World documents into every Session context.
 
-The AI must be able to use a mature third-party MCP filesystem/search server to:
+For the first implementation, Dayloom will use a mature third-party MCP filesystem/search server and expose a deliberately small read-only retrieval surface to the model.
 
-- search file contents by keyword or pattern;
-- list directories and files;
-- read file contents, preferably with bounded/ranged reads;
-- optionally read several explicitly selected files in one call.
+The required model capabilities are:
+
+- search file contents by keyword or regular expression;
+- search files and paths by name/glob;
+- list directories and inspect directory structure;
+- read selected text file ranges without loading an entire large file.
 
 The MCP server is a retrieval mechanism only. It does not own Dayloom World semantics, validation, publication, mutation, or authority.
 
@@ -41,11 +43,13 @@ Archive V2
 Core builds Session read-only archive view
       |
       v
-third-party MCP filesystem/search server
+@rustmcp/rust-mcp-filesystem
       |
-      +-- list
-      +-- search
-      +-- read
+      +-- list_directory
+      +-- directory_tree
+      +-- search_files
+      +-- search_files_content
+      +-- read_file_lines
       |
       v
 AI
@@ -75,8 +79,9 @@ The existing Session rule remains authoritative: a Session reasons against exact
 If a Session starts at revision `R42`, then all of the following MUST refer to `R42`:
 
 - immutable Session bootstrap context;
-- MCP directory listing;
-- MCP keyword search results;
+- MCP directory listing and tree views;
+- MCP file/path search results;
+- MCP content search results;
 - MCP file reads;
 - structured submission validation base;
 - final publication conflict check.
@@ -147,75 +152,309 @@ The resulting view SHOULD be made read-only at the OS/filesystem permission laye
 
 The view is temporary Session runtime state and SHOULD be deleted with the Session workspace.
 
-## 7. Third-party MCP requirement
+## 7. Selected third-party MCP
 
-Dayloom should use a mature third-party MCP implementation for filesystem retrieval rather than implementing keyword search, directory traversal, and file reads itself.
+### Decision
 
-The selected implementation MUST provide, either directly or through a stable combination of mature MCP servers:
-
-- content keyword/pattern search;
-- directory/file listing;
-- file content reading;
-- an allowed-root or equivalent filesystem sandbox;
-- stdio or another lifecycle mode that Dayloom can own per Session;
-- predictable structured tool results;
-- no requirement for a shell to perform normal retrieval operations.
-
-Strong preferences:
-
-- bounded/ranged reads;
-- search results with path plus matching excerpt and line/position metadata;
-- result count and output-size limits;
-- active maintenance and documented security behavior;
-- cross-platform support compatible with Dayloom's supported Node environments.
-
-Initial candidates to evaluate include mature filesystem MCP servers and mature filesystem/search MCP servers. Selection is intentionally not finalized in this draft; the implementation must verify that content search is real file-content search rather than path/glob search only.
-
-## 8. Tool surface exposed to the AI
-
-The AI should see a deliberately small retrieval capability, regardless of how many tools the underlying third-party MCP server implements.
-
-Conceptually the allowed surface is:
+The first implementation SHOULD use:
 
 ```text
-archive_list
-archive_search
-archive_read
-archive_read_many   # optional
+@rustmcp/rust-mcp-filesystem
 ```
 
-The actual MCP tool names may remain those of the selected third-party server if Promptpile/React can safely allowlist them. A Dayloom gateway/adapter may rename or normalize them when necessary.
+The server implementation is `rust-mcp-stack/rust-mcp-filesystem`. Dayloom is a Node.js project, but this is not an in-process library dependency: it is a Session-owned MCP child process communicating over stdio. The implementation language of the MCP server therefore does not couple Core business logic to Rust.
 
-The model MUST NOT receive tools that can:
+The integration boundary is:
+
+```text
+Dayloom / Node.js
+      |
+      | spawn + stdio MCP
+      v
+rust-mcp-filesystem native executable
+      |
+      v
+Session archive-view only
+```
+
+### Why this candidate is preferred
+
+It matches Dayloom's retrieval model unusually well:
+
+- filesystem retrieval is its primary responsibility rather than a side effect of a general local-automation server;
+- it supports real file-content search rather than path/glob search only;
+- content search supports literal text and regular expressions;
+- content search returns file paths, line/column locations, and bounded matching excerpts;
+- it provides line-ranged file reads;
+- it supports directory listing, directory tree inspection, and file/path search;
+- it is read-only by default unless write access is explicitly enabled;
+- individual tools can be disabled, allowing Dayloom to expose a strict retrieval allowlist;
+- normal retrieval does not require shell execution;
+- content search is implemented in-process with Rust grep libraries rather than requiring a separately installed `rg` executable;
+- it is distributed through npm in addition to standalone/native installation channels.
+
+This is a better security and integration fit than selecting a broad local automation MCP and attempting to remove shell/write/configuration capabilities after the fact.
+
+### Why not Desktop Commander as the default
+
+Desktop Commander is more established and has strong search ergonomics, but it is intentionally a privileged local automation server. Its complete capability surface includes terminal/process execution, file mutation, and configuration mutation.
+
+Dayloom needs only read-only archive retrieval. Selecting a server whose default product surface is substantially broader than the required authority would increase the containment burden and make a tool-filtering mistake more consequential.
+
+Desktop Commander remains a useful comparison point, not the preferred production dependency.
+
+### Why not the official filesystem server alone
+
+`@modelcontextprotocol/server-filesystem` is mature and appropriate for file listing/reading, but its filesystem search is primarily path/glob search and does not satisfy Dayloom's required file-content keyword search by itself.
+
+Using the official filesystem server plus a separate ripgrep MCP is technically viable, but it would require Dayloom to own two MCP process lifecycles, two root configurations, two failure domains, and a combined tool namespace for one Session retrieval capability.
+
+The single-server Rust MCP design is therefore preferred unless its distribution Gate fails.
+
+## 8. Node.js integration and distribution Gate
+
+Using a Rust MCP server is acceptable for Dayloom because the integration boundary is an MCP process boundary, not a Node native-addon ABI boundary.
+
+Dayloom SHOULD consume the npm distribution when practical so users do not need to install Rust or run `cargo install` manually.
+
+Conceptually:
+
+```text
+Dayloom npm installation
+      |
+      +-- installs MCP distribution
+      |
+Dayloom Core
+      |
+      +-- resolves packaged executable
+      +-- spawns it over stdio
+      +-- owns process lifecycle
+      `-- terminates it with Session/Core cleanup
+```
+
+Before promoting this dependency from draft to required runtime dependency, CI MUST prove the npm/native-binary distribution path on every platform Dayloom officially supports.
+
+The distribution Gate MUST verify at least:
+
+- installation from a clean npm environment;
+- deterministic executable resolution without relying on a pre-existing global PATH installation;
+- MCP initialize handshake;
+- `tools/list` exposes only the expected enabled tools after configuration;
+- directory listing works against a temporary allowed root;
+- content search works against UTF-8 Markdown/YAML/JSON fixtures;
+- ranged file reading works;
+- paths outside the configured root are rejected;
+- the process terminates cleanly;
+- install/spawn behavior works on each supported Linux/macOS/Windows architecture in Dayloom CI.
+
+If the npm/native distribution cannot meet Dayloom's supported-platform reliability requirements, the implementation MUST stop at the Gate and select a fallback rather than introducing ad-hoc platform installation instructions.
+
+Preferred fallback order:
+
+1. another mature single-server read-only filesystem/search MCP with equivalent capability and a reliable Node-friendly distribution;
+2. official `@modelcontextprotocol/server-filesystem` plus a mature dedicated content-search MCP;
+3. a pure Node filesystem MCP only if it independently satisfies content search, sandboxing, ranged reads, and maintenance requirements.
+
+The fallback MUST preserve the same Dayloom-facing retrieval contract and authority model.
+
+## 9. Model-visible tool surface
+
+The first implementation MUST expose exactly these five retrieval capabilities to the model:
+
+```text
+list_directory
+
+directory_tree
+
+search_files
+
+search_files_content
+
+read_file_lines
+```
+
+### `list_directory`
+
+Purpose: inspect one directory level when the model already knows roughly where relevant data lives.
+
+Examples:
+
+```text
+list_directory("characters")
+list_directory("days/day7")
+```
+
+### `directory_tree`
+
+Purpose: efficiently orient the model in an unfamiliar World or subtree without requiring many sequential `list_directory` calls.
+
+This is a convenience/read-efficiency tool, not a substitute for content search.
+
+The server/gateway SHOULD enforce a bounded tree depth or output-size limit if upstream behavior can otherwise return an unbounded tree.
+
+### `search_files`
+
+Purpose: search by file/path name or glob when the model knows the document type or naming pattern but not its exact path.
+
+Examples:
+
+```text
+find all summary.md documents
+find files under characters/alice
+find day plan documents
+```
+
+File/path search is distinct from content search and avoids forcing the model to grep contents for structural questions.
+
+### `search_files_content`
+
+Purpose: search textual World documents by literal keyword or regular expression.
+
+This is the primary semantic retrieval tool.
+
+Useful results contain:
+
+```text
+file path
+line number
+column/position
+matching excerpt
+```
+
+The model can then select a relevant hit and use `read_file_lines` for surrounding context.
+
+### `read_file_lines`
+
+Purpose: read a complete small file or a bounded range from a large text file using line offset and limit.
+
+This tool is preferred over an unrestricted whole-file read because it allows the model to follow search hits without injecting an entire long timeline, diary, or memory file into context.
+
+For a small file, omission of the line limit may be allowed subject to Dayloom's global tool-output bound.
+
+## 10. Tools intentionally not exposed
+
+Dayloom MUST disable or otherwise prevent the model from receiving every unnecessary MCP tool, including all capabilities that can:
 
 - write or edit files;
 - create, move, rename, or delete files/directories;
 - execute shell commands or processes;
-- change MCP server configuration;
-- change allowed roots;
+- alter MCP configuration;
+- change allowed roots or MCP roots dynamically;
 - access paths outside the Session archive view;
 - mutate Archive publication state.
 
-If the selected third-party server exposes a broader tool set, Dayloom MUST enforce a tool allowlist before the tool surface reaches the model.
+The first implementation also SHOULD NOT expose convenience tools whose capability is redundant with the five-tool vocabulary, including when available:
 
-Prompt instructions are not a security boundary.
+- whole-file read variants when `read_file_lines` suffices;
+- `head_file` and `tail_file`;
+- bulk/multiple-file reads;
+- file metadata/size inspection;
+- directory-size calculation;
+- duplicate/empty-file discovery;
+- media-reading tools;
+- archive/zip helpers.
 
-## 9. Dayloom MCP gateway responsibilities
+These exclusions are intentional.
 
-If an adapter/gateway is required between React and the third-party MCP server, its responsibility should remain narrow:
+Bulk file reading is especially undesirable in the first implementation because it can turn agentic retrieval back into broad eager context injection:
 
-- start and stop the selected third-party MCP server;
-- configure exactly one Session archive-view root;
-- expose only the approved retrieval tools;
-- enforce time, output-size, and result-count bounds when the upstream server cannot;
-- normalize failures into stable runtime diagnostics;
-- optionally record retrieval calls for diagnostics/audit.
+```text
+search -> 20 hits -> read 20 full files -> excessive model context
+```
 
-The gateway MUST NOT reimplement generic filesystem keyword search or file reading when the selected third-party MCP already provides them.
+The five-tool vocabulary keeps model tool selection simple:
 
-The gateway MUST NOT become an alternative World mutation or publication API.
+```text
+Need orientation?
+  -> directory_tree / list_directory
 
-## 10. Session lifecycle
+Know a file/path pattern?
+  -> search_files
+
+Know a fact/keyword?
+  -> search_files_content
+
+Need source context?
+  -> read_file_lines
+```
+
+Prompt instructions are not a security boundary. Tool disabling/allowlisting and filesystem containment MUST be enforced outside model instructions.
+
+## 11. Dayloom MCP runtime boundary
+
+Dayloom SHOULD define its own runtime boundary around the selected MCP instead of allowing Core business logic to depend directly on the server's implementation details.
+
+Conceptually:
+
+```ts
+interface ArchiveRetrievalRuntime {
+  start(options: {
+    root: string;
+    disabledTools: readonly string[];
+  }): Promise<ArchiveRetrievalProcess>;
+
+  stop(process: ArchiveRetrievalProcess): Promise<void>;
+}
+```
+
+The exact TypeScript API may differ, but ownership should remain clear.
+
+Dayloom owns:
+
+- Session lifecycle;
+- pinned archive-view creation;
+- resolving and spawning the MCP executable;
+- stdio connection/lifecycle;
+- the effective tool allowlist;
+- timeout and maximum output enforcement;
+- process termination;
+- runtime diagnostics.
+
+The third-party MCP owns:
+
+- directory traversal;
+- path/file search;
+- content search;
+- ranged text-file reading;
+- enforcement of its configured allowed filesystem root as a defense layer.
+
+Dayloom MUST NOT reimplement generic filesystem search/read behavior merely to wrap the selected MCP.
+
+## 12. Retrieval output bounds
+
+The selected server's content search can return many matches and does not by itself define all limits Dayloom needs for model context safety.
+
+Therefore Dayloom MUST impose outer runtime bounds on every retrieval tool response.
+
+At minimum, the runtime needs configurable limits for:
+
+```text
+tool call timeout
+maximum returned bytes
+maximum search matches/results
+maximum directory-tree output
+maximum line-read output
+```
+
+Initial implementation defaults should be conservative and testable. Example starting points may be on the order of:
+
+```text
+search timeout:        a few seconds
+search result count:   about 100 matches
+single tool response:  tens of KiB, e.g. about 64 KiB
+```
+
+These values are not protocol constants and MUST be finalized with fixture/performance tests.
+
+When Dayloom truncates a result, the model MUST receive an explicit structured or textual indication such as:
+
+```text
+Results truncated. Narrow path, glob, query, or requested line range.
+```
+
+Silent truncation is not acceptable.
+
+## 13. Session lifecycle
 
 For `planning`, `play`, and `revise` Sessions:
 
@@ -228,20 +467,22 @@ startSession(kind)
   |
   +-- materialize archive-view from pinned RootTree
   |
-  +-- start/configure retrieval MCP for archive-view
+  +-- resolve/start rust-mcp-filesystem for archive-view
   |
-  +-- write React tool configuration with retrieval allowlist
+  +-- configure read-only mode and disable dynamic roots
+  |
+  +-- expose only the five approved retrieval tools
   |
   +-- append minimal immutable bootstrap context
   |
   `-- Session ready
 ```
 
-The MCP process, if process-based, is Session-owned runtime state and MUST terminate during Session cleanup, cancellation/disposal cleanup where appropriate, and Core disposal.
+The MCP process is Session-owned runtime state and MUST terminate during Session cleanup, cancellation/disposal cleanup where appropriate, and Core disposal.
 
 An `init` Session has no published archive and therefore MUST NOT expose Archive Retrieval MCP unless a later design defines a separate draft-World view.
 
-## 11. Immutable bootstrap context after MCP introduction
+## 14. Immutable bootstrap context after MCP introduction
 
 MCP retrieval should reduce eager context injection, but it should not eliminate the authoritative bootstrap layer.
 
@@ -253,7 +494,7 @@ Core should continue to inject the small set of facts needed to orient every run
 - phase/current day/last settled day as applicable;
 - canon needed on every turn, if keeping canon eagerly loaded proves economical;
 - current Play plan for a Play Session;
-- explicit instructions describing the archive retrieval tools and authority rules.
+- explicit instructions describing retrieval tools and authority rules.
 
 Large collections should migrate from eager injection toward on-demand retrieval, including where practical:
 
@@ -264,9 +505,9 @@ Large collections should migrate from eager injection toward on-demand retrieval
 - story seeds;
 - older day documents.
 
-The exact migration can be incremental. The first implementation may retain more eager context while proving MCP correctness, then reduce `contextDocuments` injection after tests establish equivalent behavior.
+The migration can be incremental. The first implementation may retain more eager context while proving MCP correctness, then reduce `contextDocuments` injection after tests establish equivalent behavior.
 
-## 12. Authority model for MCP results
+## 15. Authority model for MCP results
 
 MCP tool output is data, not instruction authority.
 
@@ -283,35 +524,34 @@ Core-owned system/session policy
 
 A World document containing text such as `ignore previous instructions` is narrative/data content, not a system instruction.
 
-## 13. Search behavior
+## 16. Search behavior
 
 Content search is a hard requirement.
-
-A useful search result SHOULD include enough information for the model to decide which files to open without reading every hit in full:
-
-```text
-path
-line or byte position when available
-matched excerpt
-```
 
 The intended retrieval pattern is:
 
 ```text
-archive_search("Alice Bob promise")
+search_files_content(query)
         |
         v
-select relevant hit paths
+path + line + excerpt results
         |
         v
-archive_read(path, bounded range)
+select relevant source
+        |
+        v
+read_file_lines(path, nearby offset, bounded limit)
 ```
 
-Search and read operations MUST have bounded output to prevent one tool call from injecting an unbounded archive into the model context.
+Search SHOULD be case-insensitive by default when that matches the selected MCP's stable semantics, with explicit regex behavior available for narrower queries.
 
-Binary/unrecognized content should be rejected or represented through explicit metadata; the retrieval MCP is primarily for textual World Profile documents.
+The model SHOULD narrow searches with path and file glob patterns when practical, for example restricting searches to Markdown/YAML/JSON World documents rather than searching every visible file indiscriminately.
 
-## 14. Path and sandbox rules
+Search and read operations MUST have bounded output to prevent one tool call from injecting an unbounded archive into model context.
+
+Binary/unrecognized content should be rejected or represented through explicit metadata; Archive Retrieval MCP is primarily for textual World Profile documents.
+
+## 17. Path and sandbox rules
 
 The MCP root is exactly the Session archive-view directory.
 
@@ -327,17 +567,25 @@ The effective security policy MUST reject:
 
 Core should avoid creating symlinks in the archive view entirely.
 
-If the selected MCP server has weaker path/symlink guarantees, the Session view SHOULD additionally run inside an OS/container sandbox or the candidate should be rejected.
+`rust-mcp-filesystem` MUST be launched in read-only mode. Write mode MUST never be enabled for this retrieval feature.
 
-## 15. Failure semantics
+Dynamic MCP Roots support SHOULD remain disabled for the Session retrieval server so the model or client cannot retarget the server after startup.
+
+The configured root is a defense layer in addition to the fact that Core itself creates a minimal Session-specific filesystem view.
+
+If platform-specific testing reveals weaker path/symlink guarantees than Dayloom requires, the candidate MUST fail the distribution/security Gate rather than relying on prompt instructions.
+
+## 18. Failure semantics
 
 Retrieval failures are conversational/runtime failures and do not mutate World state.
 
 Expected classes include:
 
+- MCP executable cannot be resolved;
 - MCP process unavailable or exited;
-- tool protocol failure;
+- initialization/tool protocol failure;
 - invalid/out-of-sandbox path;
+- search/read timeout;
 - search/read output limit exceeded;
 - archive-view materialization failure;
 - archive-view integrity failure.
@@ -346,7 +594,9 @@ Session startup should fail if the required MCP capability cannot be prepared. D
 
 A tool failure during an ordinary run may be surfaced to React as a tool error so the model can recover where safe, but Core must retain ownership of Session cancellation, terminal output projection, and submission/publication.
 
-## 16. Relationship to submission and publication
+A missing native executable on one platform is a packaging/integration failure, not permission to fall back to scanning the physical Archive root.
+
+## 19. Relationship to submission and publication
 
 Archive Retrieval MCP is strictly read-only.
 
@@ -375,14 +625,25 @@ No MCP file edit may become an implicit World mutation.
 
 If future designs introduce AI-authored candidate files, that must be a separate writable candidate workspace with explicit Core validation and publication semantics. It is not part of this retrieval draft.
 
-## 17. Implementation outline
+## 20. Implementation outline
 
-### Gate A - third-party MCP selection
+### Gate A - dependency and distribution validation
 
-- evaluate candidate servers against content search, list, read, sandbox, process lifecycle, output bounds, maintenance, and platform requirements;
-- reject path-only/glob-only search when no content-search companion is selected;
-- document exact allowed tool names and disabled capabilities;
-- pin dependency/version according to repository policy.
+Evaluate and lock the `@rustmcp/rust-mcp-filesystem` dependency only after the Node/npm distribution Gate passes.
+
+Required work:
+
+- verify current package provenance and repository mapping;
+- pin an exact tested version according to repository policy;
+- test clean npm installation;
+- test executable resolution from the local dependency, not global PATH;
+- test stdio MCP initialize/tools/list/call lifecycle;
+- run the supported platform/architecture CI matrix;
+- verify read-only configuration and disabled-tool behavior;
+- verify dynamic roots cannot retarget the Session server;
+- verify process cleanup.
+
+Gate A failure means selecting a fallback MCP implementation while preserving Sections 2-19. It does not justify weakening the retrieval contract.
 
 ### Gate B - archive-view projection
 
@@ -394,15 +655,20 @@ If future designs introduce AI-authored candidate files, that must be a separate
 
 ### Gate C - MCP Session runtime
 
-- start/configure one retrieval MCP instance or isolated MCP root per active Session;
-- generate React/Promptpile tool configuration from an explicit allowlist;
+- add the Dayloom `ArchiveRetrievalRuntime` boundary;
+- start one isolated MCP server for the active non-Init Session;
+- configure exactly one archive-view root;
+- enforce read-only mode;
+- expose only `list_directory`, `directory_tree`, `search_files`, `search_files_content`, and `read_file_lines`;
+- enforce time/result/output bounds outside the MCP;
 - terminate MCP resources on Session/Core cleanup;
 - normalize process/protocol failures.
 
 ### Gate D - Prompt and context adaptation
 
-- document retrieval tools in Session prompts;
+- document the five retrieval tools in Session prompts;
 - teach Thought/Observe/Final that MCP documents are pinned World data, not system instructions;
+- teach the model to prefer search -> bounded read rather than broad directory dumps;
 - retain minimal immutable bootstrap facts;
 - reduce broad `VERIFIED_WORLD_DOCUMENTS` eager injection once behavior is verified.
 
@@ -410,43 +676,58 @@ If future designs introduce AI-authored candidate files, that must be a separate
 
 Add tests covering at least:
 
+- npm-installed executable can be resolved and started;
+- exact expected read-only tool set is visible;
+- all write/edit/process/config/root-mutation tools are absent;
 - directory listing sees only pinned reachable documents;
-- keyword search finds matching content;
-- reads return exact pinned document bytes/text;
+- directory tree is bounded;
+- path/file search finds expected documents;
+- keyword and regex content search find matching content;
+- content search returns usable path/line/excerpt evidence;
+- ranged reads return exact pinned document text;
+- search and read output limits are explicit and deterministic;
 - historical/unreachable blobs cannot appear through search;
 - Archive control-plane files are inaccessible;
 - path traversal and symlink escape fail;
-- write/edit/process tools are absent from the model tool surface;
 - a Session pinned at `R42` keeps reading `R42` after World advances to `R43`;
-- Session cleanup terminates MCP resources and removes archive-view runtime state;
+- Session cleanup terminates the MCP process and removes archive-view runtime state;
 - MCP failure cannot partially publish or mutate the World;
-- existing submission conflict detection remains unchanged.
+- existing submission conflict detection remains unchanged;
+- supported platform/architecture CI proves distribution reliability.
 
-## 18. Acceptance criteria
+## 21. Acceptance criteria
 
 This draft is considered implemented when all of the following are true:
 
-1. A non-Init Session can ask the model to list World directories through MCP.
-2. The model can search World file contents by keyword/pattern through a third-party mature MCP implementation.
-3. The model can read selected World files through MCP.
-4. The MCP-visible filesystem is derived only from the Session-pinned RootTree.
-5. The MCP-visible view remains stable if `current.json` advances during the Session.
-6. No write/edit/shell/configuration tool is exposed to the model.
-7. The MCP cannot access Archive control-plane paths or any host path outside the Session view.
-8. MCP reads cannot mutate Archive blobs, candidate state, or published World state.
-9. Core remains the sole validator and publisher of World mutations.
-10. Tests prove revision pinning, sandboxing, retrieval functionality, lifecycle cleanup, and fail-closed behavior.
+1. A non-Init Session can list World directories through the selected MCP.
+2. The model can inspect a bounded World directory tree.
+3. The model can search World file/path names without content scanning.
+4. The model can search World file contents by literal keyword and regex.
+5. Content-search results identify source path and useful match location/context.
+6. The model can read selected bounded line ranges from World files.
+7. The MCP-visible filesystem is derived only from the Session-pinned RootTree.
+8. The MCP-visible view remains stable if `current.json` advances during the Session.
+9. Only the five approved retrieval tools are exposed to the model.
+10. No write/edit/shell/process/configuration/root-retargeting tool is exposed.
+11. The MCP cannot access Archive control-plane paths or any host path outside the Session view.
+12. MCP reads cannot mutate Archive blobs, candidate state, or published World state.
+13. Search/tree/read calls have explicit timeout/output/result bounds.
+14. Core remains the sole validator and publisher of World mutations.
+15. The npm/native distribution passes the supported Dayloom platform CI matrix.
+16. Tests prove revision pinning, sandboxing, retrieval functionality, lifecycle cleanup, distribution behavior, and fail-closed semantics.
 
-## 19. Open questions
+## 22. Remaining open questions
 
-The implementation review still needs to settle:
+The MCP implementation choice is no longer an open question for the first implementation: `@rustmcp/rust-mcp-filesystem` is the selected candidate, subject to Gate A.
 
-- the exact third-party MCP server and pinned version;
-- whether one server satisfies content search/list/read safely or whether a filesystem MCP plus a dedicated search MCP is preferable;
-- whether archive-view materialization should copy every reachable World document eagerly or lazily materialize verified files behind a stable read-only directory;
-- exact search/read output limits;
+The remaining design questions are narrower:
+
+- the exact dependency version to pin after Gate A testing;
+- the exact supported platform/architecture matrix Dayloom promises for the packaged native executable;
+- whether archive-view materialization copies every reachable World document eagerly or lazily materializes verified files behind a stable read-only directory;
+- exact timeout, search-result-count, tree-output, and byte-output limits;
 - whether canon remains eagerly injected after retrieval is stable;
 - whether `days/` exposes all pinned historical day documents by default or a narrower policy;
 - whether retrieval call traces belong only in ephemeral diagnostics or in durable Dayloom audit records.
 
-Until these questions are resolved, the invariants in Sections 2-16 are the design constraints for implementation work.
+Until these questions are resolved, the invariants and selected MCP/tool contract in this document are the design constraints for implementation work.
