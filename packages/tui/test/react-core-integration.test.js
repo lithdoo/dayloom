@@ -22,8 +22,12 @@ test('real Promptpile React streams Thought Observe Check and Final through Core
   const driver = createRuntimeDriverFromCoreForTest({ worldRoot: archive.root, core });
   t.after(async () => { await driver.dispose(); archive.cleanup(); });
   const seenPhases = new Set();
+  const visibleWorkText = [];
   driver.subscribe((snapshot) => {
-    for (const item of snapshot.presentationItems) if ('kind' in item && item.kind === 'working' && item.phase) seenPhases.add(item.phase);
+    for (const item of snapshot.presentationItems) if ('kind' in item && item.kind === 'working' && item.phase) {
+      seenPhases.add(item.phase);
+      if (item.text) visibleWorkText.push(item.text);
+    }
   });
 
   await driver.runHubAction('play');
@@ -36,8 +40,9 @@ test('real Promptpile React streams Thought Observe Check and Final through Core
   assert.ok(working.workPath); assert.equal(fs.existsSync(working.workPath), false);
   assert.deepEqual({ text: final.text, status: final.status }, { text: '真实最终回答', status: 'complete' });
   assert.deepEqual([...seenPhases], ['thought', 'observe', 'check']);
+  assert.equal(visibleWorkText.some((text) => /internal reasoning|second internal step/i.test(text)), true);
   assert.equal(state.messages.some((message) => /真实思考|AUTHORITATIVE_FACTS|检查/.test(message.text)), false);
-  assert.equal(provider.requests.length, 4);
+  assert.equal(provider.requests.length, 7);
 });
 
 async function fixtureProvider(t) {
@@ -53,16 +58,21 @@ async function fixtureProvider(t) {
 
 function respond(response, requestNumber) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
-  if (requestNumber === 3) {
-    response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: '检查', tool_calls: [{ index: 0, id: 'check-3', type: 'function', function: { name: 'react_check_decision', arguments: '{"decision":false}' } }] } }] })}\n\ndata: [DONE]\n\n`);
+  if (requestNumber === 3 || requestNumber === 6) {
+    const decision = requestNumber === 3;
+    response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: '检查', tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: JSON.stringify({ decision }) } }] } }] })}\n\ndata: [DONE]\n\n`);
     return;
   }
-  const content = requestNumber === 1 ? '真实思考' : requestNumber === 2 ? observeHandoff() : '真实最终回答';
+  const content = requestNumber === 1 ? 'internal reasoning in English'
+    : requestNumber === 2 ? observeHandoff(true)
+      : requestNumber === 4 ? 'second internal step in English'
+        : requestNumber === 5 ? observeHandoff(false)
+          : '真实最终回答';
   const split = Math.ceil(content.length / 2);
   response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: content.slice(0, split) } }] })}\n\n`);
   response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: content.slice(split) } }] })}\n\ndata: [DONE]\n\n`);
 }
 
-function observeHandoff() {
-  return '[SESSION]\nPlay integration\n\n[USER_INTENT]\n推进故事\n\n[AUTHORITATIVE_FACTS]\nPinned context is authoritative.\n\n[EXACT_IDS]\nworld1, day1, beat1\n\n[DECISIONS]\nContinue.\n\n[CONSTRAINTS]\nPreserve authority boundaries.\n\n[UNRESOLVED]\n<none>\n\n[FINAL_CONTRACT]\nReturn the fixture response.';
+function observeHandoff(continueWork) {
+  return `[EVIDENCE]\n<none>\n[DECISIONS]\n<none>\n[UNRESOLVED]\n<none>\n[NEXT_TOOL_ACTION]\n${continueWork ? 'mcp__draft__list_directory .' : '<none>'}`;
 }

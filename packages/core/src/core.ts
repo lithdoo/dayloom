@@ -110,7 +110,6 @@ class DayloomCoreImpl implements DayloomCore {
         runner: this.runner, reactBin: this.boundaries.reactBin,
         validateProcessPile: this.boundaries.validateProcessPile,
         config, context: session.contextDir, conversation: session.conversationDir,
-        continuationPolicy: { retrievalAvailable: this.activeSession?.workspace === session, allowedToolNames: this.activeSession?.files.binding.toolNames, nextActionSection: 'NEXT_TOOL_ACTION' },
         assertBeforeFinal: this.activeSession?.workspace === session
           ? (workPath) => this.activeSession?.files.assertReadyForFinal(workPath)
           : undefined,

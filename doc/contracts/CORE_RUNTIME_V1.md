@@ -29,9 +29,9 @@
 
 Core 固定使用 Promptpile React Process Pile v1，并通过 CLI 唯一传入 `--max-step 10`。十步是所有 Session 共用的硬安全上限而不是目标，派生 TOML 不重复声明步数。
 
-所有 Dayloom 模型提示词由 `session/prompts/` 独立拥有，说明文本统一使用中文，并通过 `@dayloom/core/prompts` 子路径单独导出。协议标记、工具名、枚举值和 JSON Schema 字段名保持机器契约原值；根入口不导出提示词。
+所有 Dayloom 模型提示词由 `session/prompts/` 独立拥有，提示词说明文本统一使用中文，并通过 `@dayloom/core/prompts` 子路径单独导出；模型各阶段的自然语言输出跟随最新用户消息的语言。协议标记、工具名、枚举值和 JSON Schema 字段名保持机器契约原值；根入口不导出提示词。
 
-终止证据必须与 Check 决策精确耦合：Check 返回 `false` 时只接受 `stop_reason=final`；Check 返回 `true` 且十步预算耗尽时只接受 `stop_reason=max_step`。Check 只有在 Observe 为 `needs-more`、存在具体且非重复的下一 Archive Retrieval、Session 具有 retrieval binding，且新证据会实质提升正确性时才可继续；证据充分、检索阻塞或需要用户澄清时必须停止。两条终止路径都必须包含已完成、非空且与 Final 增量完全一致的内容。事件缺失、乱序、跨 process、步数不一致、非法继续、Final 跳过或证据不匹配均失败关闭。
+终止证据必须与 Check 决策精确耦合：`react_check_decision` 是循环控制的唯一机器依据；Check 返回 `false` 时只接受 `stop_reason=final`，返回 `true` 且十步预算耗尽时只接受 `stop_reason=max_step`。Observe 的 `NEXT_TOOL_ACTION` 和 `UNRESOLVED` 只用于帮助 Check 与 Final 理解交接，不由 Core 解析或二次决策。工具名、参数、权限、读后写约束和重复副作用在实际工具调用边界校验，进入 Final 前再校验工作区与检索闭包。两条终止路径都必须包含已完成、非空且与 Final 增量完全一致的内容；事件缺失、乱序、跨 process、步数不一致、Final 跳过或证据不匹配均失败关闭。
 
 ## 版本边界
 

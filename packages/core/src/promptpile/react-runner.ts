@@ -34,11 +34,10 @@ export interface RunReactInput {
   observer?: ReactProcessObserver;
   onChild?: (child: ChildProcess) => void;
   assertBeforeFinal?: (workPath: string) => void;
-  continuationPolicy?: { retrievalAvailable: boolean; allowedToolNames?: readonly string[]; nextActionSection?: string };
   timeoutMs?: number;
 }
 
-type ReactProtocolErrorCode = 'JSONL' | 'SCHEMA' | 'SEQUENCE' | 'PHASE' | 'STOP_REASON' | 'FINAL_EVIDENCE' | 'CONTINUE_POLICY' | 'CHILD_EXIT';
+type ReactProtocolErrorCode = 'JSONL' | 'SCHEMA' | 'SEQUENCE' | 'PHASE' | 'STOP_REASON' | 'FINAL_EVIDENCE' | 'CHILD_EXIT';
 
 class ReactProtocolError extends Error {
   readonly name = 'ReactProtocolError';
@@ -55,7 +54,7 @@ export async function runReact(input: RunReactInput): Promise<string> {
 
 async function runProcessPile(input: RunReactInput): Promise<string> {
   const args = [...baseArgs(input), '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json'];
-  const reducer = new ProcessPileReducer(input.validateProcessPile, input.observer, input.assertBeforeFinal, input.continuationPolicy);
+  const reducer = new ProcessPileReducer(input.validateProcessPile, input.observer, input.assertBeforeFinal);
   let buffer = '';
   let failedProjected = false;
   const projectLocalFailure = (message: string) => {
@@ -101,9 +100,6 @@ class ProcessPileReducer {
   private expectedStopReason: 'final' | 'max_step' | null = null;
   private terminal: ProcessEvent | null = null;
   private finalText = '';
-  private currentObserveText = '';
-  private latestObserveText = '';
-  private readonly requestedRetrievals = new Set<string>();
   workPath: string | null = null;
   protocolFailureProjected = false;
 
@@ -111,7 +107,6 @@ class ProcessPileReducer {
     private readonly validate: ValidateFunction,
     private readonly observer?: ReactProcessObserver,
     private readonly assertBeforeFinal?: (workPath: string) => void,
-    private readonly continuationPolicy?: { retrievalAvailable: boolean; allowedToolNames?: readonly string[]; nextActionSection?: string },
   ) {}
 
   consume(line: string): void {
@@ -164,14 +159,12 @@ class ProcessPileReducer {
     const expectedStep = this.checkCompletions;
     if (event.step_index !== expectedStep || expectedStep >= this.maxSteps) throw protocolError('PHASE', 'React Process Pile step index is invalid.');
     this.active = { phase: event.phase!, stepIndex: event.step_index };
-    if (event.phase === 'observe') this.currentObserveText = '';
   }
 
   private phaseDelta(event: ProcessEvent): void {
     if (!this.active || event.phase !== this.active.phase || event.step_index !== this.active.stepIndex) throw protocolError('PHASE', 'React Process Pile delta is outside its active phase.');
     if (event.phase === 'final') { this.finalText += event.content!; this.observer?.outputDelta?.(event.content!); }
     else {
-      if (event.phase === 'observe') this.currentObserveText += event.content!;
       this.observer?.workDelta?.(event.phase!, event.step_index!, event.content!);
     }
   }
@@ -180,9 +173,8 @@ class ProcessPileReducer {
     if (!this.active || event.phase !== this.active.phase || event.step_index !== this.active.stepIndex) throw protocolError('PHASE', 'React Process Pile phase completion is out of order.');
     this.active = null;
     if (event.phase === 'thought') this.expectedPhase = 'observe';
-    else if (event.phase === 'observe') { this.latestObserveText = this.currentObserveText; this.expectedPhase = 'check'; }
+    else if (event.phase === 'observe') this.expectedPhase = 'check';
     else if (event.phase === 'check') {
-      if (event.continue === true) this.assertContinuationAllowed();
       this.checkCompletions += 1;
       if (event.continue === true && this.checkCompletions < this.maxSteps) {
         this.expectedPhase = 'thought';
@@ -194,20 +186,6 @@ class ProcessPileReducer {
     } else this.expectedPhase = 'terminal';
   }
 
-  private assertContinuationAllowed(): void {
-    if (!this.continuationPolicy) return;
-    if (!this.continuationPolicy.retrievalAvailable) throw protocolError('CONTINUE_POLICY', 'React requested another step without an available retrieval capability.');
-    const status = observeSection(this.latestObserveText, 'RETRIEVAL_STATUS');
-    if (status !== 'needs-more') throw protocolError('CONTINUE_POLICY', 'React may continue only when Observe retrieval status is needs-more.');
-    const next = observeSection(this.latestObserveText, this.continuationPolicy.nextActionSection ?? 'NEXT_RETRIEVAL');
-    if (!next || next === '<none>') throw protocolError('CONTINUE_POLICY', 'React requested another step without a concrete next retrieval.');
-    const allowed = this.continuationPolicy.allowedToolNames ?? ['list_directory', 'directory_tree', 'search_files', 'search_files_content', 'read_file_lines'];
-    if (!allowed.some((tool) => next.includes(tool))) throw protocolError('CONTINUE_POLICY', 'React next action does not name an available tool.');
-    const normalized = next.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (this.requestedRetrievals.has(normalized)) throw protocolError('CONTINUE_POLICY', 'React requested a repeated retrieval action.');
-    this.requestedRetrievals.add(normalized);
-  }
-
   private validateCompleted(event: ProcessEvent): void {
     if (this.active || event.steps_completed !== this.checkCompletions) throw protocolError('SEQUENCE', 'React Process Pile terminal step count is inconsistent.');
     if (event.final?.status === 'completed') {
@@ -217,10 +195,4 @@ class ProcessPileReducer {
       throw protocolError(event.stop_reason !== this.expectedStopReason ? 'STOP_REASON' : 'FINAL_EVIDENCE', 'React Process Pile skipped Final evidence is inconsistent.');
     } else throw protocolError('FINAL_EVIDENCE', 'React Final was skipped.');
   }
-}
-
-function observeSection(text: string, name: string): string | null {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = new RegExp(`^\\[${escaped}\\]\\s*\\r?\\n([\\s\\S]*?)(?=^\\[[A-Z_]+\\]\\s*$|\\s*$)`, 'm').exec(text);
-  return match ? match[1].trim() : null;
 }

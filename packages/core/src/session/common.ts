@@ -24,8 +24,8 @@ export async function createSessionWorkspace(runtimeRoot: string, id: string, co
   await Promise.all([mkdir(contextDir, { recursive: true }), mkdir(conversationDir, { recursive: true }), mkdir(react, { recursive: true }), mkdir(requestsDir, { recursive: true })]);
   const thought = path.join(react, 'thought.md'), observe = path.join(react, 'observe.md'), check = path.join(react, 'check.md'), tools = tooling?.toolsFile ?? path.join(react, 'tools.toml'), sendFinal = path.join(react, 'final.md'), sendConfig = path.join(react, 'send.toml');
   const summaryPromptPath = path.join(compression, 'summary.system.md'), summaryConfigPath = path.join(compression, 'summary.toml');
-  const retrievalAvailable = tooling !== undefined;
-  await Promise.all([writeFile(thought, definition.thought), writeFile(observe, buildDayloomObservePrompt(retrievalAvailable)), writeFile(check, buildDayloomCheckPrompt(retrievalAvailable)), ...(tooling ? [] : [writeFile(tools, 'tools = []\n')]), writeFile(sendFinal, definition.sendFinal), writeFile(summaryPromptPath, SUMMARY_SYSTEM_PROMPT)]);
+  const toolsAvailable = tooling !== undefined;
+  await Promise.all([writeFile(thought, definition.thought), writeFile(observe, buildDayloomObservePrompt(toolsAvailable)), writeFile(check, buildDayloomCheckPrompt(toolsAvailable)), ...(tooling ? [] : [writeFile(tools, 'tools = []\n')]), writeFile(sendFinal, definition.sendFinal), writeFile(summaryPromptPath, SUMMARY_SYSTEM_PROMPT)]);
   await Promise.all([writeReactConfig(config, { thoughtPrompt: thought, observePrompt: observe, checkPrompt: check, toolsFile: tools, afterHookPath: tooling?.afterHookPath, finalPrompt: sendFinal, config: sendConfig }), writeSummaryConfig(config, summaryConfigPath)]);
   return { id, kind: definition.kind, root, contextDir, conversationDir, sendConfig, requestsDir, summaryConfigPath, summaryPromptPath, pinned: definition.pinned, day: definition.day ?? null };
 }

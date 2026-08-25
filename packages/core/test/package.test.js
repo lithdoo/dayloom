@@ -9,7 +9,7 @@ test('public API exports only application contract', () => {
   assert.deepEqual(Object.keys(api).sort(), ['CoreInitializationError', 'createDayloomCore']);
 });
 
-test('Chinese prompts are exported from the dedicated package subpath', () => {
+test('Chinese-authored prompts are exported with one user-language output policy', () => {
   const prompts = require('@dayloom/core/prompts');
   for (const name of ['INIT_THOUGHT_PROMPT', 'PLANNING_THOUGHT_PROMPT', 'PLAY_THOUGHT_PROMPT', 'REVISE_THOUGHT_PROMPT']) {
     assert.equal(typeof prompts[name], 'string', `${name} must be exported`);
@@ -17,6 +17,12 @@ test('Chinese prompts are exported from the dedicated package subpath', () => {
   const strings = Object.entries(prompts).filter(([name, value]) => typeof value === 'string' && /(?:PROMPT|POLICY|GUIDE|NOTE|DISCIPLINE|ROLE|MARKER)$/.test(name));
   assert.ok(strings.length >= 15);
   for (const [name, value] of strings) assert.match(value, /[\u4e00-\u9fff]/, `${name} must contain Chinese instructions`);
+  assert.match(prompts.USER_LANGUAGE_POLICY, /跟随最新一条用户消息的语言/);
+  for (const value of [
+    prompts.composeThoughtPrompt('会话角色'), prompts.buildDayloomObservePrompt(true), prompts.buildDayloomCheckPrompt(true),
+    prompts.FINAL_VISIBILITY_NOTE, prompts.CONVERSION_THOUGHT_PROMPT, prompts.CONVERSION_OBSERVE_PROMPT,
+    prompts.CONVERSION_CHECK_PROMPT, prompts.CONVERSION_FINAL_PROMPT,
+  ]) assert.equal(value.includes(prompts.USER_LANGUAGE_POLICY), true);
   assert.match(prompts.buildDayloomObservePrompt(false), /\[NEXT_TOOL_ACTION\]/);
   assert.match(prompts.buildDayloomCheckPrompt(true), /工具动作/);
   assert.equal(corePackage.exports['./prompts'].require, './dist/session/prompts/index.js');

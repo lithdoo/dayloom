@@ -46,7 +46,8 @@ export interface ReactConfigPaths {
 export async function writeReactConfig(config: CallerConfig, paths: ReactConfigPaths): Promise<void> {
   const derived = { ...config, 'promptpile-react': {
     tools_file: paths.toolsFile, thought_prompt: paths.thoughtPrompt, observe_prompt: paths.observePrompt, check_prompt: paths.checkPrompt,
-    final_prompt: paths.finalPrompt, ...(paths.afterHookPath ? { after_hook: paths.afterHookPath } : {}),
+    final_prompt: paths.finalPrompt, observe_llm_api_temperature: 0, check_llm_api_temperature: 0,
+    ...(paths.afterHookPath ? { after_hook: paths.afterHookPath } : {}),
   } };
   await writeFile(paths.config, TOML.stringify(derived as TOML.JsonMap), 'utf8');
 }

@@ -34,6 +34,10 @@ test('session prompts are UTF-8 Chinese and workspace owns one visible Final con
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-contract-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); const caller = path.join(root, 'llm.toml'); fs.writeFileSync(caller, '[[llm_api]]\nname="test"\nmodel="test"\n');
   const config = await readCallerConfig(caller), workspace = await createInitWorkspace(root, 'session', config);
   assert.equal(fs.existsSync(path.join(workspace.root, 'react/final.md')), true); assert.equal(fs.existsSync(path.join(workspace.root, 'react/final-submit.md')), false); assert.equal('submitMarker' in workspace, false); assert.equal('submitConfig' in workspace, false);
-  const derived = path.join(root, 'single.toml'); await writeReactConfig(config, { thoughtPrompt: 'thought', observePrompt: 'observe', checkPrompt: 'check', toolsFile: 'tools', finalPrompt: 'final', config: derived }); assert.equal(TOML.parse(fs.readFileSync(derived, 'utf8'))['promptpile-react'].final_prompt, 'final');
+  const derived = path.join(root, 'single.toml'); await writeReactConfig(config, { thoughtPrompt: 'thought', observePrompt: 'observe', checkPrompt: 'check', toolsFile: 'tools', finalPrompt: 'final', config: derived });
+  assert.deepEqual(TOML.parse(fs.readFileSync(derived, 'utf8'))['promptpile-react'], {
+    tools_file: 'tools', thought_prompt: 'thought', observe_prompt: 'observe', check_prompt: 'check', final_prompt: 'final',
+    observe_llm_api_temperature: 0, check_llm_api_temperature: 0,
+  });
 });
 function* walk(root) { for (const entry of fs.readdirSync(root, { withFileTypes: true })) { const target = path.join(root, entry.name); if (entry.isDirectory()) yield* walk(target); else yield target; } }

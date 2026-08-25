@@ -31,6 +31,41 @@ function processPile(final = 'visible final') {
   ].map(JSON.stringify).join('\n') + '\n';
 }
 
+function continuationPile(steps, final = 'continued final') {
+  const events = [{ schema_version: 1, process_id: PROCESS_ID, type: 'process.started', max_steps: steps.length, work_id: WORK_ID, work_path: WORK_PATH, work_lifecycle: 'cleanup' }];
+  for (const [stepIndex, step] of steps.entries()) {
+    events.push(
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.started', phase: 'thought', step_index: stepIndex },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.delta', phase: 'thought', step_index: stepIndex, channel: 'assistant_text', content: `think-${stepIndex}` },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.completed', phase: 'thought', step_index: stepIndex },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.started', phase: 'observe', step_index: stepIndex },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.delta', phase: 'observe', step_index: stepIndex, channel: 'assistant_text', content: `[EVIDENCE]\n<none>\n[UNRESOLVED]\n${step.unresolved}\n[NEXT_TOOL_ACTION]\n${step.next}` },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.completed', phase: 'observe', step_index: stepIndex },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.started', phase: 'check', step_index: stepIndex },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.delta', phase: 'check', step_index: stepIndex, channel: 'assistant_text', content: `check-${stepIndex}` },
+      { schema_version: 1, process_id: PROCESS_ID, type: 'phase.completed', phase: 'check', step_index: stepIndex, continue: step.continue },
+    );
+  }
+  const last = steps.at(-1);
+  events.push(
+    { schema_version: 1, process_id: PROCESS_ID, type: 'work.ready', work_id: WORK_ID, work_path: WORK_PATH, status: 'checked' },
+    { schema_version: 1, process_id: PROCESS_ID, type: 'phase.started', phase: 'final' },
+    { schema_version: 1, process_id: PROCESS_ID, type: 'phase.delta', phase: 'final', channel: 'assistant_text', content: final },
+    { schema_version: 1, process_id: PROCESS_ID, type: 'phase.completed', phase: 'final' },
+    { schema_version: 1, process_id: PROCESS_ID, type: 'process.completed', stop_reason: last.continue ? 'max_step' : 'final', steps_completed: steps.length, final: { status: 'completed', content: final } },
+  );
+  return events.map((event, sequence) => JSON.stringify({ ...event, sequence })).join('\n') + '\n';
+}
+
+async function runContinuationPile(stream) {
+  const boundaries = await resolvePackagedBoundaries();
+  return runReact({
+    runner: { async run(_bin, _args, options) { options.onExtraPipe(stream); return { code: 0, stdout: '', stderr: '' }; } },
+    reactBin: 'react', validateProcessPile: boundaries.validateProcessPile,
+    config: 'c', context: 'x', conversation: 'y',
+  });
+}
+
 test('Process Pile v1 streams work and delays output.completed until child settlement', async () => {
   const boundaries = await resolvePackagedBoundaries();
   const stream = processPile('answer'); let release; const observed = [];
@@ -58,6 +93,14 @@ test('Process Pile v1 streams work and delays output.completed until child settl
   assert.equal(observed.at(-1)[0], 'output.completed');
   assert.deepEqual(observed.filter(([type]) => type === 'work.delta').map((entry) => entry[1]), ['thought', 'observe', 'check']);
   assert.equal(observed.find(([type]) => type === 'work.started')[1], WORK_PATH);
+});
+
+test('structured Check decision is the sole loop control and Core does not interpret Observe prose', async () => {
+  const stream = continuationPile([
+    { unresolved: '仍有工作。', next: '模型可以用任意自然语言描述计划。', continue: true },
+    { unresolved: '<none>', next: '<none>', continue: false },
+  ]);
+  assert.equal(await runContinuationPile(stream), 'continued final');
 });
 
 class ProcessPileRunner {
