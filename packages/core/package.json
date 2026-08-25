@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./prompts": {
+      "types": "./dist/session/prompts/index.d.ts",
+      "require": "./dist/session/prompts/index.js",
+      "default": "./dist/session/prompts/index.js"
     }
   },
   "files": [

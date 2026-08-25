@@ -30,9 +30,15 @@ for (const file of await files(root)) {
     if (forbidden.some((rule) => rule.test(match[1]))) violations.push(`${file}: forbidden import ${match[1]}`);
     if (file.endsWith(`${path.sep}session${path.sep}lifecycle.ts`) && match[1] === './play') violations.push(`${file}: shared Session policy must not be owned by Play`);
   }
+  const sessionRoot = `${path.sep}session${path.sep}`;
+  const promptsRoot = `${path.sep}session${path.sep}prompts${path.sep}`;
+  if (file.includes(sessionRoot) && !file.includes(promptsRoot) && /\b(?:PROMPT|POLICY|GUIDE|DISCIPLINE|AUTHORITY_NOTE|SESSION_ROLE|SUBMIT_MARKER)\b\s*=\s*`/.test(source)) {
+    violations.push(`${file}: model prompts must be owned by session/prompts`);
+  }
 }
 const packageJson = JSON.parse(await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 if (/play-only|minimal.*play runtime/i.test(packageJson.description)) violations.push('package description must describe the complete product lifecycle');
+if (packageJson.exports?.['./prompts']?.require !== './dist/session/prompts/index.js') violations.push('package must export the dedicated Chinese prompts subpath');
 if (violations.length) {
   console.error(violations.join('\n'));
   process.exitCode = 1;

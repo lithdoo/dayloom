@@ -40,12 +40,12 @@ export function deriveSummaryConfig(config: CallerConfig): CallerConfig {
 }
 
 export interface DerivedReactPaths {
-  thoughtPrompt: string; observePrompt: string; toolsFile: string; afterHookPath?: string;
+  thoughtPrompt: string; observePrompt: string; checkPrompt: string; toolsFile: string; afterHookPath?: string;
   sendFinalPrompt: string; submitFinalPrompt: string; sendConfig: string; submitConfig: string; summaryConfig: string;
 }
 export async function writeDerivedConfigs(config: CallerConfig, paths: DerivedReactPaths): Promise<void> {
   const derive = (final: string) => ({ ...config, 'promptpile-react': {
-    tools_file: paths.toolsFile, thought_prompt: paths.thoughtPrompt, observe_prompt: paths.observePrompt,
+    tools_file: paths.toolsFile, thought_prompt: paths.thoughtPrompt, observe_prompt: paths.observePrompt, check_prompt: paths.checkPrompt,
     final_prompt: final, ...(paths.afterHookPath ? { after_hook: paths.afterHookPath } : {}),
   } });
   await Promise.all([

@@ -17,8 +17,9 @@ const SECTIONS = ['SESSION', 'USER_INTENT', 'AUTHORITATIVE_FACTS', 'EXACT_IDS', 
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 async function waitFor(predicate) { while (!predicate()) await turn(); }
 
-function observeHandoff(invocation) {
-  return `[SESSION]\nPlay invocation ${invocation}\n\n[USER_INTENT]\nContinue the requested Dayloom operation.\n\n[AUTHORITATIVE_FACTS]\nPinned context and writable history remain authoritative.\n\n[EXACT_IDS]\nworld1, day1, beat1\n\n[DECISIONS]\nUse the fixture Final for invocation ${invocation}.\n\n[CONSTRAINTS]\nDo not override schema, identifiers, or publication ownership.\n\n[UNRESOLVED]\n<none>\n\n[FINAL_CONTRACT]\nReturn the configured fixture response.`;
+function observeHandoff(invocation, retrievalStatus = 'sufficient') {
+  const next = retrievalStatus === 'needs-more' ? `read_file_lines path=canon/premise.md start_line=${invocation} end_line=${invocation + 1}` : '<none>';
+  return `[SESSION]\nPlay invocation ${invocation}; retrieval_available=true\n\n[USER_INTENT]\nContinue the requested Dayloom operation.\n\n[RETRIEVAL_STATUS]\n${retrievalStatus}\n\n[AUTHORITATIVE_FACTS]\npublished:canon/premise.md Pinned context remains authoritative.\n\n[RETRIEVAL_EVIDENCE]\n<none>\n\n[EXACT_IDS]\nworld1, day1, beat1\n\n[DECISIONS]\npublished:days/day1/plan.json Use the fixture Final for invocation ${invocation}.\n\n[CONSTRAINTS]\nDo not override schema, identifiers, or publication ownership.\n\n[UNRESOLVED]\n<none>\n\n[NEXT_RETRIEVAL]\n${next}\n\n[FINAL_CONTRACT]\nAnswer the latest user turn with the configured fixture response.`;
 }
 
 async function fixtureProvider(t, finals, options = {}) {
@@ -56,7 +57,7 @@ function respond(response, requestNumber, finals, options = {}) {
         response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `check-${requestNumber}`, type: 'function', function: { name: 'react_check_decision', arguments: JSON.stringify({ decision: true }) } }] } }] })}\n\ndata: [DONE]\n\n`);
         return;
       }
-      const content = phase === 0 ? `RAW_THOUGHT_${Math.floor((requestNumber - 1) / 3) + 1}` : observeHandoff(Math.floor((requestNumber - 1) / 3) + 1);
+      const content = phase === 0 ? `RAW_THOUGHT_${Math.floor((requestNumber - 1) / 3) + 1}` : observeHandoff(Math.floor((requestNumber - 1) / 3) + 1, 'needs-more');
       response.end(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`);
       return;
     }
@@ -171,6 +172,7 @@ test('real beta.5 returns a completed Final with max_step at the frozen ten-step
     config: session.sendConfig,
     context: session.contextDir,
     conversation: session.conversationDir,
+    continuationPolicy: { retrievalAvailable: true },
   });
   assert.equal(final, 'visible-budget-final');
   assert.equal(provider.requests.length, 31);

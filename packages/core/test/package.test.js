@@ -9,6 +9,16 @@ test('public API exports only application contract', () => {
   assert.deepEqual(Object.keys(api).sort(), ['CoreInitializationError', 'createDayloomCore']);
 });
 
+test('Chinese prompts are exported from the dedicated package subpath', () => {
+  const prompts = require('@dayloom/core/prompts');
+  const strings = Object.entries(prompts).filter(([name, value]) => typeof value === 'string' && /(?:PROMPT|POLICY|GUIDE|NOTE|DISCIPLINE|ROLE|MARKER)$/.test(name));
+  assert.ok(strings.length >= 20);
+  for (const [name, value] of strings) assert.match(value, /[\u4e00-\u9fff]/, `${name} must contain Chinese instructions`);
+  assert.match(prompts.buildDayloomObservePrompt(false), /当前会话能力为 retrieval_available=false/);
+  assert.match(prompts.buildDayloomCheckPrompt(true), /当前会话的检索能力为 retrieval_available=true/);
+  assert.equal(corePackage.exports['./prompts'].require, './dist/session/prompts/index.js');
+});
+
 test('core pins the frozen promptpile-compress release', () => {
   assert.equal(corePackage.dependencies['promptpile-compress'], '0.1.0-beta.2');
 });
