@@ -124,7 +124,12 @@ export function createDriverFromCore(options: {
         else appendLocal('warn', 'AI 正在回复；如需中断，请输入 /exit 或 /cancel。');
         emit(); return;
       }
-      if (presentedSession.status === 'cancelling' || presentedSession.status === 'submitting') return;
+      if (presentedSession.status === 'submitting') {
+        if (token === '/exit' || token === '/cancel') await requestSessionCancel(presentedSession.id);
+        else appendLocal('warn', '正在提交；如需中断，请输入 /exit 或 /cancel。');
+        emit(); return;
+      }
+      if (presentedSession.status === 'cancelling') return;
       if (trimmed.startsWith('/')) { await handleReadySlash(token); return; }
       if (!sessionControls().input) { appendLocal('warn', '当前会话暂不接受普通输入。'); emit(); return; }
       await requestSend(trimmed);
@@ -279,6 +284,9 @@ export function createDriverFromCore(options: {
     if (result.ok && latestCoreState.session === null) {
       discardTranscript(); presentedSession = null; page = { kind: 'hub', mode: 'status', busy: null }; hubMode = 'status';
       recent = { kind: 'completed', label: '会话已提交', detail: null };
+    } else if (!result.ok && result.error.code === 'CANCELLED' && latestCoreState.session?.id === session.id) {
+      presentedSession = { ...presentedSession, status: latestCoreState.session.status, error: null };
+      recent = { kind: 'cancelled', label: '提交已取消', detail: null };
     } else if (!result.ok && latestCoreState.session?.id === session.id) {
       appendLocal('error', result.error.message);
       presentedSession = { ...presentedSession, status: latestCoreState.session.status, error: result.error };
@@ -314,9 +322,9 @@ export function createDriverFromCore(options: {
       presentedSession = { ...presentedSession, status: latestCoreState.session.status, error: result.error };
       appendLocal('error', result.error.message);
     } else if (result.ok) {
-      const error = { code: 'INTERNAL_ERROR', message: 'Core reported cancellation success with an active Session.' };
-      presentedSession = { ...presentedSession, status: latestCoreState.session.status, error };
-      appendLocal('error', error.message);
+      activeSendRequest = null; presentation = closePresentation(presentation);
+      presentedSession = { ...presentedSession, status: latestCoreState.session.status, error: null };
+      recent = { kind: 'cancelled', label: '当前操作已取消', detail: null };
     }
     emit();
   }
@@ -328,7 +336,8 @@ export function createDriverFromCore(options: {
   function sessionControls(): TuiSessionControls {
     if (!presentedSession) return { input: false, submit: false, cancel: false, dismiss: false };
     if (presentedSession.status === 'failed') return { input: false, submit: false, cancel: false, dismiss: true };
-    if (presentedSession.status === 'cancelling' || presentedSession.status === 'submitting') return { input: false, submit: false, cancel: false, dismiss: false };
+    if (presentedSession.status === 'cancelling') return { input: false, submit: false, cancel: false, dismiss: false };
+    if (presentedSession.status === 'submitting') return { input: false, submit: false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
     if (presentedSession.status === 'running') return { input: false, submit: false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
     return {
       input: latestCoreState.capabilities.send,

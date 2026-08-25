@@ -39,6 +39,32 @@ test('presentation reducer caps work memory and ignores duplicate, foreign, and 
   assert.strictEqual(late, state); assert.deepEqual({ status: state.items[0].status, detail: state.items[0].detail, text: state.items[0].text }, { status: 'cancelled', detail: '工作过程已取消', text: '' });
 });
 
+test('presentation reducer presents submission stages and diagnostics as one operation', async () => {
+  const { reducePresentation } = await import(reducerModule);
+  let state = reducePresentation(base(), { type: 'submission.stage', sessionId: 'session-1', operationId: 'submission-1', stage: 'lint', attempt: 1 });
+  assert.equal(state.operation.operationId, 'submission-1');
+  assert.equal(state.items.length, 1);
+  assert.equal(state.items[0].detail, '提交阶段：校验 Draft（第 1 次）');
+
+  state = reducePresentation(state, {
+    type: 'submission.diagnostics', sessionId: 'session-1', operationId: 'submission-1',
+    diagnostics: [
+      { code: 'DRAFT_INVALID', severity: 'error', path: 'Draft.md', message: '缺少章节' },
+      { code: 'REVIEW_ADVISORY', severity: 'warning', path: 'world', message: '建议补充细节' },
+    ],
+  });
+  assert.equal(state.items[0].detail, '提交诊断：1 个错误，1 个建议。');
+
+  state = reducePresentation(state, { type: 'submission.stage', sessionId: 'session-1', operationId: 'submission-1', stage: 'publish', attempt: 1 });
+  assert.equal(state.items.length, 1);
+  assert.equal(state.items[0].detail, '提交阶段：原子发布（第 1 次）');
+
+  state = reducePresentation(state, { type: 'work.started', sessionId: 'session-1', operationId: 'submission-1', workPath: 'C:\\temp\\submission-1' });
+  assert.equal(state.items[0].workPath, 'C:\\temp\\submission-1');
+  const duplicate = reducePresentation(state, { type: 'work.started', sessionId: 'session-1', operationId: 'submission-1', workPath: 'C:\\temp\\submission-1' });
+  assert.strictEqual(duplicate, state);
+});
+
 test('presentation reducer closes a completed work item on pre-Final failure and rejects invalid or duplicate Final starts', async () => {
   const { reducePresentation } = await import(reducerModule);
   let state = reducePresentation(base(), started);

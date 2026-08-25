@@ -19,8 +19,22 @@ export function reducePresentation(state: PresentationState, event: Exclude<Core
   if (!operation || operation.closed || event.sessionId !== operation.sessionId) return state;
   if (operation.operationId !== null && event.operationId !== operation.operationId) return state;
 
+  if (event.type === 'submission.stage') {
+    const detail = `提交阶段：${stageLabel(event.stage)}（第 ${event.attempt} 次）`;
+    if (operation.operationId === null) return { operation: { ...operation, operationId: event.operationId }, items: [...state.items, submissionWorkingItem(event, detail)] };
+    const stageIndex = state.items.findIndex((item) => isWorking(item) && item.sessionId === event.sessionId && item.operationId === event.operationId);
+    if (stageIndex < 0) return state; const stageWork = state.items[stageIndex] as TuiWorkingItem;
+    return replace(state, stageIndex, { ...stageWork, status: 'streaming', phase: null, stepIndex: null, text: '', workPath: null, pathStatus: 'live', detail });
+  }
+
   if (event.type === 'work.started') {
-    if (operation.operationId !== null) return state;
+    if (operation.operationId !== null) {
+      const startedIndex = state.items.findIndex((item) => isWorking(item) && item.sessionId === event.sessionId && item.operationId === event.operationId);
+      if (startedIndex < 0) return state;
+      const startedWork = state.items[startedIndex] as TuiWorkingItem;
+      if (startedWork.workPath !== null) return state;
+      return replace(state, startedIndex, { ...startedWork, status: 'streaming', workPath: event.workPath, pathStatus: 'live' });
+    }
     return {
       operation: { ...operation, operationId: event.operationId },
       items: [...state.items, workingItem(event)],
@@ -32,13 +46,18 @@ export function reducePresentation(state: PresentationState, event: Exclude<Core
   if (index < 0) return state;
   const work = state.items[index] as TuiWorkingItem;
 
+  if (event.type === 'submission.diagnostics') {
+    const errors = event.diagnostics.filter((item) => item.severity === 'error').length, advisory = event.diagnostics.length - errors;
+    return replace(state, index, { ...work, detail: `提交诊断：${errors} 个错误，${advisory} 个建议。` });
+  }
+
   if (event.type === 'work.delta') {
     if (work.status !== 'streaming') return state;
     const appended = appendLimited(work.text, event.text);
     return replace(state, index, { ...work, phase: event.phase, stepIndex: event.stepIndex, text: appended.text, truncated: work.truncated || appended.truncated });
   }
   if (event.type === 'work.completed') {
-    if (work.status !== 'streaming' || event.workPath !== work.workPath) return state;
+    if (work.status !== 'streaming' || work.workPath !== null && event.workPath !== work.workPath) return state;
     return replace(state, index, { ...work, phase: null, stepIndex: null, text: '', truncated: false, status: 'completed', workPath: event.workPath, pathStatus: 'live', detail: null });
   }
   if (event.type === 'work.failed') {
@@ -53,6 +72,7 @@ export function reducePresentation(state: PresentationState, event: Exclude<Core
     const message: TuiMessage = { id: event.messageId, operationId: event.operationId, role: 'assistant', text: '', status: 'streaming' };
     return { ...state, items: [...state.items, message] };
   }
+  if (event.type !== 'output.delta' && event.type !== 'output.completed' && event.type !== 'output.failed') return state;
   const messageIndex = state.items.findIndex((item) => !isWorking(item) && item.id === event.messageId);
   if (messageIndex < 0) return state;
   const message = state.items[messageIndex] as TuiMessage;
@@ -82,6 +102,10 @@ function workingItem(event: Extract<CoreEvent, { type: 'work.started' }>): TuiWo
   };
 }
 
+function submissionWorkingItem(event: Extract<CoreEvent, { type: 'submission.stage' }>, detail: string): TuiWorkingItem {
+  return { kind: 'working', id: `operation:${event.sessionId}:${event.operationId}`, sessionId: event.sessionId, operationId: event.operationId, phase: null, stepIndex: null, text: '', truncated: false, status: 'streaming', workPath: null, pathStatus: 'live', detail };
+}
+
 function appendLimited(current: string, delta: string): { text: string; truncated: boolean } {
   const combined = current + delta;
   if (combined.length <= MAX_WORK_TEXT_CHARS) return { text: combined, truncated: false };
@@ -101,3 +125,4 @@ function expireWork(state: PresentationState, operationId: string, closed: boole
 }
 
 function safeDetail(message: string): string { return message.trim() || '工作过程未完成'; }
+function stageLabel(stage: Extract<CoreEvent, { type: 'submission.stage' }>['stage']): string { return ({ lint: '校验 Draft', allocate: '分配 ID', convert: '转换 Candidate', validate: '程序校验', repair: '修复 Candidate', review: '语义审查', diff: '计算差异', publish: '原子发布' })[stage]; }

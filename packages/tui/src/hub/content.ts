@@ -32,7 +32,7 @@ export function formatHubHelp(input: { actions: readonly TuiHubAction[] }): stri
     ...input.actions.filter((action) => action.shortcut).map((action) => `- ${action.shortcut}: ${action.label}`),
     '', 'Session 输入', '', '- 普通文本: 发送给当前会话', '- /submit: 提交当前会话产物',
     '- /cancel 或 /exit: 取消当前会话并回到 Hub', '- /status、/help、/next、/revise: Session 中本地提示',
-    '- AI 回复中仍可用 /cancel 或 /exit 中断', '- 提交中输入禁用',
+    '- AI 回复或提交中仍可用 /cancel 或 /exit 中断', '- 提交中不接受普通输入',
   ].join('\n');
 }
 

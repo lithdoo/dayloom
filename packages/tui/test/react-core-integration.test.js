@@ -12,14 +12,15 @@ const driverModule = new URL('../dist/runtime-driver/create-runtime-driver-from-
 
 test('real Promptpile React streams Thought Observe Check and Final through Core into TUI presentation', { timeout: 25_000 }, async (t) => {
   const provider = await fixtureProvider(t);
-  const archive = archiveFixture(); t.after(archive.cleanup);
+  const archive = archiveFixture();
   fs.writeFileSync(archive.config, [
     '[[llm_api]]', 'name = "local"', 'model = "fixture-model"', `base_url = "${provider.baseUrl}"`, 'api_key = "fixture-key"', '',
     '[promptpile]', 'llm_api = "local"', '',
   ].join('\n'));
   const core = await createDayloomCore({ worldRoot: archive.root, llmConfigPath: archive.config });
   const { createRuntimeDriverFromCoreForTest } = await import(driverModule);
-  const driver = createRuntimeDriverFromCoreForTest({ worldRoot: archive.root, core }); t.after(() => driver.dispose());
+  const driver = createRuntimeDriverFromCoreForTest({ worldRoot: archive.root, core });
+  t.after(async () => { await driver.dispose(); archive.cleanup(); });
   const seenPhases = new Set();
   driver.subscribe((snapshot) => {
     for (const item of snapshot.presentationItems) if ('kind' in item && item.kind === 'working' && item.phase) seenPhases.add(item.phase);

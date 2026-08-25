@@ -70,7 +70,7 @@ export class ScriptedDayloomCore {
   async cancel() {
     this.calls.push(['cancel']);
     if (this.handlers.cancel) return this.handlers.cancel(this);
-    if (!this.session || this.session.status === 'submitting') return failure('NOT_AVAILABLE', 'cancel unavailable.');
+    if (!this.session) return failure('NOT_AVAILABLE', 'cancel unavailable.');
     this.session = null; this.changed(); return success();
   }
   async settle() {
@@ -133,7 +133,7 @@ function capabilities(world, session, disposed) {
   if (disposed) return { startSessions: [], settle: false, abandonDay: false, send: false, submit: false, cancel: false };
   if (session) return {
     startSessions: [], settle: false, abandonDay: false,
-    send: session.status === 'ready', submit: session.status === 'ready', cancel: session.status === 'ready' || session.status === 'running',
+    send: session.status === 'ready', submit: session.status === 'ready', cancel: ['ready', 'running', 'submitting'].includes(session.status),
   };
   if (world.status === 'uninitialized') return { startSessions: ['init'], settle: false, abandonDay: false, send: false, submit: false, cancel: false };
   if (world.status !== 'published') return { startSessions: [], settle: false, abandonDay: false, send: false, submit: false, cancel: false };

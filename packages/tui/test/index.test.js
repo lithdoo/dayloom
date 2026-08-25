@@ -200,12 +200,36 @@ test('tui submit success discards transcript and terminal failure preserves fail
 
   const failedCore = new ScriptedDayloomCore({ handlers: { async submit(instance) {
     instance.session = { ...instance.session, status: 'submitting' }; instance.changed();
-    instance.session = null; instance.changed(); return failure('SUBMISSION_INVALID', 'invalid submission');
+    instance.session = null; instance.changed(); return failure('CANDIDATE_INVALID', 'invalid submission');
   } } });
   const failedDriver = await driverFor(failedCore); await failedDriver.runHubAction('init'); await failedDriver.submitSessionText('/submit');
   assert.equal(failedDriver.getState().session.status, 'failed');
   assert.equal(failedDriver.getState().messages.at(-1).text, 'invalid submission');
   await failedDriver.dispose();
+});
+
+test('tui submitting state remains cancellable and returns to the active Session', async () => {
+  const submitGate = deferred();
+  const core = new ScriptedDayloomCore({ handlers: {
+    async submit(instance) {
+      instance.session = { ...instance.session, status: 'submitting' }; instance.changed();
+      await submitGate.promise;
+      instance.session = { ...instance.session, status: 'ready' }; instance.changed();
+      return failure('CANCELLED', 'cancelled');
+    },
+    async cancel() { submitGate.resolve(); return success(); },
+  } });
+  const driver = await driverFor(core); await driver.runHubAction('init');
+  const submitting = driver.submitSessionText('/submit');
+  while (driver.getState().session.status !== 'submitting') await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
+  const cancelling = driver.submitSessionText('/cancel');
+  await Promise.all([submitting, cancelling]);
+  assert.equal(driver.getState().page.kind, 'session');
+  assert.equal(driver.getState().session.status, 'ready');
+  assert.equal(driver.getState().recent.kind, 'cancelled');
+  assert.equal(core.calls.filter((call) => call[0] === 'cancel').length, 1);
+  await driver.dispose();
 });
 
 test('tui running cancel suppresses late send ownership and cancel owns Hub transition', async () => {

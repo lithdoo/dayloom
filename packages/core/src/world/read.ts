@@ -8,9 +8,9 @@ import {
 } from '@dayloom/archive-protocol';
 import type { CoreWorldState } from '../state';
 import { DAYLOOM_PROFILE_DESCRIPTOR_PATH, parseDayloomProfileDescriptorV1 } from './profile/descriptor';
-import { createVerifiedDocumentReaderV1 } from './profile/document-reader';
-import { validateWorldProfileV1, type WorldProfileV1 } from './profile/validate';
-import { readStructuredDayEventsV1 } from './profile/events';
+import { createVerifiedDocumentReaderV1, type VerifiedDocumentReaderV1 } from './profile/document-reader';
+import { validateWorldProfileReaderV1, type WorldProfileV1 } from './profile/validate';
+import { readStructuredDayEventsFromReaderV1 } from './profile/events';
 import { parseYamlObjectV1 } from './profile/yaml';
 
 export interface PlayPlanV1 { version: 1; intent: string; knownContext: string[]; constraints: string[]; openQuestions: string[]; maxEvents: number; beats: Array<{ id: string; intent: string; priority: 'required' | 'optional'; dependsOn: string[] }> }
@@ -95,8 +95,12 @@ export async function readPublishedWorld(root: string): Promise<PublishedWorld> 
 }
 
 export async function validatePublishedProfile(root: string, manifest: Readonly<ArchiveManifestV2>, commit: Readonly<ArchiveCommitV2>, tree: Readonly<RootTreeV1>): Promise<PublishedWorld> {
-  parseDayloomProfileDescriptorV1(await readJsonDocument(root, tree, DAYLOOM_PROFILE_DESCRIPTOR_PATH));
-  const profileV1 = await validateWorldProfileV1(root, tree);
+  return validatePublishedProfileFromReaderV1(manifest, commit, tree, createVerifiedDocumentReaderV1(root, tree));
+}
+
+export async function validatePublishedProfileFromReaderV1(manifest: Readonly<ArchiveManifestV2>, commit: Readonly<ArchiveCommitV2>, tree: Readonly<RootTreeV1>, reader: VerifiedDocumentReaderV1): Promise<PublishedWorld> {
+  parseDayloomProfileDescriptorV1(await reader.json(DAYLOOM_PROFILE_DESCRIPTOR_PATH));
+  const profileV1 = await validateWorldProfileReaderV1(reader);
   const control = commit.control;
   if (control.phase === 'idle' && control.day !== null) throw new Error('Idle World must not have a current day.');
   if (control.lastSettledDay !== null) parseDayId(control.lastSettledDay);
@@ -106,25 +110,25 @@ export async function validatePublishedProfile(root: string, manifest: Readonly<
   }
   validateDayTreeStructure(tree, control.day, control.lastSettledDay);
   const canon = Object.freeze({
-    premise: await readTextDocument(root, tree, 'canon/premise.md'),
-    rules: await readTextDocument(root, tree, 'canon/rules.md'),
-    style: await readTextDocument(root, tree, 'canon/style.md'),
-    userRole: await readTextDocument(root, tree, 'canon/user-role.md'),
+    premise: await reader.text('canon/premise.md', 'text/markdown'),
+    rules: await reader.text('canon/rules.md', 'text/markdown'),
+    style: await reader.text('canon/style.md', 'text/markdown'),
+    userRole: await reader.text('canon/user-role.md', 'text/markdown'),
   });
   let lastSettledSummary: string | null = null;
   if (control.lastSettledDay !== null) {
-    await readSettledDayV1(root, tree, control.lastSettledDay, profileV1);
-    lastSettledSummary = await readSummary(root, tree, control.lastSettledDay);
+    await readSettledDayFromReaderV1(reader, control.lastSettledDay, profileV1);
+    lastSettledSummary = await readSummaryFromReaderV1(reader, control.lastSettledDay);
   }
   let playContext: PlayContext | null = null;
   if (control.day !== null) {
     const day = control.day, planPath = `days/${day}/plan.json`;
-    const plan = parsePlayPlanV1(await readJsonDocument(root, tree, planPath));
+    const plan = parsePlayPlanV1(await reader.json(planPath));
     const hasPlay = hasDocument(tree, `days/${day}/play.json`), hasSummary = hasDocument(tree, `days/${day}/summary.md`), hasStructuredPlay = hasDocument(tree, `days/${day}/play-index.json`);
     if (control.phase === 'planned' && (hasPlay || hasSummary || hasStructuredPlay)) throw new Error('Planned current day contains completed Play documents.');
     if (control.phase === 'awaiting-settle') {
       if (!hasStructuredPlay) throw new Error('Awaiting-settle World is missing structured Play documents.');
-      await readStructuredDayEventsV1(root, tree, day, plan, profileV1);
+      await readStructuredDayEventsFromReaderV1(reader, day, plan, profileV1);
     }
     playContext = control.phase === 'planned' ? Object.freeze({ ...canon, plan }) : null;
   }
@@ -154,15 +158,20 @@ async function readJsonDocument(root: string, tree: Readonly<RootTreeV1>, rawPat
   return createVerifiedDocumentReaderV1(root, tree).json(rawPath);
 }
 async function readSummary(root: string, tree: Readonly<RootTreeV1>, day: string): Promise<string> {
-  const summary = await readTextDocument(root, tree, `days/${day}/summary.md`);
+  return readSummaryFromReaderV1(createVerifiedDocumentReaderV1(root, tree), day);
+}
+async function readSummaryFromReaderV1(reader: VerifiedDocumentReaderV1, day: string): Promise<string> {
+  const summary = await reader.text(`days/${day}/summary.md`, 'text/markdown');
   if (summary.trim() === '') throw new Error('Day summary must be non-empty.');
   return summary;
 }
 async function readSettledDayV1(root: string, tree: Readonly<RootTreeV1>, day: string, profile: Readonly<WorldProfileV1>): Promise<void> {
-  const plan = parsePlayPlanV1(await readJsonDocument(root, tree, `days/${day}/plan.json`));
-  const events = await readStructuredDayEventsV1(root, tree, day, plan, profile);
-  const reader = createVerifiedDocumentReaderV1(root, tree);
-  await readSummary(root, tree, day);
+  return readSettledDayFromReaderV1(createVerifiedDocumentReaderV1(root, tree), day, profile);
+}
+async function readSettledDayFromReaderV1(reader: VerifiedDocumentReaderV1, day: string, profile: Readonly<WorldProfileV1>): Promise<void> {
+  const plan = parsePlayPlanV1(await reader.json(`days/${day}/plan.json`));
+  const events = await readStructuredDayEventsFromReaderV1(reader, day, plan, profile);
+  await readSummaryFromReaderV1(reader, day);
   const diary = await reader.text(`days/${day}/diary.md`, 'text/markdown');
   if (diary.trim() === '') throw new Error('Settled day diary must be non-empty.');
   const settlement = parseYamlObjectV1(await reader.text(`days/${day}/settlement.yaml`, 'application/yaml'), 'SettlementV1');

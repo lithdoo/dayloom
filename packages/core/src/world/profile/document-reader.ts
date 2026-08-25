@@ -6,6 +6,7 @@ import {
 } from '@dayloom/archive-protocol';
 
 export interface VerifiedDocumentReaderV1 {
+  entries(): readonly Readonly<DocumentTreeEntryV1>[];
   has(rawPath: string): boolean;
   entry(rawPath: string, expectedMediaType?: ArchiveMediaTypeV1): Readonly<DocumentTreeEntryV1>;
   bytes(rawPath: string, expectedMediaType?: ArchiveMediaTypeV1): Promise<Uint8Array>;
@@ -13,7 +14,9 @@ export interface VerifiedDocumentReaderV1 {
   json(rawPath: string): Promise<unknown>;
 }
 
-export function createVerifiedDocumentReaderV1(root: string, tree: Readonly<RootTreeV1>): VerifiedDocumentReaderV1 {
+export type DocumentBlobLoaderV1 = (entry: Readonly<DocumentTreeEntryV1>) => Promise<Uint8Array>;
+
+export function createDocumentReaderV1(tree: Readonly<RootTreeV1>, load: DocumentBlobLoaderV1): VerifiedDocumentReaderV1 {
   const entries = new Map(tree.entries.map((entry) => [entry.path, entry]));
   const entry = (rawPath: string, expectedMediaType?: ArchiveMediaTypeV1): Readonly<DocumentTreeEntryV1> => {
     const documentPath = parseWorldDocumentPathV1(rawPath);
@@ -24,20 +27,27 @@ export function createVerifiedDocumentReaderV1(root: string, tree: Readonly<Root
   };
   const bytes = async (rawPath: string, expectedMediaType?: ArchiveMediaTypeV1): Promise<Uint8Array> => {
     const value = entry(rawPath, expectedMediaType);
-    const relative = formatBlobObjectPathV1(value.blobHash);
-    const target = path.join(root, ...relative.split('/'));
-    const stat = await lstat(target);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${relative} must be a regular file.`);
-    const content = await readFile(target);
+    const content = await load(value);
     verifyBlobV1(content, value.blobHash, value.bytes);
     return content;
   };
   const text = async (rawPath: string, expectedMediaType?: ArchiveMediaTypeV1): Promise<string> => new TextDecoder('utf-8', { fatal: true }).decode(await bytes(rawPath, expectedMediaType));
   return Object.freeze({
+    entries: () => Object.freeze([...entries.values()]),
     has: (rawPath: string) => entries.has(parseWorldDocumentPathV1(rawPath)),
     entry,
     bytes,
     text,
     json: async (rawPath: string) => JSON.parse(await text(rawPath, 'application/json')),
+  });
+}
+
+export function createVerifiedDocumentReaderV1(root: string, tree: Readonly<RootTreeV1>): VerifiedDocumentReaderV1 {
+  return createDocumentReaderV1(tree, async (entry) => {
+    const relative = formatBlobObjectPathV1(entry.blobHash);
+    const target = path.join(root, ...relative.split('/'));
+    const stat = await lstat(target);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${relative} must be a regular file.`);
+    return readFile(target);
   });
 }

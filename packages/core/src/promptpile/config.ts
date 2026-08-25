@@ -39,18 +39,15 @@ export function deriveSummaryConfig(config: CallerConfig): CallerConfig {
   return derived;
 }
 
-export interface DerivedReactPaths {
+export interface ReactConfigPaths {
   thoughtPrompt: string; observePrompt: string; checkPrompt: string; toolsFile: string; afterHookPath?: string;
-  sendFinalPrompt: string; submitFinalPrompt: string; sendConfig: string; submitConfig: string; summaryConfig: string;
+  finalPrompt: string; config: string;
 }
-export async function writeDerivedConfigs(config: CallerConfig, paths: DerivedReactPaths): Promise<void> {
-  const derive = (final: string) => ({ ...config, 'promptpile-react': {
+export async function writeReactConfig(config: CallerConfig, paths: ReactConfigPaths): Promise<void> {
+  const derived = { ...config, 'promptpile-react': {
     tools_file: paths.toolsFile, thought_prompt: paths.thoughtPrompt, observe_prompt: paths.observePrompt, check_prompt: paths.checkPrompt,
-    final_prompt: final, ...(paths.afterHookPath ? { after_hook: paths.afterHookPath } : {}),
-  } });
-  await Promise.all([
-    writeFile(paths.sendConfig, TOML.stringify(derive(paths.sendFinalPrompt) as TOML.JsonMap), 'utf8'),
-    writeFile(paths.submitConfig, TOML.stringify(derive(paths.submitFinalPrompt) as TOML.JsonMap), 'utf8'),
-    writeFile(paths.summaryConfig, TOML.stringify(deriveSummaryConfig(config)), 'utf8'),
-  ]);
+    final_prompt: paths.finalPrompt, ...(paths.afterHookPath ? { after_hook: paths.afterHookPath } : {}),
+  } };
+  await writeFile(paths.config, TOML.stringify(derived as TOML.JsonMap), 'utf8');
 }
+export async function writeSummaryConfig(config: CallerConfig, target: string): Promise<void> { await writeFile(target, TOML.stringify(deriveSummaryConfig(config)), 'utf8'); }

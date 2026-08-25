@@ -1,4 +1,4 @@
-import type { DomainPatchV1 } from '../../session/submission-v2';
+import type { DomainPatchV1 } from '../domain-patch';
 import { parseYamlObjectV1 } from '../profile/yaml';
 import type { PersistedEventV1 } from '../profile/events';
 import type { PublishedWorld } from '../read';

@@ -1,10 +1,11 @@
 export type CoreErrorCode =
   | 'NOT_AVAILABLE' | 'BUSY' | 'INVALID_INPUT' | 'CONVERSATION_FAILED'
-  | 'AGENT_FAILED' | 'SUBMISSION_INVALID' | 'WORLD_CONFLICT' | 'WORLD_INVALID'
+  | 'AGENT_FAILED' | 'DRAFT_INVALID' | 'CONVERSION_FAILED' | 'CANDIDATE_INVALID' | 'WORLD_BUSY' | 'WORLD_CONFLICT' | 'WORLD_INVALID'
   | 'CANCELLED' | 'DISPOSED' | 'INTERNAL_ERROR';
-export interface CoreError { code: CoreErrorCode; message: string }
+import type { ValidationIssueV1 } from './session/diagnostics';
+export interface CoreError { code: CoreErrorCode; message: string; diagnostics?: readonly ValidationIssueV1[] }
 export type CoreResult = { ok: true } | { ok: false; error: CoreError };
-export type CoreInitializationErrorCode = 'INVALID_OPTIONS' | 'INTERNAL_ERROR';
+export type CoreInitializationErrorCode = 'INVALID_OPTIONS' | 'WORLD_BUSY' | 'INTERNAL_ERROR';
 
 export class CoreInitializationError extends Error {
   constructor(readonly code: CoreInitializationErrorCode, message: string, options?: ErrorOptions) {
@@ -26,5 +27,12 @@ export class ArchiveRetrievalError extends Error {
     this.name = 'ArchiveRetrievalError';
   }
 }
+export type SessionFileRuntimeStage = 'startup' | 'tools' | 'hook' | 'artifacts' | 'runtime';
+export class SessionFileRuntimeError extends Error {
+  constructor(readonly stage: SessionFileRuntimeStage, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SessionFileRuntimeError';
+  }
+}
 export const success = (): CoreResult => ({ ok: true });
-export const failure = (code: CoreErrorCode, message: string): CoreResult => ({ ok: false, error: { code, message } });
+export const failure = (code: CoreErrorCode, message: string, diagnostics?: readonly ValidationIssueV1[]): CoreResult => ({ ok: false, error: { code, message, ...(diagnostics && diagnostics.length > 0 ? { diagnostics } : {}) } });

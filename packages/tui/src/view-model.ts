@@ -102,7 +102,8 @@ export function createViewModel(
     const status = current.session?.status;
     if (!status) return '';
     if (status === 'failed') return '/exit 或 /cancel 返回 Hub';
-    if (status === 'submitting' || status === 'cancelling') return sessionStatusLabel(status);
+    if (status === 'submitting') return '提交中 · /exit 或 /cancel 中断';
+    if (status === 'cancelling') return sessionStatusLabel(status);
     if (!inputEnabled.get()) return `${sessionStatusLabel(status)} · /exit 中断`;
     return '/submit 提交 · /exit 取消';
   });

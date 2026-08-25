@@ -11,11 +11,14 @@ test('public API exports only application contract', () => {
 
 test('Chinese prompts are exported from the dedicated package subpath', () => {
   const prompts = require('@dayloom/core/prompts');
+  for (const name of ['INIT_THOUGHT_PROMPT', 'PLANNING_THOUGHT_PROMPT', 'PLAY_THOUGHT_PROMPT', 'REVISE_THOUGHT_PROMPT']) {
+    assert.equal(typeof prompts[name], 'string', `${name} must be exported`);
+  }
   const strings = Object.entries(prompts).filter(([name, value]) => typeof value === 'string' && /(?:PROMPT|POLICY|GUIDE|NOTE|DISCIPLINE|ROLE|MARKER)$/.test(name));
-  assert.ok(strings.length >= 20);
+  assert.ok(strings.length >= 15);
   for (const [name, value] of strings) assert.match(value, /[\u4e00-\u9fff]/, `${name} must contain Chinese instructions`);
-  assert.match(prompts.buildDayloomObservePrompt(false), /当前会话能力为 retrieval_available=false/);
-  assert.match(prompts.buildDayloomCheckPrompt(true), /当前会话的检索能力为 retrieval_available=true/);
+  assert.match(prompts.buildDayloomObservePrompt(false), /\[NEXT_TOOL_ACTION\]/);
+  assert.match(prompts.buildDayloomCheckPrompt(true), /工具动作/);
   assert.equal(corePackage.exports['./prompts'].require, './dist/session/prompts/index.js');
 });
 

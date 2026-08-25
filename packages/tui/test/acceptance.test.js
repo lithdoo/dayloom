@@ -57,7 +57,7 @@ test('tui transcript evicts whole old messages and never truncates current strea
   await driver.dispose();
 });
 
-test('tui submitting disables every Session control', async () => {
+test('tui submitting disables ordinary input but keeps cancellation available', async () => {
   const gate = deferred();
   const core = new ScriptedDayloomCore({ handlers: { async submit(instance) {
     instance.session = { ...instance.session, status: 'submitting' }; instance.changed(); await gate.promise;
@@ -65,14 +65,14 @@ test('tui submitting disables every Session control', async () => {
   } } });
   const driver = await driverFor(core); await driver.runHubAction('init');
   const submitting = driver.submitSessionText('/submit'); await waitFor(() => driver.getState().session.status === 'submitting');
-  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: false, dismiss: false });
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
   gate.resolve(); await submitting; await driver.dispose();
 });
 
 test('tui status/help remain local and contain current Core terminology', async () => {
   const core = new ScriptedDayloomCore({ world: published({ revision: 3, phase: 'planned', day: 'day1' }) });
   const driver = await driverFor(core); const { createViewModel } = await import('../dist/index.js'); const vm = createViewModel(driver);
-  driver.setHubMode('help'); assert.match(vm.visibleMessages.get()[0].text, /AI 回复中仍可用/);
+  driver.setHubMode('help'); assert.match(vm.visibleMessages.get()[0].text, /AI 回复或提交中仍可用/);
   driver.setHubMode('status'); const status = vm.visibleMessages.get()[0].text;
   assert.match(status, /Revision: 3/); assert.match(status, /Phase: 已计划 \(planned\)/);
   assert.deepEqual(core.calls.filter((call) => !['dispose'].includes(call[0])), []);

@@ -1,0 +1,1 @@
+export const INIT_DRAFT_CONTRACT = `Init Draft 精确包含 schemaVersion、kind、title、canon、worldState、characters、locations、arcs、initialFacts、unresolvedThreads、storySeeds。canon 长文本和实体 profile 使用 content/ 下 Markdown 路径。实体使用稳定小写 key；关系引用 character key，位置引用 location key。不要创建持久 ID，不要模拟事件或开始 Day 1。`;

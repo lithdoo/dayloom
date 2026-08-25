@@ -1,0 +1,1 @@
+export const PLANNING_DRAFT_CONTRACT = `Planning Draft 精确包含 schemaVersion、kind、targetDay、intent、knownContext、constraints、openQuestions、maxEvents、beats。Beat 按业务顺序排列，使用稳定 key；dependsOn 只能引用前面已经出现的 Beat。只规划目标日，不演出事件。`;

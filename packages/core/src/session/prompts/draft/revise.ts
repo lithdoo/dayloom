@@ -1,0 +1,1 @@
+export const REVISE_DRAFT_CONTRACT = `Revise Draft 精确包含 schemaVersion、kind、operations。只记录用户明确要求的 operation。replace/state 操作必须携带 pinned 当前值作为 expected；长文本 expected/value 和新实体 profile 使用 content/ Markdown。新实体使用稳定 key，不得自造持久 ID，不得修改 Day 历史。`;

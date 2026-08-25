@@ -2,19 +2,19 @@ import type { CallerConfig } from '../promptpile/config';
 import type { PublishedWorld } from '../world/read';
 import { nextDay } from '../world/read';
 import { createSessionWorkspace, type CoreSession, type SessionToolingBinding } from './common';
-import { INIT_SEND_FINAL_PROMPT, INIT_SUBMIT_FINAL_PROMPT, INIT_SUBMIT_MARKER, INIT_THOUGHT_PROMPT } from './prompts/init';
-import { PLANNING_SEND_FINAL_PROMPT, PLANNING_SUBMIT_FINAL_PROMPT_V2, PLANNING_SUBMIT_MARKER, PLANNING_THOUGHT_PROMPT } from './prompts/planning';
-import { REVISE_SEND_FINAL_PROMPT, REVISE_SUBMIT_FINAL_PROMPT_V2, REVISE_SUBMIT_MARKER, REVISE_THOUGHT_PROMPT } from './prompts/revise';
+import { INIT_SEND_FINAL_PROMPT, INIT_THOUGHT_PROMPT } from './prompts/init';
+import { PLANNING_SEND_FINAL_PROMPT, PLANNING_THOUGHT_PROMPT } from './prompts/planning';
+import { REVISE_SEND_FINAL_PROMPT, REVISE_THOUGHT_PROMPT } from './prompts/revise';
 
-export function createInitWorkspace(runtimeRoot: string, id: string, config: CallerConfig) {
-  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'init', thought: INIT_THOUGHT_PROMPT, sendFinal: INIT_SEND_FINAL_PROMPT, submitFinal: INIT_SUBMIT_FINAL_PROMPT, submitMarker: INIT_SUBMIT_MARKER, pinned: null });
+export function createInitWorkspace(runtimeRoot: string, id: string, config: CallerConfig, tooling?: SessionToolingBinding) {
+  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'init', thought: INIT_THOUGHT_PROMPT, sendFinal: INIT_SEND_FINAL_PROMPT, pinned: null }, tooling);
 }
 export function createPlanningWorkspace(runtimeRoot: string, id: string, world: PublishedWorld, config: CallerConfig, tooling?: SessionToolingBinding) {
   const day = nextDay(world.commit.control.lastSettledDay);
-  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'planning', thought: PLANNING_THOUGHT_PROMPT, sendFinal: PLANNING_SEND_FINAL_PROMPT, submitFinal: PLANNING_SUBMIT_FINAL_PROMPT_V2, submitMarker: PLANNING_SUBMIT_MARKER, pinned: world, day }, tooling);
+  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'planning', thought: PLANNING_THOUGHT_PROMPT, sendFinal: PLANNING_SEND_FINAL_PROMPT, pinned: world, day }, tooling);
 }
 export function createReviseWorkspace(runtimeRoot: string, id: string, world: PublishedWorld, config: CallerConfig, tooling?: SessionToolingBinding) {
-  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'revise', thought: REVISE_THOUGHT_PROMPT, sendFinal: REVISE_SEND_FINAL_PROMPT, submitFinal: REVISE_SUBMIT_FINAL_PROMPT_V2, submitMarker: REVISE_SUBMIT_MARKER, pinned: world }, tooling);
+  return createSessionWorkspace(runtimeRoot, id, config, { kind: 'revise', thought: REVISE_THOUGHT_PROMPT, sendFinal: REVISE_SEND_FINAL_PROMPT, pinned: world }, tooling);
 }
 export function buildLifecycleContext(session: CoreSession): string | null {
   if (session.kind === 'init') return null;

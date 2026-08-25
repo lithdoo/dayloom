@@ -1,0 +1,1 @@
+export const PLAY_CONVERSION_CONTRACT = `Play 只写目标日的 events/index.yaml、timeline.md、play-index.json，以及每个 event 的 event.yaml、scene.md、dialogue.md、user-action.md、result.yaml、state-patch.yaml。事件 ID 必须来自 assignment；不得生成 summary、settlement、diary 或 next-day-seed。`;

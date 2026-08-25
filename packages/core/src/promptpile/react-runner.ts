@@ -2,6 +2,7 @@ import type { ValidateFunction } from 'ajv';
 import type { ChildProcess } from 'node:child_process';
 import type { ReactWorkPhase } from '../events';
 import type { ProcessRunner } from './conversation';
+import { SESSION_FILE_LIMITS } from '../session/file-limits';
 
 interface ProcessEvent {
   type: string; process_id: string; sequence: number;
@@ -33,10 +34,9 @@ export interface RunReactInput {
   observer?: ReactProcessObserver;
   onChild?: (child: ChildProcess) => void;
   assertBeforeFinal?: (workPath: string) => void;
-  continuationPolicy?: { retrievalAvailable: boolean };
+  continuationPolicy?: { retrievalAvailable: boolean; allowedToolNames?: readonly string[]; nextActionSection?: string };
+  timeoutMs?: number;
 }
-
-const REACT_MAX_STEPS = 10;
 
 type ReactProtocolErrorCode = 'JSONL' | 'SCHEMA' | 'SEQUENCE' | 'PHASE' | 'STOP_REASON' | 'FINAL_EVIDENCE' | 'CONTINUE_POLICY' | 'CHILD_EXIT';
 
@@ -74,7 +74,7 @@ async function runProcessPile(input: RunReactInput): Promise<string> {
     }
   };
   try {
-    const result = await input.runner.run(input.reactBin, args, { onChild: input.onChild, onExtraPipe: consume });
+    const result = await input.runner.run(input.reactBin, args, { onChild: input.onChild, onExtraPipe: consume, timeoutMs: input.timeoutMs });
     if (buffer.length > 0) throw protocolError('JSONL', 'React emitted truncated Process Pile JSONL.');
     const final = reducer.finish(result.code, result.stderr);
     if (final.trim() === '') throw protocolError('FINAL_EVIDENCE', 'React Final was empty.');
@@ -87,7 +87,7 @@ async function runProcessPile(input: RunReactInput): Promise<string> {
 }
 
 function baseArgs(input: RunReactInput): string[] {
-  return ['--config', input.config, '-d', input.context, '--output-dir', input.conversation, '--continue', '--max-step', String(REACT_MAX_STEPS)];
+  return ['--config', input.config, '-d', input.context, '--output-dir', input.conversation, '--continue', '--max-step', String(SESSION_FILE_LIMITS.reactMaxSteps)];
 }
 
 class ProcessPileReducer {
@@ -111,7 +111,7 @@ class ProcessPileReducer {
     private readonly validate: ValidateFunction,
     private readonly observer?: ReactProcessObserver,
     private readonly assertBeforeFinal?: (workPath: string) => void,
-    private readonly continuationPolicy?: { retrievalAvailable: boolean },
+    private readonly continuationPolicy?: { retrievalAvailable: boolean; allowedToolNames?: readonly string[]; nextActionSection?: string },
   ) {}
 
   consume(line: string): void {
@@ -199,9 +199,10 @@ class ProcessPileReducer {
     if (!this.continuationPolicy.retrievalAvailable) throw protocolError('CONTINUE_POLICY', 'React requested another step without an available retrieval capability.');
     const status = observeSection(this.latestObserveText, 'RETRIEVAL_STATUS');
     if (status !== 'needs-more') throw protocolError('CONTINUE_POLICY', 'React may continue only when Observe retrieval status is needs-more.');
-    const next = observeSection(this.latestObserveText, 'NEXT_RETRIEVAL');
+    const next = observeSection(this.latestObserveText, this.continuationPolicy.nextActionSection ?? 'NEXT_RETRIEVAL');
     if (!next || next === '<none>') throw protocolError('CONTINUE_POLICY', 'React requested another step without a concrete next retrieval.');
-    if (!/\b(?:list_directory|directory_tree|search_files|search_files_content|read_file_lines)\b/.test(next)) throw protocolError('CONTINUE_POLICY', 'React next retrieval does not name an available archive tool.');
+    const allowed = this.continuationPolicy.allowedToolNames ?? ['list_directory', 'directory_tree', 'search_files', 'search_files_content', 'read_file_lines'];
+    if (!allowed.some((tool) => next.includes(tool))) throw protocolError('CONTINUE_POLICY', 'React next action does not name an available tool.');
     const normalized = next.toLowerCase().replace(/\s+/g, ' ').trim();
     if (this.requestedRetrievals.has(normalized)) throw protocolError('CONTINUE_POLICY', 'React requested a repeated retrieval action.');
     this.requestedRetrievals.add(normalized);

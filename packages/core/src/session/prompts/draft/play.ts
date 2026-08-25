@@ -1,0 +1,1 @@
+export const PLAY_DRAFT_CONTRACT = `Play Draft 精确包含 schemaVersion、kind、targetDay、events。事件 key 依次为 e001、e002；scene、dialogue、userAction 写入 content/events/<key>/ 下 Markdown。用户未明确表达的行动不得写进 userAction。事件必须遵守固定计划和既有实体 ID，不得提前生成结算内容。`;

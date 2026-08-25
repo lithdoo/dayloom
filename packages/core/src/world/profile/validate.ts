@@ -16,7 +16,10 @@ export interface WorldProfileV1 {
 }
 
 export async function validateWorldProfileV1(root: string, tree: Readonly<RootTreeV1>): Promise<Readonly<WorldProfileV1>> {
-  const reader = createVerifiedDocumentReaderV1(root, tree);
+  return validateWorldProfileReaderV1(createVerifiedDocumentReaderV1(root, tree));
+}
+
+export async function validateWorldProfileReaderV1(reader: VerifiedDocumentReaderV1): Promise<Readonly<WorldProfileV1>> {
   const characterIds = await readIndex(reader, 'characters/index.yaml', 'CharacterIndexV1');
   const locationIds = await readIndex(reader, 'locations/index.yaml', 'LocationIndexV1');
   const arcIds = await readIndex(reader, 'arcs/index.yaml', 'ArcIndexV1');
@@ -32,7 +35,7 @@ export async function validateWorldProfileV1(root: string, tree: Readonly<RootTr
   const variables = await parseVariables(reader);
   await validateMemory(reader);
   const contextDocuments: Record<string, string> = {};
-  for (const entry of tree.entries) if (/^(?:canon|state|characters|locations|arcs|memory|story-seeds)\//.test(entry.path)) contextDocuments[entry.path] = await reader.text(entry.path, entry.mediaType);
+  for (const entry of reader.entries()) if (/^(?:canon|state|characters|locations|arcs|memory|story-seeds)\//.test(entry.path)) contextDocuments[entry.path] = await reader.text(entry.path, entry.mediaType);
   return Object.freeze({
     state: Object.freeze({ world, calendar, progress, variables }),
     characterIds: Object.freeze(characterIds), locationIds: Object.freeze(locationIds), arcIds: Object.freeze(arcIds), contextDocuments: Object.freeze(contextDocuments),

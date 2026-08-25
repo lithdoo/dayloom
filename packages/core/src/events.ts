@@ -1,4 +1,6 @@
 import type { CoreState } from './state';
+import type { SubmissionStageV1 } from './session/submission-pipeline';
+import type { ValidationIssueV1 } from './session/diagnostics';
 export type ReactWorkPhase = 'thought' | 'observe' | 'check';
 export type CoreEvent =
   | { type: 'state.changed'; state: CoreState }
@@ -9,4 +11,6 @@ export type CoreEvent =
   | { type: 'output.started'; sessionId: string; operationId: string; messageId: string }
   | { type: 'output.delta'; sessionId: string; operationId: string; messageId: string; text: string }
   | { type: 'output.completed'; sessionId: string; operationId: string; messageId: string }
-  | { type: 'output.failed'; sessionId: string; operationId: string; messageId: string; message: string };
+  | { type: 'output.failed'; sessionId: string; operationId: string; messageId: string; message: string }
+  | { type: 'submission.stage'; sessionId: string; operationId: string; stage: SubmissionStageV1; attempt: number }
+  | { type: 'submission.diagnostics'; sessionId: string; operationId: string; diagnostics: readonly ValidationIssueV1[] };

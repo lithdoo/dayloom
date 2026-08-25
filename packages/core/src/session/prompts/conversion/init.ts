@@ -1,0 +1,1 @@
+export const INIT_CONVERSION_CONTRACT = `Init 必须生成完整 World Profile V1 初始文档树。profile/dayloom.json 由 Core 注入，不得写入。标题、世界状态、canon、实体、记忆与故事种子必须逐项来自已确认 Draft，并使用 assignment 中的 character/location/arc/fact/thread/seed/trigger ID。禁止生成 days、audit 或 custom。`;

@@ -42,7 +42,7 @@ export function buildState(
   const ready = !disposed && session?.status === 'ready' && !mutationInFlight;
   const cancellable = !disposed
     && session !== null
-    && (session.status === 'ready' ? !mutationInFlight : session.status === 'running')
+    && (session.status === 'ready' ? !mutationInFlight : session.status === 'running' || session.status === 'submitting')
     && cancelRequestedSessionId !== session.id;
   return Object.freeze({
     world: Object.freeze({ ...world }) as CoreWorldState,

@@ -1,14 +1,18 @@
 import type { RootTreeV1 } from '@dayloom/archive-protocol';
-import { parseDomainPatchV1, type DomainPatchV1 } from '../../session/submission-v2';
+import { parseDomainPatchV1, type DomainPatchV1 } from '../domain-patch';
 import type { PlayPlanV1 } from '../read';
 import type { WorldProfileV1 } from './validate';
-import { createVerifiedDocumentReaderV1 } from './document-reader';
+import { createVerifiedDocumentReaderV1, type VerifiedDocumentReaderV1 } from './document-reader';
 import { exactObjectV1, isRecord, parseYamlObjectV1, schemaVersionV1, stringArrayV1, stringV1 } from './yaml';
 
 export interface PersistedEventV1 { id: string; beatId: string | null; title: string; locationId: string | null; participantIds: string[]; summary: string; learnedFacts: string[]; timeAdvanced: string | null; completedBeatIds: string[]; skippedBeatIds: string[]; endDay: boolean; patches: DomainPatchV1[] }
 
 export async function readStructuredDayEventsV1(root: string, tree: Readonly<RootTreeV1>, day: string, plan: PlayPlanV1, profile: Readonly<WorldProfileV1>): Promise<readonly PersistedEventV1[]> {
-  const reader = createVerifiedDocumentReaderV1(root, tree), index = parseYamlObjectV1(await reader.text(`days/${day}/events/index.yaml`, 'application/yaml'), 'EventIndexV1');
+  return readStructuredDayEventsFromReaderV1(createVerifiedDocumentReaderV1(root, tree), day, plan, profile);
+}
+
+export async function readStructuredDayEventsFromReaderV1(reader: VerifiedDocumentReaderV1, day: string, plan: PlayPlanV1, profile: Readonly<WorldProfileV1>): Promise<readonly PersistedEventV1[]> {
+  const index = parseYamlObjectV1(await reader.text(`days/${day}/events/index.yaml`, 'application/yaml'), 'EventIndexV1');
   exactObjectV1(index, ['schemaVersion', 'ids'], 'EventIndexV1'); schemaVersionV1(index.schemaVersion, 'EventIndexV1');
   const ids = stringArrayV1(index.ids, 'EventIndexV1.ids'), beatIds = new Set(plan.beats.map((beat) => beat.id)), characters = new Set(profile.characterIds), locations = new Set(profile.locationIds);
   if (ids.length === 0 || ids.some((id, index) => id !== `event${index + 1}`)) throw new Error('EventIndexV1 ids are invalid.');

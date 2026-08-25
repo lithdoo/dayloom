@@ -25,7 +25,7 @@ try {
     const core = require('@dayloom/core');
     if (Object.keys(core).sort().join(',') !== 'CoreInitializationError,createDayloomCore') process.exit(1);
     const prompts = require('@dayloom/core/prompts');
-    if (!prompts.INIT_THOUGHT_PROMPT?.includes('世界设计师') || !prompts.buildDayloomCheckPrompt(false)?.includes('retrieval_available=false')) process.exit(4);
+    if (!prompts.INIT_THOUGHT_PROMPT?.includes('世界设计师') || !prompts.buildDayloomCheckPrompt(false)?.includes('立即进入 Final')) process.exit(4);
     const dist = path.dirname(require.resolve('@dayloom/core'));
     const { resolvePackagedBoundaries } = require(path.join(dist, 'promptpile', 'binaries.js'));
     resolvePackagedBoundaries().then((boundaries) => {
