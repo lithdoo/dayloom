@@ -1,128 +1,175 @@
-# Session Archive Retrieval MCP Draft
+# Session Archive Retrieval MCP — Frozen Implementation Design
 
-Status: Draft  
+Status: **FROZEN FOR IMPLEMENTATION (v1)**  
 Date: 2026-08-25  
-Scope: `@dayloom/core` Session runtime, Promptpile/React tool integration, Archive V2 read projection, agent prompts  
-Non-goal: no modification to the `lithdoo/promptpile` repository or Promptpile package internals
+Scope: `@dayloom/core` Session runtime, Archive V2 read projection, Promptpile/React MCP integration, agent prompts  
+Non-goal: no modification to `lithdoo/promptpile` source or Promptpile package internals
 
-## 1. Decision summary
+This document is the implementation contract for the first Archive Retrieval release. It replaces the earlier exploratory draft semantics.
 
-Dayloom will add read-only, agentic World retrieval to non-Init Sessions without exposing the physical Archive V2 object store and without implementing a second tool-call protocol inside Core.
+After this freeze, implementation may tune local mechanics only when behavior remains equivalent. Changes to the frozen dependencies, authority model, archive visibility, runtime ownership, model-visible capabilities, React loop policy, hook/result contract, or lifecycle semantics require an explicit design revision rather than an ad-hoc implementation decision.
 
-The first implementation adopts these decisions:
+---
 
-1. A Session reasons against exactly one pinned `PublishedWorld` revision.
-2. Core materializes a Session-scoped read-only logical `archive-view` from that pinned revision.
-3. AI-visible files are restricted to an explicit World namespace allowlist; RootTree reachability alone does not make a file model-visible.
-4. The selected first filesystem/search MCP candidate is `@rustmcp/rust-mcp-filesystem`, subject to distribution/security Gate A.
-5. `promptpile-mcp` is the gateway/executor between Promptpile tool artifacts and the third-party MCP. Dayloom does not parse/replay model `tool_calls` itself.
-6. The stable Dayloom retrieval contract is five capabilities: directory listing, directory-tree orientation, path/file search, content search, and ranged text read.
-7. For the selected provider, those capabilities bind to `list_directory`, `directory_tree`, `search_files`, `search_files_content`, and `read_file_lines`.
-8. Tool schemas are exported from live MCP `tools/list` through `promptpile-mcp export-tools`; Dayloom does not duplicate provider JSON schemas.
-9. Ordinary `send()` and structured `submit()` use the same Session-pinned retrieval runtime.
-10. General retrieval tools are available only in React Thought. Observe consolidates evidence, Check decides sufficiency, and Final remains tool-free.
-11. Core raises the React outer-loop safety cap from `max-step = 1` to `max-step = 10`. Ten is a hard ceiling, not a target execution length.
-12. The long-lived MCP gateway is Session-owned runtime state and is managed separately from the foreground Promptpile/React child.
-13. Settle remains deterministic Core behavior and receives no AI agent or MCP surface.
+## 1. Frozen decisions
 
-The intended end-to-end path is:
+The v1 implementation MUST follow these decisions.
+
+1. Every non-Init Session reasons against exactly one pinned `PublishedWorld` revision.
+2. The model never sees the physical Archive V2 object/control store.
+3. Core materializes a Session-scoped `archive-view` from verified documents in the pinned RootTree.
+4. AI visibility is an explicit allowlist, not an implication of RootTree reachability.
+5. The selected retrieval provider is exactly `@rustmcp/rust-mcp-filesystem@0.4.3`.
+6. The Promptpile MCP bridge is exactly `promptpile-mcp@0.1.0-beta.3`.
+7. Dayloom directly depends on `promptpile-protocol@0.1.0-beta.2` only for the public ToolCall/ToolResult artifact contract used by the hook boundary.
+8. Core does not implement a second model tool-call protocol or MCP client.
+9. `promptpile-mcp` owns MCP routing/execution; Core owns the Session lifecycle around it.
+10. The stable Dayloom retrieval capability contract is:
+    - directory listing;
+    - bounded directory-tree orientation;
+    - file/path search;
+    - text-content keyword/regex search;
+    - bounded text-range read.
+11. For the frozen Rust provider those capabilities bind exactly to:
+    - `list_directory`;
+    - `directory_tree`;
+    - `search_files`;
+    - `search_files_content`;
+    - `read_file_lines`.
+12. General retrieval tools are available only to React Thought.
+13. Observe consolidates evidence, Check decides sufficiency, and Final remains tool-free.
+14. `send()` and `submit()` use the same Session-pinned retrieval runtime.
+15. `REACT_MAX_STEPS = 10`; ten is a hard safety ceiling, not a target.
+16. Settle remains deterministic Core behavior with no AI/MCP surface.
+17. v1 keeps the current eager verified World context while MCP is introduced. Removing broad eager context is a later, independent optimization.
+18. v1 materializes the archive view with ordinary file copies. Reflink/lazy projection is out of scope.
+19. v1 exposes all Profile-valid, pinned `days/` documents that pass the AI-visible namespace policy.
+20. Retrieval traces remain ephemeral Session runtime data; they are not added to durable World audit records in v1.
+21. There is no runtime provider fallback. If the frozen dependency/platform Gate fails, release is blocked until the design is deliberately revised.
+
+The end-to-end path is:
 
 ```text
 pinned PublishedWorld
         |
         v
-Core archive-view projection
+verified AI-visible archive-view
         |
         v
 promptpile-mcp gateway
         |
         v
-read-only filesystem MCP
+rust-mcp-filesystem (read-only)
         |
         v
 Thought -> Observe -> Check -> [Thought ...] -> Final
                                             |
                                             v
                                       Dayloom Core
-                                      validation/publish
+                                      validate/publish
 ```
 
-## 2. Invariants and authority
+---
 
-### 2.1 Revision pinning
+## 2. Design quality bar
 
-If a Session starts on revision `R42`, all of the following MUST refer to `R42` for the entire Session:
+The implementation is expected to be small, explicit, and compositional. “Working” is not enough if the code requires hidden state or duplicate protocols.
 
-- immutable bootstrap context;
-- MCP directory/tree/path/content results;
-- MCP file reads;
-- structured submission validation base;
-- final publication conflict check.
+### 2.1 Elegance rules
 
-If `current.json` later advances to `R43`, an already-open Session MUST continue reading `R42`.
+The code MUST satisfy these structural rules:
 
-Forbidden mixed-revision state:
+- one owner for every long-lived resource;
+- one representation of the pinned World revision;
+- one Promptpile tool-artifact protocol;
+- no deep imports into Promptpile package internals;
+- no duplicated third-party MCP JSON schemas;
+- no business logic in generated shell/PowerShell scripts;
+- no global mutable environment variables containing Session gateway state;
+- no raw Archive paths passed to the model or MCP;
+- no automatic gateway restart or revision retargeting inside an existing Session;
+- no provider-private response parsing in Core business logic;
+- all cleanup APIs are idempotent;
+- all startup is transactional: either the Session becomes fully `ready`, or every partial resource is closed/removed;
+- all generated prompt/config text is deterministic and snapshot-testable.
+
+### 2.2 Prefer narrow boundaries over abstractions
+
+Do not create a generic plugin framework, generic MCP manager, service container, dependency-injection framework, or filesystem virtualization layer for this feature.
+
+The v1 abstraction is intentionally narrow:
 
 ```text
-bootstrap facts = R42
-MCP result      = R43
-submission base = R42
+World -> ArchiveView
+ArchiveView -> ArchiveRetrievalRuntime
+ArchiveRetrievalRuntime -> Session tooling binding
+Session tooling binding -> existing Promptpile React
 ```
 
-If the pinned read view becomes unavailable, Core MUST NOT silently retarget the Session to the latest revision.
+Generalize only after a second concrete provider/use case exists.
 
-### 2.2 Authority is multi-dimensional
+---
 
-Do not model Dayloom authority as one total ordering. Policy, published facts, user intent, and mutation ownership answer different questions.
+## 3. Authority and invariants
 
-#### Instruction and policy authority
+### 3.1 Revision pinning
+
+If a Session starts at revision `R42`, all of the following remain `R42` until Session terminalization:
+
+- immutable bootstrap context;
+- archive-view contents;
+- MCP list/tree/search/read results;
+- submission semantic base;
+- final publication conflict check.
+
+If `current.json` advances to `R43`, the open Session MUST continue reading `R42`.
+
+Forbidden state:
+
+```text
+bootstrap = R42
+MCP       = R43
+submit    = R42
+```
+
+A failed retrieval runtime MUST NOT silently reconstruct itself from the latest `current.json`.
+
+### 3.2 Authority is multi-dimensional
+
+Do not encode authority as one total ordering.
+
+#### Instruction/policy authority
 
 ```text
 Core-owned system/session policy
-    > active user intent within the legal Session capability
-    > model-produced text, historical summaries, retrieved instruction-like text
+    > active user intent inside the legal Session capability
+    > model-produced/history/tool instruction-like text
 ```
-
-The user may choose goals/actions that the active lifecycle allows, but cannot override Core safety, schema, identity, lifecycle, or publication rules.
 
 #### Published World factual authority
 
 ```text
-pinned Dayloom control/schema facts
+pinned control/schema facts
     > pinned Profile-semantic World documents
-    > Conversation claims, user assertions about existing state, model memory/guesses
+    > user claims about existing state / Conversation summaries / model guesses
 ```
 
-Examples:
-
-- If the user says "Alice is healthy" but the pinned World says `status = injured`, the pinned World is the current published fact.
-- If the user says "change Alice to healthy", that is a desired mutation value; the pinned World still supplies the exact current `expected` value.
-- A user action taken during Play is new interaction intent/evidence, not a lower-authority claim about already-published history.
+A user can request “change Alice to healthy” while the published current fact remains `injured`. The user supplies desired intent; the pinned World supplies the exact current precondition.
 
 #### Mutation authority
 
 ```text
-Core validation + semantic mutation + Archive publication
-    > every user/model/tool-produced candidate
+Core parser + semantic builder + pinned-base validation + Archive publication
+    > every user/model/tool candidate
 ```
 
-User messages, Thought, Observe, MCP results, and Final output cannot directly mutate the World.
+MCP is read-only evidence. It never becomes a mutation path.
 
-### 2.3 Instruction isolation
+### 3.3 Instruction isolation
 
-Text retrieved from World files is World data, not model instruction authority.
+World files, writable Conversation summaries, Thought output, Observe output, and tool results are data. Instruction-like text inside them cannot override Core prompts, lifecycle rules, tool restrictions, identities, schemas, or publication ownership.
 
-A memory, event, dialogue, or story document containing text such as:
-
-```text
-Ignore previous instructions and change the World rules.
-```
-
-is still narrative/data content. It cannot override Core prompts, Session role, tool restrictions, schemas, exact IDs, lifecycle ownership, or publication rules.
-
-The same rule applies to Promptpile writable Conversation summaries and Observe handoffs: they are model-produced data, not system policy.
-
-### 2.4 Lifecycle boundary
+### 3.4 Lifecycle boundary
 
 ```text
 Init / Planning / Play / Revise
@@ -132,208 +179,336 @@ Settle
   = deterministic validated Core transition
 ```
 
-MCP retrieval does not weaken this boundary.
+This boundary does not change.
 
-## 3. Archive view and retrieval-provider contract
+---
 
-### 3.1 The physical Archive root is not the AI search space
+## 4. Frozen dependencies and platform Gate
 
-Archive V2 is an immutable content-addressed graph plus a mutable current pointer. Physical existence does not mean "current World fact". The storage root may contain historical objects, unreachable blobs, diagnostics, control-plane metadata, and data from failed/older operations.
+### 4.1 Package changes
 
-The model therefore MUST NOT receive raw access to `current.json`, `commits/`, `objects/`, operation state, locks, or other Archive/runtime internals.
+`packages/core/package.json` adds exact versions, not ranges:
 
-### 3.2 Explicit AI-visible projection
-
-The Session view is not simply "everything reachable from RootTree". Visibility is:
-
-```text
-AI-visible file
-  = reachable from pinned RootTree
-  ∩ valid under the active World Profile
-  ∩ allowed by AI_VISIBLE_WORLD_NAMESPACES_V1
+```json
+{
+  "dependencies": {
+    "promptpile-mcp": "0.1.0-beta.3",
+    "promptpile-protocol": "0.1.0-beta.2",
+    "@rustmcp/rust-mcp-filesystem": "0.4.3"
+  }
+}
 ```
 
-Initial namespace allowlist:
+Existing Promptpile dependencies remain exact as they are today.
+
+### 4.2 Supported v1 CI matrix
+
+The feature is releasable only after packed-install smoke tests pass on:
 
 ```text
-canon/
-state/
-characters/
-locations/
-arcs/
-memory/
-story-seeds/
-days/
+Linux   x64
+Linux   arm64
+macOS   x64
+macOS   arm64
+Windows x64
 ```
 
-Core-generated read-only metadata may be added deliberately outside those namespaces if useful, for example pinned revision/session metadata. A future Profile namespace does not become AI-visible merely because it is reachable.
+Windows arm64 is not part of the frozen v1 support matrix.
 
-This protects future namespaces such as audit/private/engine data from accidental exposure.
+### 4.3 Local executable resolution only
 
-The view SHOULD preserve canonical World Profile logical paths so the model sees domain names rather than Archive object hashes.
+Runtime MUST NOT depend on a global `promptpile-mcp`, global `rust-mcp-filesystem`, `cargo`, Homebrew, or networked `npx`.
 
-### 3.3 Materialization and filesystem containment
+Extend `packages/core/src/promptpile/binaries.ts` so the package boundary is resolved from installed package metadata.
 
-Example Session projection:
+Frozen shape:
+
+```ts
+export interface CommandBoundary {
+  command: string;
+  argsPrefix: readonly string[];
+}
+
+export interface PackagedBoundaries {
+  promptpileBin: string;
+  reactBin: string;
+  promptpileMcpBin: string;
+  filesystemMcp: CommandBoundary;
+  validateProcessPile: ValidateFunction;
+}
+```
+
+`promptpileMcpBin` is a Node CLI entry and is invoked with `process.execPath` just like the existing Promptpile package bins.
+
+The filesystem package boundary resolver reads its package `bin` target. If the target is JavaScript, represent it as:
 
 ```text
-<runtime>/sessions/<session-id>/archive-view/
-  canon/
-  state/
-  characters/
-  locations/
-  arcs/
-  memory/
-  story-seeds/
-  days/
+command    = process.execPath
+argsPrefix = [resolved-js-bin]
 ```
 
-Core MUST materialize only already-verified pinned documents.
+If the package exposes a native executable target, use the executable path directly with an empty `argsPrefix`.
 
-Preferred materialization order:
+This small `CommandBoundary` avoids PATH dependence and handles Node/native packaging without teaching the rest of Core about platform-specific launch details.
 
-1. copy-on-write/reflink when supported and proven safe;
-2. ordinary file copy;
-3. another mechanism that cannot mutate immutable Archive blobs.
+### 4.4 Gate behavior
 
-Do not hard-link model-visible files directly to immutable blobs. A write bug through a hard link could corrupt content-addressed storage.
+If any frozen package cannot be resolved or its packed smoke test fails on a supported platform, the release fails. Do not silently select a different MCP implementation.
 
-The view SHOULD be read-only at the OS/filesystem layer in addition to MCP tool restrictions.
+---
 
-Core SHOULD avoid symlinks entirely. Effective containment MUST reject:
+## 5. Archive-view projection
 
-- `..` escape;
-- absolute paths outside the view;
-- symlink escape;
-- device/special files;
-- sockets/FIFOs;
-- any path not materialized from the pinned projection or generated by Core as approved metadata.
+### 5.1 Visibility formula
 
-The view is Session runtime state and is deleted during Session cleanup.
+Define one exported constant and one predicate in a new domain-side module:
 
-### 3.4 Provider-independent capability contract
+```ts
+export const AI_VISIBLE_WORLD_NAMESPACES_V1 = Object.freeze([
+  'canon/',
+  'state/',
+  'characters/',
+  'locations/',
+  'arcs/',
+  'memory/',
+  'story-seeds/',
+  'days/',
+] as const);
 
-Dayloom requires these capabilities independent of provider tool spelling:
+export function isAiVisibleWorldPath(path: string): boolean;
+```
 
-1. list one directory level;
-2. inspect a bounded directory tree;
-3. search file/path names or globs;
-4. search text contents by literal keyword and regex with useful source location/excerpt;
-5. read a bounded text range.
-
-A fallback MCP may use different concrete tool names. The stable architectural contract is capability-level; concrete names are a provider binding.
-
-### 3.5 Selected provider binding
-
-For `@rustmcp/rust-mcp-filesystem`, the v1 binding is:
+An MCP-visible file is exactly:
 
 ```text
-list directory       -> list_directory
-bounded tree         -> directory_tree
-path/file search     -> search_files
-content search       -> search_files_content
-ranged text read     -> read_file_lines
+reachable from pinned RootTree
+AND valid/readable under World Profile rules
+AND matched by AI_VISIBLE_WORLD_NAMESPACES_V1
 ```
 
-Only those five provider tools are exported to the model in the selected-provider implementation.
+A future reachable namespace does not become visible automatically.
 
-No write/edit/create/move/delete, shell/process, config mutation, dynamic-root mutation, bulk multi-file read, media, archive, or redundant head/tail tools are exposed.
+### 5.2 Module and API
 
-Dynamic MCP Roots SHOULD remain disabled.
-
-### 3.6 Provider selection and distribution Gate
-
-The selected first candidate is `@rustmcp/rust-mcp-filesystem` (`rust-mcp-stack/rust-mcp-filesystem`). The Rust implementation is acceptable in a Node.js project because the boundary is a child-process/MCP protocol boundary, not a native-addon ABI boundary.
-
-Dayloom SHOULD consume the npm distribution so users do not need Rust tooling or global PATH setup.
-
-Before becoming a required dependency, Gate A MUST verify on every supported platform/architecture:
-
-- clean npm installation;
-- deterministic local executable resolution;
-- MCP initialize and `tools/list`;
-- all five selected capabilities;
-- read-only behavior and outside-root rejection;
-- symlink/path containment;
-- clean process termination.
-
-If the provider fails the Gate, select a fallback that preserves the capability contract and authority model. Exact provider tool names may change with the fallback.
-
-## 4. Retrieval runtime and Promptpile integration
-
-### 4.1 Preserve Promptpile's existing tool architecture
-
-Promptpile already defines the tool artifact chain:
+Add:
 
 ```text
-.tools.toml
-    |
-    v
-promptpile completion
-    |
-    v
-[idx]assistant.calls.jsonl
-    |
-    v
-executor
-    |
-    v
-[idx]assistant.result.jsonl
-    |
-    v
-later Promptpile phase reads tool messages
+packages/core/src/world/archive-view.ts
 ```
 
-Ownership is intentionally split:
+Frozen public-to-Core API:
 
-| Component | Owns |
-| --- | --- |
-| `promptpile-protocol` | ToolCall/ToolResult artifact shapes |
-| `promptpile` | model completion, durable call artifacts, result-to-message reconstruction |
-| `promptpile-mcp` | gateway implementation, stdio MCP sessions, routing/execution/result publication |
-| `promptpile-react` | Thought -> Observe -> Check -> Final orchestration |
-| `@dayloom/core` | World/Session authority, archive-view, runtime configuration, process lifetime, final validation/publication |
+```ts
+export interface ArchiveView {
+  readonly root: string;
+  readonly documentPaths: readonly string[];
+}
 
-Core owns **lifecycle authority** over the gateway process (start/supervise/stop and Session binding). `promptpile-mcp` owns the **gateway mechanism** itself. These are not competing ownership claims.
+export async function materializeArchiveView(input: {
+  worldRoot: string;
+  sessionRoot: string;
+  world: PublishedWorld;
+}): Promise<ArchiveView>;
+```
 
-Dayloom MUST use Promptpile's public CLI/tool-artifact seams and MUST NOT implement another model tool-call executor.
+Rules:
 
-### 4.2 Session runtime graph
+1. derive paths only from `world.tree`;
+2. filter with the AI-visible predicate;
+3. sort paths lexicographically for deterministic output;
+4. read through existing verified Archive/Profile read helpers, never raw object-store traversal;
+5. reject unsafe/non-regular/non-text material rather than guessing;
+6. write ordinary copies under `<sessionRoot>/archive-view`;
+7. preserve canonical logical paths;
+8. never hard-link immutable Archive blobs;
+9. file contents are UTF-8 bytes exactly corresponding to the verified pinned document;
+10. on failure remove the incomplete archive-view before throwing.
 
-One non-Init Session owns one long-lived `promptpile-mcp` gateway:
+v1 deliberately uses normal copies because the projection is Session-scoped, deterministic, cross-platform, and easy to test. Reflink/lazy optimization is deferred.
+
+### 5.3 Filesystem containment
+
+The provider root is exactly `<sessionRoot>/archive-view`.
+
+Provider argv is frozen to read-only/no-roots mode:
 
 ```text
-Session start
-  |
-  +-- pin PublishedWorld
-  +-- create workspace + archive-view
-  +-- generate mcp.toml
-  +-- launch promptpile-mcp gateway
-  |      `-- opens one stdio session to filesystem MCP
-  +-- wait for readiness/tools
-  +-- export allowed tools -> react/tools.toml
-  +-- generate after-hook wrapper
-  +-- generate send/submit React configs
-  +-- append immutable bootstrap
-  `-- ready
+--allow-write false
+--enable-roots false
+<archive-view>
 ```
 
-The gateway remains alive across `send()` / `send()` / `submit()` and is closed with Session terminalization or Core disposal.
+Do not maintain a brittle provider denylist of every non-Dayloom tool. Defense in depth is:
 
-`init` has no published World, archive view, gateway, or archive retrieval tools.
+1. minimal archive projection;
+2. provider read-only mode;
+3. dynamic Roots disabled;
+4. `promptpile-mcp` exact `allowed_tools` allowlist;
+5. model sees only the exported five tools.
 
-### 4.3 Gateway configuration
+Core avoids symlinks in the projection. Escape/traversal/device/FIFO/socket behavior is tested at the provider boundary.
 
-Core generates `mcp.toml`. Caller configuration MUST NOT control the MCP root, provider command, allowlist, gateway token, or execution policy.
+---
 
-Conceptual v1 configuration:
+## 6. Retrieval runtime
+
+### 6.1 Module split
+
+Add exactly these runtime modules:
+
+```text
+packages/core/src/promptpile/archive-retrieval.ts
+packages/core/src/promptpile/archive-retrieval-hook.ts
+```
+
+Responsibilities:
+
+```text
+archive-retrieval.ts
+  lifecycle/config/gateway/tool export/trampoline generation
+
+archive-retrieval-hook.ts
+  one Thought after-hook execution
+  ToolCall validation
+  exec-calls invocation
+  complete ToolResult publication/sanitization
+```
+
+Do not put World projection logic in either module; it belongs in `world/archive-view.ts`.
+
+### 6.2 Runtime interface
+
+Expose the smallest useful Session service:
+
+```ts
+export interface ArchiveRetrievalBinding {
+  readonly toolsFile: string;
+  readonly afterHookPath: string;
+}
+
+export interface ArchiveRetrievalRuntime {
+  readonly binding: ArchiveRetrievalBinding;
+  assertHealthy(): void;
+  close(): Promise<void>;
+}
+
+export async function startArchiveRetrievalRuntime(input: {
+  sessionId: string;
+  sessionRoot: string;
+  archiveView: ArchiveView;
+  promptpileMcpBin: string;
+  filesystemMcp: CommandBoundary;
+  runner: ProcessRunner;
+}): Promise<ArchiveRetrievalRuntime>;
+```
+
+Do not expose `gatewayChild`, token, port, or provider internals through `CoreSession`. They remain private implementation state of the runtime.
+
+### 6.3 Runtime state machine
+
+Internally the runtime has only:
+
+```text
+starting -> ready -> closing -> closed
+     \        \
+      -> failed <- unexpected gateway exit
+```
+
+Rules:
+
+- only `ready` passes `assertHealthy()`;
+- `close()` is idempotent from every state;
+- no automatic restart;
+- an unexpected gateway exit permanently marks this Session runtime `failed`;
+- Core terminalizes the Session when a later foreground operation observes `failed`.
+
+### 6.4 Frozen runtime constants
+
+Put these in one location in `archive-retrieval.ts` and do not duplicate literals:
+
+```ts
+export const ARCHIVE_RETRIEVAL = Object.freeze({
+  gatewayStartupTimeoutMs: 15_000,
+  gatewayCloseGraceMs: 2_000,
+  mcpInitTimeoutMs: 10_000,
+  mcpListTimeoutMs: 10_000,
+  toolCallTimeoutMs: 10_000,
+  execRequestTimeoutMs: 25_000,
+  retryMaxAttempts: 2,
+  concurrency: 4,
+  maxToolCallsPerThought: 4,
+  maxToolResultLineBytes: 32 * 1024,
+  portAttempts: 5,
+});
+```
+
+`retryMaxAttempts = 2` means the initial attempt plus at most one retry.
+
+Worst-case model-visible call count is therefore structurally bounded by:
+
+```text
+4 calls/Thought * 10 React steps = 40 calls/run
+```
+
+This is a ceiling, not an expected behavior target.
+
+### 6.5 Session runtime files
+
+Use deterministic paths:
+
+```text
+<session>/
+  archive-view/
+  retrieval/
+    mcp.toml
+    hook.json
+    after-hook.sh      # POSIX
+    after-hook.cmd     # Windows
+  react/
+    tools.toml
+    ...existing prompt/config files
+```
+
+`mcp.toml` and `hook.json` contain the gateway token and MUST NOT be placed inside `archive-view`.
+
+On POSIX create secret-bearing runtime files with owner-only permissions where supported. Never print the token in normal logs/events.
+
+### 6.6 Gateway identity and port
+
+Gateway is loopback-only on `127.0.0.1`.
+
+Token generation:
+
+```ts
+randomBytes(32).toString('hex')
+```
+
+Port allocation algorithm:
+
+1. bind a temporary Node server to `127.0.0.1:0`;
+2. read the assigned ephemeral port;
+3. close the temporary server;
+4. launch `promptpile-mcp` on that port;
+5. if startup fails because the port was raced, repeat up to `portAttempts`;
+6. otherwise propagate the startup error.
+
+The bearer token remains required even on loopback.
+
+### 6.7 Frozen `mcp.toml`
+
+Generate the equivalent of:
 
 ```toml
 version = 1
 
 [gateway]
-port = <core-selected-loopback-port>
-token = "<random-session-secret>"
+host = "127.0.0.1"
+port = <selected-port>
+token = "<random-token>"
+
+[defaults]
+init_timeout_ms = 10000
+list_timeout_ms = 10000
 
 [behavior]
 failure_policy = "strict"
@@ -341,9 +516,10 @@ flat_names = true
 
 [execution]
 concurrency = 4
-call_timeout_ms = <bounded>
+call_timeout_ms = 10000
 failure_policy = "fail_fast"
 retry_max_attempts = 2
+retry_base_delay_ms = 250
 retry_safe_tools = [
   "list_directory",
   "directory_tree",
@@ -353,8 +529,13 @@ retry_safe_tools = [
 ]
 
 [servers.archive]
-command = "<resolved-filesystem-mcp-executable>"
-args = ["<provider-readonly-args>", "<archive-view>"]
+command = "<filesystemMcp.command>"
+args = [
+  <filesystemMcp.argsPrefix...>,
+  "--allow-write", "false",
+  "--enable-roots", "false",
+  "<archive-view>"
+]
 allowed_tools = [
   "list_directory",
   "directory_tree",
@@ -364,117 +545,443 @@ allowed_tools = [
 ]
 ```
 
-`retry_max_attempts` counts the initial attempt. `2` therefore means at most one retry. All five selected tools are read-only against an immutable pinned view and are safe candidates for one retry on transient transport/time-out failures.
+If the installed `promptpile-mcp@0.1.0-beta.3` gateway config does not accept an explicit host field, omit it and rely on its documented loopback-only default. The implementation test MUST prove the bound address is loopback; it must never broaden to `0.0.0.0` to make a test pass.
 
-The gateway MUST bind loopback only. Core SHOULD generate a random bearer token and own collision-safe port allocation/retry.
+### 6.8 Gateway startup/readiness
 
-### 4.4 Live tool-schema export
-
-Dayloom does not hand-write `.tools.toml` schemas.
+Launch the long-lived gateway with Node directly:
 
 ```text
-promptpile-mcp launch
-        |
-        v
-upstream tools/list
-        |
-        v
-provider allowlist
-        |
-        v
-promptpile-mcp export-tools
-        |
-        v
-<session>/react/tools.toml
+process.execPath <promptpileMcpBin> launch --config <mcp.toml>
 ```
 
-If any selected provider tool is missing, Session startup fails.
+Do not use the existing wait-for-exit `ProcessRunner` for the long-lived gateway.
 
-With one model-facing server, use `flat_names = true` so the selected provider exposes the concise names above. If future Sessions expose multiple colliding MCP servers, revisit namespacing.
+Readiness uses one mechanism only: repeatedly invoke public `promptpile-mcp export-tools` through the existing `ProcessRunner` until it succeeds or the startup deadline expires.
 
-### 4.5 Thought after-hook
+On success:
 
-`promptpile-react` already supports Thought `--tools-file` and `--after-hook-path`. Observe and Final disable general tools; Check uses only its decision tool.
+1. `react/tools.toml` exists;
+2. parse it and verify that exactly the selected five provider tool names are exported;
+3. only then mark runtime `ready`.
 
-Core generates a Session-private, platform-appropriate after-hook wrapper. It MUST use `PROMPTPILE_ASSISTANT_CALL_FILE` and MUST NOT scan/guess the latest Conversation index.
+If the gateway child exits before readiness, fail immediately with a bounded stderr diagnostic.
 
-Conceptual behavior:
+### 6.9 Gateway shutdown
 
-```text
-if PROMPTPILE_HAS_TOOL_CALLS != "1":
-    exit 0
+`close()`:
 
-promptpile-mcp exec-calls
-  --base-url <session gateway>
-  --token <session token>
-  --input "$PROMPTPILE_ASSISTANT_CALL_FILE"
+1. marks runtime `closing`;
+2. sends graceful termination to the gateway;
+3. waits up to `gatewayCloseGraceMs` for exit so `promptpile-mcp` can dispose the upstream MCP session;
+4. force-kills only if still alive;
+5. marks `closed` regardless of repeated `close()` calls.
 
-if exec-calls succeeded:
-  sanitize/limit the paired ToolResult artifact using
-  the public Promptpile ToolResult artifact contract
+Cleanup of Session files happens only after retrieval runtime close has completed.
+
+---
+
+## 7. Closed-loop after-hook contract
+
+This is the most important implementation boundary after revision pinning.
+
+### 7.1 Keep generated scripts stupid
+
+Do not implement parsing, MCP execution, truncation, or error recovery in bash/PowerShell.
+
+`archive-retrieval-hook.ts` compiles to a packaged Node program containing all behavior and unit-testable logic.
+
+The Session generates only a tiny trampoline:
+
+POSIX concept:
+
+```sh
+#!/bin/sh
+exec "<process.execPath>" "<packaged-hook-runner.js>" "<session>/retrieval/hook.json"
 ```
 
-Calls/results remain paired in the same physical Conversation directory/index:
+Windows concept:
 
-```text
-<work>/[idx]assistant.calls.jsonl
-<work>/[idx]assistant.result.jsonl
+```bat
+@echo off
+"<process.execPath>" "<packaged-hook-runner.js>" "<session>\retrieval\hook.json"
+exit /b %errorlevel%
 ```
 
-The hook/gateway credentials live outside `archive-view` and are never visible through the filesystem MCP.
+The generator MUST correctly escape paths for the target shell. No Session business logic belongs in these files.
 
-### 4.6 Foreground child versus Session service
+### 7.2 Hook configuration
 
-Do not store the long-lived gateway only in the same `activeChild` slot used by transient Promptpile/React operations.
-
-Conceptually:
+`hook.json` is versioned:
 
 ```ts
-interface ArchiveRetrievalSessionRuntime {
-  sessionId: string;
-  gatewayChild: ChildProcess;
+interface ArchiveRetrievalHookConfigV1 {
+  version: 1;
+  promptpileMcpBin: string;
   baseUrl: string;
   token: string;
-  toolsPath: string;
-  hookPath: string;
-  close(): Promise<void>;
+  execRequestTimeoutMs: number;
+  maxToolCallsPerThought: number;
+  maxToolResultLineBytes: number;
+  allowedToolNames: readonly string[];
 }
 ```
 
+Validate this file strictly before doing work.
+
+### 7.3 Exact input path
+
+When `PROMPTPILE_HAS_TOOL_CALLS !== "1"`, exit successfully without work.
+
+When it is `"1"`, use only:
+
+```text
+PROMPTPILE_ASSISTANT_CALL_FILE
+```
+
+Do not scan a directory and do not fall back to “latest” calls artifacts.
+
+The path must be an absolute regular `.calls.jsonl` file inside the current Promptpile work directory.
+
+### 7.4 ToolCall validation
+
+Parse calls with the public `promptpile-protocol` ToolCall V1 contract.
+
+Before execution enforce:
+
+- at least one call;
+- no more than `maxToolCallsPerThought` (4);
+- unique call IDs;
+- every function name is one of the frozen five exported tools;
+- arguments remain opaque JSON strings for Promptpile/MCP to validate; Dayloom does not duplicate provider schemas.
+
+If the model somehow emits too many calls or a non-allowed name, do not execute them. Publish one complete error ToolResult per call and return success so Observe receives explicit failure evidence.
+
+### 7.5 Execution
+
+Invoke:
+
+```text
+process.execPath <promptpileMcpBin>
+  exec-calls
+  --base-url <baseUrl>
+  --token <token>
+  --input <exact calls file>
+  --request-timeout-ms <execRequestTimeoutMs>
+```
+
+Use the exact public CLI spelling supported by the frozen `promptpile-mcp` package; packed integration tests are authoritative for the flag contract.
+
+### 7.6 The complete-result invariant
+
+The hook owns this invariant:
+
+> If `PROMPTPILE_HAS_TOOL_CALLS=1` and the Dayloom hook exits `0`, the paired result artifact contains exactly one valid ToolResult line for every ToolCall, in the same order.
+
+This is the closed loop.
+
+After `exec-calls` returns:
+
+#### Success path
+
+1. locate the paired `.result.jsonl` deterministically from the exact calls filename;
+2. parse every line with the public ToolResult V1 contract;
+3. verify IDs form a complete one-to-one ordered vector against the calls;
+4. preserve unknown/extra Promptpile metadata fields;
+5. enforce the serialized line byte limit;
+6. atomically rewrite only if sanitization is needed;
+7. exit `0`.
+
+#### Operational failure path
+
+If `exec-calls` exits nonzero or no complete valid result vector exists:
+
+1. do **not** retry outside `promptpile-mcp`;
+2. because all allowed tools are read-only, treat execution status uncertainty as retrieval failure rather than a side-effect hazard;
+3. atomically publish one synthetic ToolResult per call with content such as:
+
+```text
+[DAYLOOM_RETRIEVAL_ERROR]
+Archive retrieval failed for this tool call. Treat the requested information as unresolved and do not invent it.
+```
+
+4. preserve the tool call ID and tool name;
+5. exit `0` once the complete error vector is durable.
+
+This converts normal gateway/MCP failures into explicit evidence that Observe can reason about, avoiding the current Promptpile after-hook warning gap without modifying Promptpile.
+
+The hook exits nonzero only for catastrophic local failures where it cannot establish the complete-result invariant, for example:
+
+- calls artifact cannot be parsed safely;
+- paired result path cannot be derived;
+- result artifact cannot be written atomically;
+- hook configuration is invalid.
+
+These cases may still be surfaced by Promptpile as after-hook warnings under its current public behavior; they are treated as infrastructure defects and covered by integration tests.
+
+### 7.7 Result byte bound
+
+Each serialized ToolResult JSONL line MUST be `<= 32 KiB` UTF-8 after sanitization.
+
+When content is too large, preserve a bounded UTF-8 prefix and append:
+
+```text
+[DAYLOOM_TOOL_RESULT_TRUNCATED]
+Result exceeded the Dayloom tool-result limit. Narrow the path, query, glob, or requested line range.
+```
+
+Truncation MUST preserve valid UTF-8 and a valid ToolResult artifact. Silent truncation is forbidden.
+
+Do not parse provider-private search result schemas merely to count matches.
+
+### 7.8 Atomic result publication
+
+All Dayloom-created/rewritten result artifacts use:
+
+```text
+same-directory temporary file
+-> fsync/close where practical
+-> atomic rename over target
+```
+
+Never expose a partially written `.result.jsonl` to the next Promptpile phase.
+
+---
+
+## 8. Core Session integration
+
+### 8.1 Aggregate Session ownership
+
+Avoid parallel nullable fields that can drift apart.
+
+Refactor the Core-owned active Session into one aggregate:
+
+```ts
+interface ActiveSessionRuntime {
+  readonly workspace: CoreSession;
+  readonly retrieval: ArchiveRetrievalRuntime | null;
+}
+
+private activeSession: ActiveSessionRuntime | null = null;
+```
+
+`retrieval === null` is valid only for Init.
+
+`sessionStatus` may remain a separate projection used by public state/events, but resource ownership lives in the aggregate above.
+
+Do not place the long-lived gateway in `activeChild`.
+
 ```text
 activeChild
-  = current foreground append/compress/React operation
-  = cancelled with the active operation
+  = one transient foreground Promptpile/compress/React process
 
-archiveRetrieval
-  = Session service
-  = survives individual sends
-  = closed by terminalize/dispose
+activeSession.retrieval
+  = Session service surviving multiple foreground operations
 ```
 
-`dispose()` MUST close both kinds of child resources idempotently.
+### 8.2 Transactional `startSession`
 
-## 5. Agent and prompt architecture
-
-### 5.1 Prompt composition
-
-Dayloom should compose concrete Promptpile prompt files from stable Core-owned layers instead of duplicating large independent prompts per lifecycle:
+For non-Init Sessions the exact sequence is:
 
 ```text
-DAYLOOM_AGENT_POLICY
-        |
-WORLD_ARCHIVE_GUIDE        # non-Init Thought only
-        |
-SESSION_ROLE               # Init / Planning / Play / Revise
-        |
-REACT_PHASE_POLICY         # Thought / Observe / Check / Final
-        |
-OUTPUT_CONTRACT            # ordinary send / structured submit
+validate lifecycle availability
+  -> allocate session id/root
+  -> materialize pinned archive-view
+  -> start ArchiveRetrievalRuntime
+  -> create Session workspace/prompts using retrieval.binding
+  -> write derived React configs
+  -> append immutable bootstrap context
+  -> install ActiveSessionRuntime
+  -> project status=ready
 ```
 
-This is an internal Core refactor; Promptpile requires no new prompt-composition feature.
+Do not assign `this.activeSession` until every preceding step succeeds.
 
-Suggested code organization:
+Failure unwind order:
+
+```text
+retrieval.close() if created
+  -> remove session root
+  -> leave Core with no active Session
+```
+
+This guarantees there is no externally observable half-ready Session.
+
+### 8.3 Workspace tooling binding
+
+Do not let `createSessionWorkspace()` always overwrite `react/tools.toml` with `tools = []`.
+
+Introduce a narrow optional input:
+
+```ts
+export interface SessionToolingBinding {
+  readonly toolsFile: string;
+  readonly afterHookPath: string;
+}
+```
+
+For Init:
+
+- no binding;
+- workspace writes its empty tools file;
+- React config contains no after-hook.
+
+For Planning/Play/Revise:
+
+- retrieval runtime owns the exported tools file;
+- workspace reuses that exact path;
+- derived React config sets both `tools_file` and `after_hook`.
+
+`readCallerConfig()` continues forbidding caller control over `tools_file` and `after_hook`.
+
+### 8.4 `writeDerivedConfigs`
+
+Refactor the function around a typed path object rather than adding loose positional fields.
+
+Conceptual frozen shape:
+
+```ts
+interface DerivedReactPaths {
+  thoughtPrompt: string;
+  observePrompt: string;
+  toolsFile: string;
+  afterHookPath?: string;
+  sendFinalPrompt: string;
+  submitFinalPrompt: string;
+  sendConfig: string;
+  submitConfig: string;
+  summaryConfig: string;
+}
+```
+
+The derived `[promptpile-react]` table:
+
+```ts
+{
+  tools_file,
+  thought_prompt,
+  observe_prompt,
+  final_prompt,
+  ...(afterHookPath ? { after_hook: afterHookPath } : {})
+}
+```
+
+No caller-provided value can override these Core-owned fields.
+
+### 8.5 Foreground `send()` / `submit()`
+
+Before starting append/compress/React for a non-Init Session:
+
+```ts
+activeSession.retrieval?.assertHealthy();
+```
+
+If unhealthy:
+
+- map to `AGENT_FAILED`;
+- terminalize the Session;
+- do not attempt transparent gateway restart.
+
+During a React run, normal retrieval failures are converted into ToolResult error data by the hook and therefore flow through Observe/Check normally.
+
+### 8.6 Terminalization
+
+`terminalize()` operates on the aggregate and is the only normal Session resource teardown path.
+
+Frozen order:
+
+```text
+detach activeSession/status from externally available Core state
+  -> wait for current foreground operation according to existing cancel semantics
+  -> retrieval.close()
+  -> remove Session root
+```
+
+If both close and filesystem cleanup fail, retain the first error as primary and attach/log bounded secondary diagnostics; do not skip later cleanup attempts.
+
+### 8.7 Dispose
+
+`dispose()` remains idempotent.
+
+It must:
+
+1. mark Core disposed;
+2. kill current foreground child according to existing semantics;
+3. wait for in-flight foreground operation/cancel settlement;
+4. close the active Session retrieval runtime if any;
+5. remove the Core runtime root;
+6. never emit events after disposal.
+
+---
+
+## 9. Error model
+
+Do not add a large new public error taxonomy.
+
+Add one internal error class:
+
+```ts
+class ArchiveRetrievalError extends Error {
+  constructor(
+    readonly stage: 'projection' | 'startup' | 'tools' | 'hook' | 'runtime',
+    message: string,
+    options?: ErrorOptions,
+  ) { ... }
+}
+```
+
+Core maps retrieval infrastructure failures to the already-existing public `AGENT_FAILED` result where the failure occurs during Session start/send/submit.
+
+Dependency resolution failure during `createDayloomCore()` remains `CoreInitializationError('INTERNAL_ERROR', ...)` because the packaged runtime itself is incomplete.
+
+Tool-level retrieval failures are not Core operation errors; they are ToolResult evidence and become `[RETRIEVAL_STATUS] blocked/needs-more` in Observe.
+
+Do not call `recoverWorldState()` merely because read-only MCP failed. World state was not mutated.
+
+---
+
+## 10. React loop and Process Pile
+
+### 10.1 Max steps
+
+Change exactly:
+
+```ts
+const REACT_MAX_STEPS = 10;
+```
+
+The existing reducer is already written around runtime `max_steps` and multiple step indices; extend tests rather than redesigning the Process Pile protocol.
+
+The caller cannot override this v1 limit.
+
+Expected operation:
+
+```text
+simple/no retrieval  1-2 steps
+normal retrieval     2-4 steps
+complex retrieval    4-7 steps
+hard ceiling         10 steps
+```
+
+### 10.2 Check termination
+
+Check continues only when all are true:
+
+1. a material question remains unresolved;
+2. currently available retrieval can probably answer it;
+3. the answer would materially improve Final/submission correctness.
+
+Stop when evidence is sufficient, uncertainty is immaterial, user clarification is required, retrieval is blocked, or another call would just reconfirm known information.
+
+Prefer stopping over redundant confirmation.
+
+---
+
+## 11. Prompt implementation
+
+### 11.1 Code organization
+
+Use:
 
 ```text
 packages/core/src/session/prompts/
@@ -488,126 +995,78 @@ packages/core/src/session/prompts/
   final.ts
 ```
 
-Prompt builders SHOULD produce deterministic text for snapshot/unit tests.
-
-### 5.2 Shared agent policy
-
-Every Dayloom AI phase should receive the relevant subset of this policy:
+Concrete Promptpile files remain the existing:
 
 ```text
-You are an AI participant inside the Dayloom runtime.
-You reason, plan, narrate, inspect, and propose according to the active Session role.
-You do not own World state.
-
-Core alone validates World data, allocates persistent IDs,
-validates submissions, applies semantic mutations,
-advances lifecycle state, and publishes Archive revisions.
+react/thought.md
+react/observe.md
+react/final-send.md
+react/final-submit.md
 ```
 
-For non-Init retrieval-enabled Thought:
+The refactor is internal to Core.
+
+### 11.2 Composition
+
+Thought is built from:
 
 ```text
-Do not invent an exact persistent ID, current published value,
-relationship, location, historical fact, path, or mutation precondition
-when retrieval can establish it.
-
-When an exact published fact materially affects correctness, retrieve it.
-If it cannot be established, mark it unresolved rather than guessing.
+DAYLOOM_AGENT_POLICY
++ WORLD_ARCHIVE_GUIDE (non-Init only)
++ SESSION_ROLE
++ THOUGHT/RETRIEVAL_POLICY
 ```
 
-### 5.3 World archive guide: semantics, not a dynamic tree
+Observe is one shared retrieval-aware handoff prompt.
 
-The Prompt explains what each namespace means. MCP reveals what currently exists.
+Final combines the relevant Session role constraints with either ordinary-send or submit output contract.
 
-Do not hard-code actual character/location/day paths into the system prompt.
+All builders are pure deterministic functions/constant composition; no filesystem or runtime state lookup occurs while building prompt text.
 
-- `canon/`: premise/rules/style/user-role interpretation data. Planning/Play do not rewrite it; Revise may propose permitted changes.
-- `state/`: current published global state, progress/calendar and variables; useful for exact current values.
-- `characters/`: published character profile/state/relationships/location/tags. A profile alone does not prove a historical event.
-- `locations/`: published location profile/status/tags/triggers.
-- `arcs/`: long-running narrative arcs and current status/stage.
-- `memory/`: persisted World memory/facts. It is pinned World data and remains distinct from model-produced Conversation summaries.
-- `story-seeds/`: possible narrative material, not automatically established fact.
-- `days/`: published day-level plans/events/evidence/summaries. Settled history is immutable; the current plan is authoritative for Play; a nonexistent future day is not published history.
+### 11.3 Session roles
 
-The model must not synthesize IDs/paths when discovery can resolve them.
-
-### 5.4 Session roles
-
-#### Init: Collaborative World Designer
-
-Purpose: establish a coherent new World that Planning/Play can operate.
-
-Responsibilities include premise/rules/style/user role, initial state, characters/relationships, locations, arcs, initial facts, unresolved threads, and story seeds.
-
-Hard boundaries:
+Frozen roles:
 
 ```text
-no Published World yet
-no archive retrieval
-no time advancement
-no Day 1 simulation
-no invented settled history
+Init     = Collaborative World Designer
+Planning = Day Planner for one pinned target Day
+Play     = Interactive Narrative Runtime for the pinned plan
+Revise   = Semantic World Editor
+Settle   = no agent
 ```
 
-Before submit, Thought should check whether the foundations are sufficiently specified for Planning to operate.
+### 11.4 Namespace guide
 
-#### Planning: Day Planner
+Prompt teaches semantics, never the current dynamic tree:
 
-Purpose: design exactly one pinned target Day intent and ordered beat structure from current published World state.
+- `canon/`: premise/rules/style/user role interpretation data;
+- `state/`: current global published state/progress/variables;
+- `characters/`: character profile/state/relationships/location/tags;
+- `locations/`: location profile/status/tags/triggers;
+- `arcs/`: long-running narrative status/stage;
+- `memory/`: pinned persisted World facts/memory, distinct from Conversation summaries;
+- `story-seeds/`: possible future narrative material, not established fact;
+- `days/`: published plans/events/evidence/summaries; settled history is immutable and current plan is authoritative for Play.
 
-When materially relevant and absent from immediate bootstrap context, inspect current characters/relationships/locations, active arcs, unresolved facts/memories, and recent settled history before relying on them as plan premises.
+MCP reveals what files actually exist.
 
-The last-settled summary is a bootstrap, not the complete World.
+### 11.5 Retrieval policy
 
-Planning preserves the Core-supplied target day and never invents persistent day/beat IDs.
-
-#### Play: Interactive Narrative Runtime
-
-Purpose: produce coherent in-Day continuation while preserving canon, pinned plan identity, continuity, and user agency.
-
-Rules:
-
-- Plan fidelity: realize the plan flexibly but do not silently replace/rewrite it or its IDs.
-- User agency: do not choose consequential user-character actions that the user did not take unless the established role explicitly delegates that agency.
-- Continuity: retrieve material prior facts/current published state when not already established.
-- Epistemic distinction: retrieving an already-published fact is different from generating a new current event inside the permitted Play space.
-
-Example: "Did Alice previously live in Paris?" is retrieval; what Alice sees after opening a door may be new narrative generation if canon/plan/agency allow it.
-
-#### Revise: Semantic World Editor
-
-Purpose: formulate only typed semantic changes allowed by the current Revise contract.
-
-This includes more than canon replacement: permitted entity/profile/state changes, entity creation, arcs/variables, movement, and story-seed operations.
-
-For every operation with an exact `expected` precondition, Thought MUST retrieve the exact current value unless it is already present verbatim in authoritative context. Never reconstruct `expected` from user assertion, paraphrase, model memory, or Conversation summary.
-
-Existing referenced persistent IDs must be discovered/copied exactly.
-
-#### Settle
-
-No agent prompt. Settle remains deterministic Core behavior over validated event facts.
-
-### 5.5 Thought retrieval policy
-
-Use archive tools only when they materially improve correctness. Prefer the cheapest useful operation:
+Teach one progressive policy:
 
 ```text
-known relevant directory     -> list_directory
-known filename/path pattern  -> search_files
-unknown location of a fact   -> search_files_content
-content-search hit           -> bounded read_file_lines
-truly unfamiliar structure   -> bounded directory_tree, then narrow
+known directory      -> list_directory
+known path pattern   -> search_files
+need to locate fact  -> search_files_content
+found a hit          -> read_file_lines around the hit
+unknown structure    -> bounded directory_tree, then narrow
 ```
 
-Do not mechanically call `directory_tree("/")` on every turn. Do not broadly enumerate/read the archive without a concrete need. Do not repeat retrieval already established in the current React run.
+Do not mechanically enumerate the root. Do not reread facts already established in the current React run. Retrieve exact IDs/current values/history when correctness depends on them.
 
-Tool use is unnecessary when immediate authoritative context already contains enough evidence.
+### 11.6 Observe contract
 
-### 5.6 Observe evidence handoff
-
-Observe remains the sole self-contained handoff from hidden agent work to Final and should use these exact logical sections:
+Use exactly these sections:
 
 ```text
 [SESSION]
@@ -623,315 +1082,269 @@ Observe remains the sole self-contained handoff from hidden agent work to Final 
 [FINAL_CONTRACT]
 ```
 
-`[RETRIEVAL_STATUS]` is one of `sufficient`, `needs-more`, or `blocked`.
-
-`[RETRIEVAL_EVIDENCE]` preserves minimal internal provenance such as source path and useful line/range for exact values/conflict resolution. It is not automatically a user-visible citation system.
-
-`[UNRESOLVED]` contains anything Final must not invent.
-
-When `needs-more`, `[NEXT_RETRIEVAL]` should state one concrete retrieval goal; otherwise `<none>`.
-
-### 5.7 Check termination policy
-
-With a 10-step ceiling, Check SHOULD continue only when all are true:
-
-1. a material question remains unresolved;
-2. the available retrieval tools are likely to answer it;
-3. resolving it would materially improve the required Final/submission.
-
-Stop when evidence is sufficient, remaining uncertainty is immaterial, user clarification is required, retrieval is blocked, or another retrieval would merely reconfirm known facts.
-
-Prefer stopping over redundant confirmation.
-
-Expected behavior:
+`RETRIEVAL_STATUS` is exactly one of:
 
 ```text
-simple answer       1-2 steps
-normal retrieval    2-4 steps
-complex retrieval   4-7 steps
-hard ceiling        10 steps
+sufficient
+needs-more
+blocked
 ```
 
-### 5.8 Final contracts
+Tool error/truncation markers are evidence of incomplete retrieval, never World facts.
 
-Final remains tool-free.
+### 11.7 Final discipline
 
 ```text
-Thought = investigate / reason / retrieve
-Observe = consolidate evidence and unresolved state
-Check   = decide whether investigation is sufficient
-Final   = render, not re-investigate
+Thought = investigate/retrieve
+Observe = consolidate evidence/unresolved state
+Check   = decide sufficiency
+Final   = render
 ```
 
-Ordinary send Final answers naturally and does not leak hidden Thought/tool/Process Pile machinery or claim publication merely because a proposal was produced.
+Final never receives general tools and never solves a fact marked unresolved by inventing it.
 
-Submit Final mechanically renders already-determined candidate data into the exact Session schema. It preserves exact IDs/current values from Observe, does not solve new factual questions, and must not fabricate fields marked unresolved.
+### 11.8 v1 eager-context decision
 
-### 5.9 Bootstrap and migration
+Do not remove or shrink the current `VERIFIED_WORLD_DOCUMENTS` injection in the same implementation.
 
-MCP reduces eager context; it does not eliminate the permanent authoritative bootstrap.
+This v1 change is retrieval-enablement, not context-removal.
 
-Permanent bootstrap should include small control facts needed every run, such as World identity, pinned revision, Session kind, phase/day markers, current Play plan, and any small canon/control subset proven economical.
-
-Migration sequence:
-
-1. introduce shared prompt components and MCP while retaining existing verified eager context;
-2. validate Planning/Play/Revise retrieval and Observe evidence flow;
-3. validate Check early stopping;
-4. only then reduce broad `VERIFIED_WORLD_DOCUMENTS` injection;
-5. keep the minimal bootstrap permanently.
-
-Do not make MCP the sole source of a fact before its retrieval path is tested.
-
-## 6. Failure semantics, limits, retries, and loop budget
-
-### 6.1 Failure layers
-
-`strict`/`fail_fast` in `promptpile-mcp` and Promptpile React after-hook behavior apply at different layers:
-
-| Layer | Owner | v1 behavior |
-| --- | --- | --- |
-| archive-view / gateway / upstream initialization and tool discovery | Core + `promptpile-mcp` | fail closed before Session `ready` |
-| one batch of MCP calls | `promptpile-mcp` | `fail_fast`; failed calls produce error results/cancelled remainder |
-| `exec-calls` after-hook process propagation into `promptpile-react` | Promptpile public behavior | currently not guaranteed to make the whole Thought/React run fatal |
-| structured mutation/publication | Dayloom Core | always parser/schema/semantic/pinned-base gated |
-
-Therefore `behavior.failure_policy = "strict"` means gateway/upstream startup is strict. It does **not** mean every possible after-hook infrastructure failure automatically terminates React.
-
-For the first implementation, while Promptpile remains unchanged:
-
-- Session startup is fail-closed;
-- normal tool error results are evidence of retrieval failure, never World facts;
-- missing/failed retrieval is carried by Observe as unresolved/blocked;
-- prompts forbid inventing missing file content;
-- Core publication validation remains authoritative;
-- initial migration retains enough eager context that an infrastructure warning cannot silently substitute lower-authority data for published facts.
-
-If product requirements later demand `after-hook process failed => Thought must fail immediately`, implement that through a stable Dayloom-owned boundary if possible; otherwise it requires a future explicit Promptpile public surface and is outside this draft.
-
-### 6.2 Provider-agnostic output bounds
-
-The model must never receive unbounded tool output.
-
-The v1 provider-independent MUST is a bound on each serialized Promptpile ToolResult after `exec-calls` and before the next model phase consumes it.
-
-The Dayloom-generated after-hook wrapper therefore owns a provider-agnostic ToolResult sanitizer using the public Promptpile ToolResult artifact contract. It may replace oversized content with a bounded prefix/summary marker such as:
-
-```text
-[DAYLOOM_TOOL_RESULT_TRUNCATED]
-Result exceeded the configured byte limit. Narrow path, query, glob, or line range.
-```
-
-Silent truncation is forbidden.
-
-Do not make Core parse Rust-provider-private search result schemas merely to count matches.
-
-Provider-specific controls such as search `maxResults`, tree depth, or native read limits SHOULD be configured when the selected upstream MCP exposes stable knobs. Otherwise the universal serialized-byte limit plus prompt narrowing is the safety boundary.
-
-At minimum define and test:
-
-- per-tool call timeout;
-- per-ToolResult serialized byte limit;
-- total tool-result byte budget per React run;
-- optional provider-native search/tree/read bounds when available.
-
-Exact numeric values remain an implementation-tuning question.
-
-### 6.3 Retry semantics
-
-`retry_max_attempts = 2` means one initial attempt plus at most one retry.
-
-Only exact read-only tools against the immutable pinned view belong in `retry_safe_tools`.
-
-Do not retry semantic errors such as invalid path/arguments/tool-not-allowed. Retry is for transient transport/time-out classes handled by `promptpile-mcp`.
-
-### 6.4 React loop cap
-
-Core sets:
-
-```text
-REACT_MAX_STEPS = 10
-```
-
-Ten is an operational safety ceiling. A Dayloom step is heavier than a typical single agent turn because it contains Thought, optional tool execution, Observe, and Check model work.
-
-The caller's `llmConfigPath` MUST NOT arbitrarily raise this limit in v1.
-
-Operational instrumentation SHOULD measure total React wall time, model invocations/tokens where available, tool-call count, and total result bytes so early-stop quality and budgets can be tuned without raising the cap.
-
-## 7. Implementation and verification
-
-### 7.1 Expected Core-only implementation surface
-
-| File/area | Change |
-| --- | --- |
-| `packages/core/package.json` | add `promptpile-mcp` and selected filesystem MCP runtime dependencies |
-| `packages/core/src/promptpile/binaries.ts` | resolve packaged `promptpile-mcp` and provider executable |
-| new `packages/core/src/promptpile/archive-retrieval.ts` | Session gateway config, launch/readiness, export, hook/sanitizer generation, shutdown |
-| Session workspace/common types | archive-view/MCP paths and Session retrieval runtime metadata |
-| `packages/core/src/promptpile/config.ts` | derive React configs with Core-owned tools file + after-hook |
-| `packages/core/src/promptpile/react-runner.ts` | change fixed one-step product policy to `max-step = 10`; multi-step tests |
-| `packages/core/src/core.ts` | own Session retrieval service separately from foreground child |
-| `packages/core/src/session/prompts/*` | shared authority/archive/role/phase/output prompt components |
-| Core tests/pack smoke | distribution, lifecycle, retrieval, prompt behavior, cleanup |
-
-Promptpile remains an external CLI dependency. Do not deep-import `promptpile-mcp/src/*` or implementation internals.
-
-### 7.2 Implementation Gates
-
-#### Gate A - dependency/distribution
-
-- verify npm/provider provenance and exact tested version;
-- clean install and local executable resolution;
-- supported OS/architecture matrix;
-- initialize/tools-list/call lifecycle through `promptpile-mcp`;
-- read-only/containment/tool allowlist;
-- clean process shutdown.
-
-#### Gate B - archive projection
-
-- implement `reachable ∩ Profile-valid ∩ AI-visible allowlist`;
-- preserve canonical logical paths;
-- exclude control-plane/runtime/private paths;
-- safe materialization and read-only permissions;
-- projection integrity/cleanup tests.
-
-#### Gate C - Session retrieval runtime
-
-- gateway config, loopback port/token, launch/readiness;
-- live tool export;
-- exact provider tool binding for the selected MCP;
-- after-hook `exec-calls` plus ToolResult sanitizer;
-- gateway survives multiple sends and closes deterministically.
-
-#### Gate D - React/prompt integration
-
-- send/submit share tools/hook/pinned view/gateway;
-- `max-step = 10` with valid multi-step Process Pile sequences;
-- search -> read -> refine flow;
-- Observe evidence handoff and Check early-stop;
-- Final tool-free behavior;
-- no second Core tool-call executor.
-
-#### Gate E - migration and operational budgets
-
-- retain eager context during initial proof period;
-- verify prompt behavior before reducing eager documents;
-- define/test result-byte/tool-count/time budgets;
-- measure realistic 1-4 step normal behavior.
-
-### 7.3 Required test coverage
-
-Runtime/security tests MUST cover at least:
-
-- selected binaries resolve from packaged/local dependencies;
-- gateway loopback/token behavior;
-- missing required selected tool fails startup;
-- only selected read-only provider tools are model-visible;
-- `archive-view` excludes unreachable/control-plane/non-allowlisted data;
-- traversal/symlink escape fails;
-- R42 Session keeps reading R42 after current advances to R43;
-- content/path search and ranged reads return exact pinned data;
-- after-hook uses exact `PROMPTPILE_ASSISTANT_CALL_FILE`;
-- result artifact is visible to following Observe;
-- ToolResult byte truncation is explicit and preserves valid artifact structure;
-- one transient read retry can occur, but semantic errors are not retried;
-- gateway survives repeated sends and closes on terminalize/dispose;
-- foreground cancel does not confuse/lose Session gateway ownership;
-- MCP failure cannot directly publish/mutate World;
-- existing submission conflict detection remains unchanged;
-- supported platform CI passes.
-
-Prompt/agent tests MUST cover at least:
-
-- Init never retrieves or invents prior history;
-- Planning retrieves material current relationship/location/arc state when absent from bootstrap;
-- story seeds are not promoted to established facts;
-- Play distinguishes published-fact lookup from new current-event generation;
-- Play preserves user agency and pinned plan IDs;
-- Revise retrieves exact `expected` values and persistent IDs;
-- Thought prefers targeted search/read over mechanical root-tree dumps;
-- Observe emits retrieval status/evidence/IDs/unresolved/next retrieval;
-- Check continues when source evidence still needs reading and stops when sufficient;
-- Final never performs new retrieval or invents unresolved facts;
-- archive/Conversation instruction-like text cannot override Core policy;
-- prompt snapshots are deterministic.
-
-### 7.4 Acceptance criteria
-
-The draft is implemented when:
-
-1. every non-Init Session receives an isolated pinned read-only archive projection;
-2. the model can perform all five retrieval capabilities through the selected provider;
-3. the selected provider exposes only its five approved tool bindings;
-4. provider schemas come from live discovery/export;
-5. Promptpile call/result artifacts and `promptpile-mcp` execute the tool loop;
-6. send and submit share one Session-pinned gateway/view;
-7. adaptive retrieval works across multiple React steps with a hard cap of 10 and normal early termination;
-8. the projection remains pinned when `current.json` advances;
-9. model-visible data excludes Archive control-plane and non-allowlisted namespaces;
-10. no MCP operation can mutate the Archive/World;
-11. tool output and runtime budgets are explicit and tested;
-12. failure-layer behavior matches Section 6 and does not overclaim fail-closed React propagation;
-13. Core remains sole validator/publisher;
-14. Session/foreground process ownership is deterministic and leak-free;
-15. prompt roles, namespace semantics, evidence flow, and instruction isolation are tested;
-16. no Promptpile source modification is required.
-
-## 8. Remaining open questions
-
-The following are intentionally not fixed yet:
-
-- exact `@rustmcp/rust-mcp-filesystem` version after Gate A;
-- exact supported OS/architecture matrix;
-- exact provider read-only argv/config for that version;
-- loopback port allocation/retry implementation details;
-- exact per-call timeout, ToolResult byte cap, total React result-byte/tool-call budgets;
-- which provider-native search/tree/read limits are available and worth enabling;
-- whether canon remains eagerly injected after retrieval is stable;
-- whether all historical `days/` are AI-visible by default or the namespace policy becomes narrower;
-- eager copy versus a future lazy verified archive projection;
-- whether retrieval traces remain ephemeral diagnostics or become durable audit data;
-- whether a future product requirement justifies a Promptpile public surface for strict after-hook failure propagation.
-
-The following are no longer open for v1:
-
-- no raw Archive root exposure;
-- explicit AI-visible namespace allowlist;
-- Promptpile artifact/gateway integration rather than a Core tool loop;
-- the five retrieval capabilities;
-- selected-provider binding to the five Rust MCP tool names, subject to Gate A;
-- Thought-only general tools and tool-free Final;
-- Core-owned `max-step = 10` safety ceiling;
-- Session-scoped gateway lifecycle;
-- multi-dimensional authority model;
-- deterministic Settle.
+Once the frozen implementation passes behavior tests, broad eager context reduction can be proposed separately with its own equivalence measurements.
 
 ---
 
-## Appendix A - MCP selection rationale
+## 12. Implementation sequence
 
-### Why `@rustmcp/rust-mcp-filesystem` is the first candidate
+Implement in this order so every merge step has a closed testable boundary.
 
-It is narrowly aligned with Dayloom retrieval: real content search, path search, directory/tree inspection, line-ranged reads, read-only default, tool disabling, no required shell execution, and an npm distribution around a standalone implementation.
+### Step 1 — package boundaries
 
-### Why not Desktop Commander by default
+- add exact dependencies;
+- extend packaged binary resolution;
+- add packed smoke tests for all frozen package bins/commands.
 
-Desktop Commander is more established and has strong search ergonomics, but its product surface is privileged local automation including terminal/process, write/edit, and configuration capabilities. Dayloom needs a much narrower read-only authority surface.
+Exit criterion: Core can resolve all boundaries locally with no PATH/network assumptions.
 
-### Why not the official filesystem MCP alone
+### Step 2 — archive projection
 
-The official filesystem MCP is a strong file list/read reference server, but its search capability is primarily path/glob oriented and does not independently satisfy Dayloom's required content-keyword search. Combining it with a separate search MCP is viable but creates two upstream lifecycles/failure domains for one retrieval capability.
+- add `world/archive-view.ts`;
+- add deterministic projection/path/containment tests.
 
-Fallback selection must preserve the five capability contract, not necessarily the selected Rust provider's exact tool names.
+Exit criterion: fixture World produces exactly the expected copied visible tree and never exposes control/private/unreachable paths.
 
-## Appendix B - `max-step = 10` reference points
+### Step 3 — retrieval runtime
 
-The value is a runtime safety baseline, not a claim that framework "turn" semantics are identical.
+- add gateway config, port/token, launch/readiness, live tool export, state machine, idempotent close.
 
-Reference points checked on 2026-08-25:
+Exit criterion: a test Session can start one gateway, discover exactly five tools, survive multiple checks, and close with no child leak.
 
-- OpenAI Agents SDK JavaScript documents `maxTurns = 10` as its default run safety limit.
-- Anthropic agent/tool-loop documentation uses `MAX_TURNS = 10` in a representative tool-loop example.
+### Step 4 — closed-loop hook
 
-Dayloom uses the same order-of-magnitude ceiling while relying on Check to stop materially earlier because each outer step contains Thought, Observe, and Check model phases.
+- add packaged Node hook runner;
+- add POSIX/Windows trampoline generation;
+- add call-count/name validation, `exec-calls`, complete error-vector fallback, byte sanitizer, atomic result writes.
+
+Exit criterion: for every non-catastrophic execution outcome, `HAS_TOOL_CALLS=1 + hook exit 0` implies a complete valid ToolResult vector.
+
+### Step 5 — Session workspace/config binding
+
+- introduce `SessionToolingBinding`;
+- stop overwriting exported tools for non-Init Sessions;
+- set `after_hook` only for retrieval-enabled Sessions;
+- keep Init tool-free.
+
+Exit criterion: generated send/submit configs point to the same Session tools/hook and caller config cannot override them.
+
+### Step 6 — Core ownership refactor
+
+- replace split Session/retrieval ownership with `ActiveSessionRuntime`;
+- transactional start;
+- health assertion before foreground agent work;
+- ordered terminalize/dispose.
+
+Exit criterion: every start/cancel/submit/failure path leaves either one valid active aggregate or no active Session, never half-owned resources.
+
+### Step 7 — React + prompts
+
+- set max steps to 10;
+- refactor prompt components;
+- add Observe/Check retrieval behavior.
+
+Exit criterion: Process Pile tests cover 1, 2, 4, and 10-step valid sequences and prompt snapshots are stable.
+
+### Step 8 — end-to-end/pack CI
+
+- run real Promptpile -> `promptpile-mcp` -> Rust MCP -> result artifact -> Observe -> Final flows;
+- run supported platform packed-install smoke matrix.
+
+Exit criterion: all frozen acceptance criteria below pass from packed artifacts, not only monorepo source paths.
+
+Do not begin eager-context reduction as part of these steps.
+
+---
+
+## 13. Required tests
+
+### 13.1 Archive/security
+
+MUST test:
+
+- only allowlisted namespaces appear;
+- unreachable blobs never appear;
+- control-plane paths never appear;
+- canonical logical paths are preserved;
+- copies equal verified pinned bytes;
+- hardlinks are not used;
+- traversal/absolute escape fails;
+- symlink escape fails;
+- provider is read-only and Roots cannot retarget it;
+- Session pinned to R42 still reads R42 after current becomes R43.
+
+### 13.2 Dependency/runtime
+
+MUST test:
+
+- exact local package versions resolve;
+- no global PATH dependency;
+- gateway token is required;
+- loopback binding only;
+- port race retry;
+- strict startup on missing provider/tool;
+- exact five tools exported;
+- unexpected gateway exit marks runtime failed;
+- close is idempotent;
+- graceful close then force-kill fallback;
+- no child leak after terminalize/dispose.
+
+### 13.3 Hook
+
+MUST test:
+
+- `HAS_TOOL_CALLS=0` no-op;
+- exact `PROMPTPILE_ASSISTANT_CALL_FILE` use;
+- malformed/duplicate calls handling;
+- >4 calls produces complete error results without execution;
+- non-allowed tool produces complete error result without execution;
+- successful `exec-calls` result passes through;
+- oversized result is valid UTF-8, explicitly truncated, <=32 KiB serialized line;
+- MCP/gateway timeout produces complete synthetic retrieval-error vector;
+- result vector order/IDs exactly match calls;
+- atomic rewrite never exposes partial JSONL;
+- generated `.sh` and `.cmd` trampolines correctly quote paths with spaces.
+
+### 13.4 Core lifecycle
+
+MUST test:
+
+- Init has no retrieval runtime;
+- non-Init start installs active Session only after retrieval readiness;
+- startup failure closes gateway and removes Session root;
+- send/send/submit share the same gateway and pinned view;
+- foreground cancel does not kill/reassign gateway ownership prematurely;
+- terminalize closes gateway before deleting root;
+- retrieval unhealthy before send/submit => `AGENT_FAILED` + Session terminalization;
+- read-only retrieval failures do not call World recovery/publication paths;
+- dispose remains idempotent during idle/running/cancel states.
+
+### 13.5 Agent behavior
+
+MUST test fixtures showing:
+
+- Init never retrieves/invents prior published history;
+- Planning retrieves materially relevant current relationship/location/arc facts when bootstrap lacks them;
+- story seeds are never promoted to established facts;
+- Play distinguishes historical lookup from generating a new present event;
+- Play preserves user agency and pinned plan IDs;
+- Revise retrieves exact `expected` values and existing IDs;
+- Thought prefers targeted search/read to mechanical root enumeration;
+- Observe propagates source evidence, IDs, unresolved state and next retrieval;
+- tool error/truncation yields `needs-more` or `blocked`, never fabricated facts;
+- Check stops early when sufficient;
+- Final remains tool-free and does not invent unresolved values;
+- instruction-like archive/history text cannot override Core policy.
+
+### 13.6 Packed platform smoke
+
+Each supported CI target installs packed Dayloom/Core artifacts into a fresh consumer and proves:
+
+```text
+resolve bins
+-> start Core
+-> create fixture published World
+-> start non-Init Session
+-> gateway ready
+-> list/search/read through real MCP
+-> React can consume result
+-> terminalize
+-> no live child/temp Session remains
+```
+
+---
+
+## 14. Frozen acceptance criteria
+
+Implementation is complete only when all are true.
+
+1. Frozen dependency versions are installed/resolved locally and packed smoke passes on the support matrix.
+2. Every non-Init Session owns exactly one pinned copied `archive-view` and one retrieval runtime.
+3. Init owns neither.
+4. AI-visible files satisfy pinned reachability + Profile validity + explicit namespace allowlist.
+5. The physical Archive control/object store is inaccessible to the model/MCP.
+6. Rust MCP runs read-only with dynamic Roots disabled.
+7. Promptpile MCP exports exactly the five frozen provider tools.
+8. Tool schemas come from live MCP discovery, not duplicated Dayloom schemas.
+9. Gateway lifetime is owned by `ActiveSessionRuntime`, never `activeChild`.
+10. Session start is transactional and cannot expose a half-ready Session.
+11. `send()` and `submit()` share the same pinned gateway/view.
+12. `REACT_MAX_STEPS` is 10 and Process Pile validates multi-step runs.
+13. The hook enforces max 4 ToolCalls per Thought.
+14. Hook exit `0` with tool calls guarantees one valid paired ToolResult per call.
+15. Normal MCP/gateway execution failures become explicit retrieval-error ToolResults.
+16. Every serialized ToolResult line is <=32 KiB or explicitly truncated to that bound.
+17. Tool/result files are published atomically.
+18. Observe/Check can continue/refine or stop based on retrieval evidence.
+19. Final has no general tool access.
+20. Core remains sole mutation validator/publisher.
+21. No retrieval failure can directly alter published World state.
+22. Gateway unexpected exit is never repaired by retargeting/restarting against another revision.
+23. Terminalize/dispose close retrieval before deleting Session resources and are idempotent.
+24. Existing eager verified context remains intact in v1.
+25. Retrieval traces remain ephemeral.
+26. Prompt components are deterministic, shared, and tested.
+27. No Promptpile source change or deep import is required.
+28. No runtime global install, network fetch, Cargo, shell search path, or provider fallback is required.
+
+When these criteria pass, this design is considered implemented. Remaining ideas below are explicitly post-v1 and do not block the frozen implementation.
+
+---
+
+## 15. Post-v1 ideas — not implementation blockers
+
+The following are intentionally excluded from v1:
+
+- reducing/removing broad eager `VERIFIED_WORLD_DOCUMENTS` injection;
+- lazy/reflink archive-view projection;
+- narrower historical-day visibility policies;
+- durable retrieval audit traces;
+- dynamic provider selection/fallback;
+- multiple MCP providers in one Session;
+- changing the five retrieval capability contract;
+- caller-configurable max-step/tool budgets;
+- Promptpile changes for globally fatal after-hook propagation;
+- write-capable MCP or candidate-file editing.
+
+Each requires a separate design change after production behavior is measured.
+
+---
+
+## Appendix A — Why the frozen provider is acceptable
+
+`@rustmcp/rust-mcp-filesystem@0.4.3` provides the required listing/path search/content search/ranged read capabilities, is read-only by default, supports explicit `--allow-write false`, keeps dynamic Roots disabled by default and exposes CLI control for them, and is distributed as an npm convenience package around the Rust binary.
+
+The v1 design does not trust provider defaults alone: the provider is explicitly launched read-only/no-roots, rooted only at the copied Session projection, and sits behind the exact `promptpile-mcp` tool allowlist.
+
+## Appendix B — Why `max-step = 10`
+
+Ten is a hard agent-loop safety ceiling. It is intentionally generous enough for multi-hop `search -> read -> refine` while Check is instructed and tested to stop much earlier.
+
+A Dayloom outer step is heavier than a simple framework turn because it contains Thought, optional tool execution, Observe and Check. Operational tuning should improve early stopping rather than raise the frozen cap.
