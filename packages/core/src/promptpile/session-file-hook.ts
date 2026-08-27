@@ -25,12 +25,13 @@ export function readSessionFileHookConfigV1(configPath: string): SessionFileHook
     || !Number.isSafeInteger(config.maxToolResultLineBytes) || config.maxToolResultLineBytes <= 0
     || !Array.isArray(config.allowedToolNames) || config.allowedToolNames.length === 0
     || !Array.isArray(config.workspaces)) throw new Error('Session File hook configuration is invalid.');
-  if (new Set(config.allowedToolNames).size !== config.allowedToolNames.length || config.allowedToolNames.some((name) => typeof name !== 'string' || !/^mcp__(?:archive|draft|candidate)__[a-z_]+$/.test(name))) throw new Error('Session File allowed tools are invalid.');
+  if (new Set(config.allowedToolNames).size !== config.allowedToolNames.length || config.allowedToolNames.some((name) => typeof name !== 'string' || !/^mcp__(?:archive|draft|candidate|turn_control|change_plan)__[a-z_]+$/.test(name))) throw new Error('Session File allowed tools are invalid.');
   const ids = new Set<string>();
   for (const workspace of config.workspaces) {
     if (!['draft', 'candidate'].includes(workspace.serverId) || ids.has(workspace.serverId) || !path.isAbsolute(workspace.root)
       || !Number.isSafeInteger(workspace.maxFiles) || workspace.maxFiles <= 0 || !Number.isSafeInteger(workspace.maxFileBytes) || workspace.maxFileBytes <= 0 || !Number.isSafeInteger(workspace.maxTotalBytes) || workspace.maxTotalBytes <= 0
       || workspace.writeAllowed !== undefined && typeof workspace.writeAllowed !== 'boolean'
+      || workspace.writePaths !== undefined && (!Array.isArray(workspace.writePaths) || workspace.writePaths.some((item: unknown) => typeof item !== 'string'))
       || workspace.writePrefix !== undefined && (typeof workspace.writePrefix !== 'string' || !/^[A-Za-z0-9._-]+\/$/.test(workspace.writePrefix))) throw new Error('Session File workspace policy is invalid.');
     ids.add(workspace.serverId);
   }

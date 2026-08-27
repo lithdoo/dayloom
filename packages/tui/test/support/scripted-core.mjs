@@ -22,18 +22,18 @@ export class ScriptedDayloomCore {
   setState({ world = this.world, session = this.session } = {}) { this.world = world; this.session = session; this.changed(); }
   delta(sessionId, text) {
     const stream = this.ensureOutput(sessionId);
-    this.emit({ type: 'output.delta', sessionId, operationId: stream.operationId, messageId: stream.messageId, text });
+    this.emit({ type: 'operation.delta', sessionId, turnId:stream.turnId,operationId: stream.operationId, channel:'response', text });
   }
   work(sessionId, phase, text, stepIndex = 0) {
     const stream = this.ensureWork(sessionId);
-    this.emit({ type: 'work.delta', sessionId, operationId: stream.operationId, phase, stepIndex, text });
+    this.emit({ type: 'operation.delta', sessionId,turnId:stream.turnId, operationId: stream.operationId, channel:phase, text });
   }
 
   async startSession(kind) {
     this.calls.push(['startSession', kind]);
     if (this.handlers.startSession) return this.handlers.startSession(this, kind);
     if (!this.getState().capabilities.startSessions.includes(kind)) return failure('NOT_AVAILABLE', 'Session unavailable.');
-    this.session = { id: `session-${this.nextSessionId++}`, kind, status: 'ready' }; this.changed(); return success();
+    this.session = { id: `session-${this.nextSessionId++}`, kind, status: 'ready',draftSync:{status:'clean'} }; this.changed(); return success();
   }
   async send(text) {
     this.calls.push(['send', text]);
@@ -42,17 +42,17 @@ export class ScriptedDayloomCore {
     }
     if (!this.session || this.session.status !== 'ready') return failure('NOT_AVAILABLE', 'send unavailable.');
     const id = this.session.id, kind = this.session.kind;
-    this.session = { id, kind, status: 'running' }; this.changed();
+    this.session = { ...this.session, status: 'running' }; this.changed();
     const script = this.sendScript.shift() ?? { deltas: ['ok'] };
     for (const delta of script.deltas ?? []) { if (script.delayMs) await delay(script.delayMs); this.delta(id, delta); }
     if (script.wait) await script.wait;
     if (script.failure) {
       if (script.terminal !== false) { this.session = null; this.changed(); }
-      else { this.session = { id, kind, status: 'ready' }; this.changed(); }
+      else { this.session = { id, kind, status: 'ready',draftSync:{status:'clean'} }; this.changed(); }
       const result = failure(script.failure.code, script.failure.message); this.finishOutput(id, result); return result;
     }
     if (this.session?.id !== id) return failure('CANCELLED', 'cancelled');
-    this.session = { id, kind, status: 'ready' }; this.changed(); const result = success(); this.finishOutput(id, result); return result;
+    this.session = { id, kind, status: 'ready',draftSync:{status:'clean'} }; this.changed(); const result = success(); this.finishOutput(id, result); return result;
   }
   async submit() {
     this.calls.push(['submit']);
@@ -73,6 +73,7 @@ export class ScriptedDayloomCore {
     if (!this.session) return failure('NOT_AVAILABLE', 'cancel unavailable.');
     this.session = null; this.changed(); return success();
   }
+  async retryDraftSync(){this.calls.push(['retryDraftSync']);return failure('NOT_AVAILABLE','retry unavailable.');}
   async settle() {
     this.calls.push(['settle']);
     if (this.handlers.settle) return this.handlers.settle(this);
@@ -94,17 +95,15 @@ export class ScriptedDayloomCore {
     let stream = this.activeStreams.get(sessionId);
     if (!stream) {
       const operationId = `operation-${this.nextOperationId++}`;
-      stream = { operationId, messageId: `message-${operationId}`, workPath: `C:\\temp\\${operationId}`, outputStarted: false };
+      stream = { operationId, messageId: `message-${operationId}`,turnId:`turn-${operationId}`, workPath: `C:\\temp\\${operationId}`, outputStarted: false };
       this.activeStreams.set(sessionId, stream); this.lastStreamSessionId = sessionId;
-      this.emit({ type: 'work.started', sessionId, operationId, workPath: stream.workPath });
+      this.emit({ type: 'operation.started', sessionId,turnId:stream.turnId,operationId,groupId:stream.turnId,kind:'response',attempt:1 });
     }
     return stream;
   }
   ensureOutput(sessionId) {
     const stream = this.ensureWork(sessionId);
     if (!stream.outputStarted) {
-      this.emit({ type: 'work.completed', sessionId, operationId: stream.operationId, workPath: stream.workPath });
-      this.emit({ type: 'output.started', sessionId, operationId: stream.operationId, messageId: stream.messageId });
       stream.outputStarted = true;
     }
     return stream;
@@ -112,10 +111,7 @@ export class ScriptedDayloomCore {
   finishOutput(sessionId, result) {
     if (!sessionId) return;
     const stream = this.activeStreams.get(sessionId); if (!stream) return;
-    if (stream.outputStarted) this.emit({
-      type: result.ok ? 'output.completed' : 'output.failed', sessionId, operationId: stream.operationId, messageId: stream.messageId,
-      ...(result.ok ? {} : { message: result.error.message }),
-    });
+    if (stream.outputStarted){if(result.ok)this.emit({type:'operation.produced',sessionId,turnId:stream.turnId,operationId:stream.operationId,artifactId:`generation-${stream.operationId}`});this.emit({type:'operation.finished',sessionId,turnId:stream.turnId,operationId:stream.operationId,disposition:result.ok?'committed':'failed',...(result.ok?{}:{message:result.error.message})});this.emit({type:'turn.terminal',sessionId,turnId:stream.turnId,status:result.ok?'committed':'failed'});}
     this.activeStreams.delete(sessionId);
   }
 }
@@ -130,10 +126,10 @@ export const published = (overrides = {}) => ({
 export const invalid = (message = 'invalid world') => ({ status: 'invalid', error: { code: 'WORLD_INVALID', message } });
 
 function capabilities(world, session, disposed) {
-  if (disposed) return { startSessions: [], settle: false, abandonDay: false, send: false, submit: false, cancel: false };
+  if (disposed) return { startSessions: [], settle: false, abandonDay: false, send: false, submit: false,retryDraftSync:false, cancel: false };
   if (session) return {
     startSessions: [], settle: false, abandonDay: false,
-    send: session.status === 'ready', submit: session.status === 'ready', cancel: ['ready', 'running', 'submitting'].includes(session.status),
+    send: session.status === 'ready'&&session.draftSync?.status!=='pending', submit: session.status === 'ready'&&session.draftSync?.status!=='pending',retryDraftSync:session.status==='ready'&&session.draftSync?.status==='pending', cancel: ['ready', 'running', 'submitting'].includes(session.status),
   };
   if (world.status === 'uninitialized') return { startSessions: ['init'], settle: false, abandonDay: false, send: false, submit: false, cancel: false };
   if (world.status !== 'published') return { startSessions: [], settle: false, abandonDay: false, send: false, submit: false, cancel: false };

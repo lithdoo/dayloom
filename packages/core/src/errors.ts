@@ -1,11 +1,12 @@
 export type CoreErrorCode =
   | 'NOT_AVAILABLE' | 'BUSY' | 'INVALID_INPUT' | 'CONVERSATION_FAILED'
   | 'AGENT_FAILED' | 'DRAFT_INVALID' | 'CONVERSION_FAILED' | 'CANDIDATE_INVALID' | 'WORLD_BUSY' | 'WORLD_CONFLICT' | 'WORLD_INVALID'
+  | 'TURN_POLICY_REJECTED' | 'TURN_REVIEW_FAILED' | 'DRAFT_SYNC_FAILED' | 'DRAFT_CONFLICT'
   | 'CANCELLED' | 'DISPOSED' | 'INTERNAL_ERROR';
 import type { ValidationIssueV1 } from './session/diagnostics';
 export interface CoreError { code: CoreErrorCode; message: string; diagnostics?: readonly ValidationIssueV1[] }
 export type CoreResult = { ok: true } | { ok: false; error: CoreError };
-export type CoreInitializationErrorCode = 'INVALID_OPTIONS' | 'WORLD_BUSY' | 'INTERNAL_ERROR';
+export type CoreInitializationErrorCode = 'INVALID_OPTIONS' | 'WORLD_BUSY' | 'DRAFT_MIGRATION_FAILED' | 'INTERNAL_ERROR';
 
 export class CoreInitializationError extends Error {
   constructor(readonly code: CoreInitializationErrorCode, message: string, options?: ErrorOptions) {

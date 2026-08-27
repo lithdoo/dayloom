@@ -9,7 +9,7 @@ const { nodeProcessRunner } = require('../dist/promptpile/conversation');
 const { startSessionFileRuntimeV1, ARCHIVE_FILE_TOOLS, DRAFT_FILE_TOOLS } = require('../dist/promptpile/session-file-runtime');
 const { readValidatedToolCalls, pairedResultPath, readCompleteToolResultVector } = require('../dist/promptpile/archive-retrieval-artifacts');
 
-const temporary = (t) => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-file-runtime-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root; };
+const temporary = (t) => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-file-runtime-')); t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })); return root; };
 const row = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 
 test('real namespaced Session File Runtime closes read/write evidence and rejects write-without-read', { timeout: 30_000 }, async (t) => {

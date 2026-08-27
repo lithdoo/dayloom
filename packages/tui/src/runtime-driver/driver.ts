@@ -189,10 +189,10 @@ export function createDriverFromCore(options: {
     }
     const request = activeSendRequest;
     if (presentedSession?.id !== event.sessionId) return;
-    const projected = event.type === 'work.delta' && !isPhaseVisible(options.workVisibility ?? 'all', event.phase) ? { ...event, text: '' } : event;
+    const projected = event.type === 'operation.delta' && event.channel!=='response' && !isPhaseVisible(options.workVisibility ?? 'all', event.channel) ? { ...event, text: '' } : event;
     presentation = reducePresentation(presentation, projected);
     messages = presentation.items.filter((item): item is TuiMessage => !isWorking(item));
-    if (event.type === 'output.started' && request?.sessionId === event.sessionId) request.assistantMessageId = event.messageId;
+    if (event.type === 'operation.started' && event.kind==='response' && request?.sessionId === event.sessionId) request.assistantMessageId = `response:${event.operationId}`;
     enforceTranscriptLimits();
   }
 
@@ -261,6 +261,7 @@ export function createDriverFromCore(options: {
   async function handleReadySlash(token: string): Promise<void> {
     switch (token) {
       case '/submit': await requestSubmit(); return;
+      case '/retry': await requestRetry(); return;
       case '/exit': case '/cancel': if (presentedSession) await requestSessionCancel(presentedSession.id); return;
       case '/status': appendLocal('system', '当前正在 Session 中，请先输入 /exit 回到 Hub 再查看状态。'); break;
       case '/help': appendLocal('system', '当前正在 Session 中，请先输入 /exit 回到 Hub 再查看帮助。'); break;
@@ -299,6 +300,8 @@ export function createDriverFromCore(options: {
     emit();
   }
 
+  async function requestRetry():Promise<void>{const session=presentedSession;if(!session||!sessionControls().retry){appendLocal('warn','当前没有可重试的 Draft 同步。');emit();return;}presentation={...presentation,operation:{sessionId:session.id,operationId:null,closed:false}};let result:CoreResult;try{result=await core.retryDraftSync();}catch(error){result=internalFailure(error);}latestCoreState=core.getState();presentation=closePresentation(presentation);if(result.ok){appendLocal('system','Draft 同步已恢复。');presentedSession={...session,status:'ready',error:null};}else{appendLocal('error',result.error.message);presentedSession={...session,status:latestCoreState.session?.status??'failed',error:result.error};}emit();}
+
   async function requestSessionCancel(sessionId: string): Promise<void> {
     if (pendingSessionCancel || presentedSession?.id !== sessionId) return;
     pendingSessionCancel = { sessionId };
@@ -334,14 +337,15 @@ export function createDriverFromCore(options: {
   }
 
   function sessionControls(): TuiSessionControls {
-    if (!presentedSession) return { input: false, submit: false, cancel: false, dismiss: false };
-    if (presentedSession.status === 'failed') return { input: false, submit: false, cancel: false, dismiss: true };
-    if (presentedSession.status === 'cancelling') return { input: false, submit: false, cancel: false, dismiss: false };
-    if (presentedSession.status === 'submitting') return { input: false, submit: false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
-    if (presentedSession.status === 'running') return { input: false, submit: false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
+    if (!presentedSession) return { input: false, submit: false,retry:false, cancel: false, dismiss: false };
+    if (presentedSession.status === 'failed') return { input: false, submit: false,retry:false, cancel: false, dismiss: true };
+    if (presentedSession.status === 'cancelling') return { input: false, submit: false,retry:false, cancel: false, dismiss: false };
+    if (presentedSession.status === 'submitting') return { input: false, submit: false,retry:false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
+    if (presentedSession.status === 'running') return { input: false, submit: false,retry:false, cancel: latestCoreState.capabilities.cancel, dismiss: false };
     return {
       input: latestCoreState.capabilities.send,
       submit: latestCoreState.capabilities.submit,
+      retry:latestCoreState.capabilities.retryDraftSync,
       cancel: latestCoreState.capabilities.cancel,
       dismiss: false,
     };

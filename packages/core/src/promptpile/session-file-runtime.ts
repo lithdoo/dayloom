@@ -14,7 +14,7 @@ import type { SessionFileHookConfigV1 } from './session-file-hook';
 export const ARCHIVE_FILE_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'search_files', 'search_files_content', 'read_file_lines'] as const);
 export const DRAFT_FILE_TOOLS = Object.freeze(['list_directory', 'read_file_lines', 'write_file'] as const);
 export const CANDIDATE_FILE_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'read_file_lines', 'write_file'] as const);
-export interface SessionFileServerV1 { readonly id: 'archive' | 'draft' | 'candidate'; readonly root: string; readonly writable: boolean; readonly tools: readonly string[] }
+export interface SessionFileServerV1 { readonly id: 'archive' | 'draft' | 'candidate' | 'turn_control' | 'change_plan'; readonly root: string; readonly writable: boolean; readonly tools: readonly string[]; readonly command?: CommandBoundary }
 export interface SessionFileBindingV1 { readonly toolsFile: string; readonly afterHookPath: string; readonly toolNames: readonly string[] }
 export interface SessionFileRuntimeV1 {
   readonly binding: SessionFileBindingV1; assertHealthy(): void; assertReadyForFinal(workPath: string): void; close(): Promise<void>;
@@ -38,7 +38,7 @@ export async function startSessionFileRuntimeV1(input: {
     const config = {
       version: 1, gateway: { port, token }, defaults: { init_timeout_ms: settings.initMs, list_timeout_ms: settings.listMs }, behavior: { failure_policy: 'strict', flat_names: false },
       execution: { concurrency: 1, call_timeout_ms: settings.callMs, failure_policy: 'fail_fast', retry_max_attempts: 2, retry_base_delay_ms: 250, retry_safe_tools: expectedTools.filter((name) => !name.endsWith('__write_file')) },
-      servers: Object.fromEntries(input.servers.map((server) => [server.id, { command: input.filesystemMcp.command, args: [...input.filesystemMcp.argsPrefix, server.root], cwd: server.root, env: { ALLOW_WRITE: String(server.writable), ENABLE_ROOTS: 'false' }, allowed_tools: [...server.tools] }])),
+      servers: Object.fromEntries(input.servers.map((server) => { const boundary=server.command??input.filesystemMcp; return [server.id, { command: boundary.command, args: [...boundary.argsPrefix,...(server.command?[]:[server.root])], cwd: server.root, env: server.command?{}:{ ALLOW_WRITE: String(server.writable), ENABLE_ROOTS: 'false' }, allowed_tools: [...server.tools] }]; })),
     };
     const hookConfig: SessionFileHookConfigV1 = { version: 1, promptpileMcpBin: input.promptpileMcpBin, baseUrl, token, execRequestTimeoutMs: settings.execMs, maxToolCallsPerThought: input.maxToolCallsPerThought, maxToolResultLineBytes: input.maxToolResultLineBytes, allowedToolNames: expectedTools, workspaces: input.workspaces };
     await writeFile(configPath, TOML.stringify(config as TOML.JsonMap), { encoding: 'utf8', mode: 0o600 }); await writeFile(hookConfigPath, `${JSON.stringify(hookConfig, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });

@@ -94,13 +94,14 @@ export function createViewModel(
     const current = state.get();
     if (current.page.kind !== 'session') return false;
     const controls = current.sessionControls;
-    return controls.input || controls.submit || controls.cancel || controls.dismiss;
+    return controls.input || controls.submit || controls.retry || controls.cancel || controls.dismiss;
   });
   const inputHint = computed(() => {
     const current = state.get();
     if (current.page.kind !== 'session') return '';
     const status = current.session?.status;
     if (!status) return '';
+    if (current.sessionControls.retry) return '/retry 恢复 Draft 同步 · /exit 取消';
     if (status === 'failed') return '/exit 或 /cancel 返回 Hub';
     if (status === 'submitting') return '提交中 · /exit 或 /cancel 中断';
     if (status === 'cancelling') return sessionStatusLabel(status);

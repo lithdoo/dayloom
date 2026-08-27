@@ -1,28 +1,28 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { createDayloomCoreInternal } = require('../dist/core');
-const { resolvePackagedBoundaries } = require('../dist/promptpile/binaries');
-const { CoreInitializationError } = require('../dist/errors');
-const { FakeRunner } = require('./helpers');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {createDayloomCoreInternal}=require('../dist/core');const {resolvePackagedBoundaries}=require('../dist/promptpile/binaries');const {materializeMarkdownDraftSnapshotV2}=require('../dist/session/markdown-draft-snapshot');const {CoreInitializationError}=require('../dist/errors');const {FakeRunner}=require('./helpers');
+const temporary=(t)=>{const root=fs.mkdtempSync(path.join(os.tmpdir(),'dayloom-core-v2-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return root;};
+function fakeTurnAgent(input){return{async generate(operationId){const conversationId='conv_accepted';fs.mkdirSync(path.join(input.persistentSessionRoot,'conversations',conversationId),{recursive:true});return{generationId:'generation_accepted',operationId,responseText:'accepted response',conversationId};},async arbitrate(operationId){return{operationId,verdict:{decision:'ACCEPT',draft:'UPDATE'}};},async curate(operationId,request){const brief=Buffer.concat([fs.readFileSync(path.join(input.baseSnapshot.root,'brief.md')),Buffer.from('Accepted intent.\n')]),evidence=Buffer.concat([fs.readFileSync(path.join(input.baseSnapshot.root,'evidence.md')),Buffer.from(`accepted:${request.turnId}\n`)]),snapshot=await materializeMarkdownDraftSnapshotV2({slotRoot:input.slotRoot,draftId:input.baseSnapshot.draftId,meta:input.baseSnapshot.meta,brief,evidence});return{operationId,snapshot};}};}
+test('Core V2 persists double-committed Session, restores it from Head, and cancels by Head CAS',async(t)=>{const root=temporary(t),worldRoot=path.join(root,'world'),runtimeRoot=path.join(root,'runtime'),config=path.join(root,'llm.toml');fs.writeFileSync(config,'[[llm_api]]\nname="test"\nmodel="test"\n');const internal={runner:new FakeRunner(),boundaries:await resolvePackagedBoundaries(),turnAgentFactory:fakeTurnAgent},options={worldRoot,runtimeRoot,llmConfigPath:config};const core=await createDayloomCoreInternal(options,internal);await assert.rejects(()=>createDayloomCoreInternal(options,internal),(error)=>error instanceof CoreInitializationError&&error.code==='WORLD_BUSY');assert.deepEqual(await core.startSession('init'),{ok:true});const events=[];core.subscribe((event)=>events.push(event));assert.deepEqual(await core.send('build this'),{ok:true});assert.equal(core.getState().session.draftSync.status,'clean');assert.deepEqual(events.filter((event)=>event.type==='turn.commit').map((event)=>event.commit),['response','draft']);assert.equal(events.find((event)=>event.type==='operation.delta'),undefined);const sessionId=core.getState().session.id;await core.dispose();const restored=await createDayloomCoreInternal(options,internal);assert.equal(restored.getState().session.id,sessionId);assert.equal(restored.getState().capabilities.send,true);assert.deepEqual(await restored.cancel(),{ok:true});assert.equal(restored.getState().session,null);await restored.dispose();});
 
-const temporary = (t) => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dayloom-core-draft-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root; };
-
-test('Core persists Draft, reports lint diagnostics, restores ready, and enforces one writer', async (t) => {
-  const root = temporary(t), worldRoot = path.join(root, 'world'), runtimeRoot = path.join(root, 'runtime'), config = path.join(root, 'llm.toml'); fs.writeFileSync(config, '[[llm_api]]\nname="test"\nmodel="test"\n');
-  const options = { worldRoot, runtimeRoot, llmConfigPath: config }, internal = { runner: new FakeRunner(), boundaries: await resolvePackagedBoundaries() };
-  const core = await createDayloomCoreInternal(options, internal); t.after(() => core.dispose());
-  await assert.rejects(() => createDayloomCoreInternal(options, internal), (error) => error instanceof CoreInitializationError && error.code === 'WORLD_BUSY');
-  assert.deepEqual(await core.startSession('init'), { ok: true }); const events = []; core.subscribe((event) => events.push(event));
-  const result = await core.submit(); assert.equal(result.ok, false); assert.equal(result.error.code, 'DRAFT_INVALID'); assert.ok(result.error.diagnostics.length > 0); assert.equal(core.getState().session.status, 'ready');
-  const sequence = events.filter((event) => ['submission.diagnostics', 'work.failed'].includes(event.type) || event.type === 'state.changed' && event.state.session?.status === 'ready').map((event) => event.type);
-  const diagnosticsIndex = sequence.indexOf('submission.diagnostics'); assert.deepEqual(sequence.slice(diagnosticsIndex, diagnosticsIndex + 3), ['submission.diagnostics', 'work.failed', 'state.changed']);
-  const draftFiles = [...walk(path.join(runtimeRoot, 'drafts/active'))]; assert.ok(draftFiles.some((item) => item.endsWith('draft.yaml'))); assert.ok(draftFiles.some((item) => item.endsWith('diagnostics.json')));
-  assert.deepEqual(await core.cancel(), { ok: true }); assert.equal(core.getState().session, null); assert.equal(fs.existsSync(path.join(runtimeRoot, 'drafts')), true);
-  await core.dispose(); assert.equal(fs.existsSync(path.join(runtimeRoot, 'drafts')), true); assert.equal(fs.existsSync(path.join(runtimeRoot, 'world.lock')), false);
-  const restarted = await createDayloomCoreInternal(options, internal); await restarted.dispose();
+test('accepted response remains authoritative while Draft sync fails, then retry closes Commit B',async(t)=>{
+  const root=temporary(t),worldRoot=path.join(root,'world'),runtimeRoot=path.join(root,'runtime'),config=path.join(root,'llm.toml');
+  fs.writeFileSync(config,'[[llm_api]]\nname="test"\nmodel="test"\n');let curationCalls=0;
+  const turnAgentFactory=(input)=>{const agent=fakeTurnAgent(input),curate=agent.curate;agent.curate=async(...args)=>{curationCalls+=1;if(curationCalls===1)throw new Error('injected curator failure');return curate(...args);};return agent;};
+  const core=await createDayloomCoreInternal({worldRoot,runtimeRoot,llmConfigPath:config},{runner:new FakeRunner(),boundaries:await resolvePackagedBoundaries(),turnAgentFactory});
+  await core.startSession('init');const sessionId=core.getState().session.id;
+  const failed=await core.send('remember accepted intent');assert.equal(failed.ok,false);assert.equal(failed.error.code,'DRAFT_SYNC_FAILED');
+  assert.deepEqual(core.getState().session.draftSync.status,'pending');assert.equal(core.getState().capabilities.retryDraftSync,true);assert.equal(core.getState().capabilities.send,false);assert.equal(core.getState().capabilities.submit,false);
+  await core.dispose();
+  const restored=await createDayloomCoreInternal({worldRoot,runtimeRoot,llmConfigPath:config},{runner:new FakeRunner(),boundaries:await resolvePackagedBoundaries(),turnAgentFactory});
+  assert.equal(restored.getState().session.id,sessionId);assert.equal(restored.getState().capabilities.retryDraftSync,true);
+  assert.deepEqual(await restored.retryDraftSync(),{ok:true});assert.equal(restored.getState().session.draftSync.status,'clean');assert.equal(restored.getState().capabilities.send,true);
+  await restored.dispose();
 });
 
-function* walk(root) { if (!fs.existsSync(root)) return; for (const entry of fs.readdirSync(root, { withFileTypes: true })) { const target = path.join(root, entry.name); if (entry.isDirectory()) yield* walk(target); else yield target; } }
+test('ready cancel clears Head and retains the whole Session under abandoned-sessions',async(t)=>{
+  const root=temporary(t),worldRoot=path.join(root,'world'),runtimeRoot=path.join(root,'runtime'),config=path.join(root,'llm.toml');
+  fs.writeFileSync(config,'[[llm_api]]\nname="test"\nmodel="test"\n');
+  const core=await createDayloomCoreInternal({worldRoot,runtimeRoot,llmConfigPath:config},{runner:new FakeRunner(),boundaries:await resolvePackagedBoundaries(),turnAgentFactory:fakeTurnAgent});
+  await core.startSession('init');const sessionId=core.getState().session.id;await core.send('keep an audit trail');assert.deepEqual(await core.cancel(),{ok:true});
+  assert.equal(fs.existsSync(path.join(runtimeRoot,'drafts','abandoned-sessions',sessionId,'turns')),true);await core.dispose();
+});

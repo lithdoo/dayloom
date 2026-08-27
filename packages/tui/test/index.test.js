@@ -162,7 +162,7 @@ test('tui user text, delta aggregation, and send success preserve one transcript
   await driver.submitSessionText(' hello ');
   assert.deepEqual(core.calls.filter((call) => call[0] === 'send'), [['send', 'hello']]);
   assert.deepEqual(driver.getState().messages.map((message) => [message.role, message.text, message.status]), [
-    ['system', '你想从什么样的世界开始？', 'complete'], ['user', 'hello', 'complete'], ['assistant', 'one two', 'complete'],
+    ['system', '你想从什么样的世界开始？', 'complete'], ['user', 'hello', 'complete'], ['assistant', 'one two', 'accepted'],
   ]);
   assert.equal(driver.getState().session.status, 'ready');
   await driver.dispose();
@@ -222,7 +222,7 @@ test('tui submitting state remains cancellable and returns to the active Session
   const driver = await driverFor(core); await driver.runHubAction('init');
   const submitting = driver.submitSessionText('/submit');
   while (driver.getState().session.status !== 'submitting') await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false,retry:false, cancel: true, dismiss: false });
   const cancelling = driver.submitSessionText('/cancel');
   await Promise.all([submitting, cancelling]);
   assert.equal(driver.getState().page.kind, 'session');
@@ -244,7 +244,7 @@ test('tui running cancel suppresses late send ownership and cancel owns Hub tran
   } });
   const driver = await driverFor(core); await driver.runHubAction('init');
   const sending = driver.submitSessionText('hello'); await waitFor(() => driver.getState().session.status === 'running');
-  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false,retry:false, cancel: true, dismiss: false });
   await driver.submitSessionText('/exit'); await sending;
   assert.equal(driver.getState().page.kind, 'hub'); assert.equal(driver.getState().recent.kind, 'cancelled');
   assert.equal(driver.getState().recent.label, '会话已取消');

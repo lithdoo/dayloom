@@ -4,21 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const TOML = require('@iarna/toml');
-const { allocateSessionAssignmentV1 } = require('../dist/session/assignment');
 const { assertSessionCandidatePathAllowedV1 } = require('../dist/world/candidate');
 const { writeReactConfig, readCallerConfig } = require('../dist/promptpile/config');
 const { createInitWorkspace } = require('../dist/session/lifecycle');
-
-const hash = { 'draft.yaml': 'a'.repeat(64) };
-test('deterministic assignment covers all four Session kinds', () => {
-  const init = allocateSessionAssignmentV1({ schemaVersion: 1, kind: 'init', characters: [{ key: 'hero' }], locations: [{ key: 'home', triggers: [{}] }], arcs: [{ key: 'main' }], initialFacts: [{}], unresolvedThreads: [{}], storySeeds: [{}] }, hash, null);
-  assert.deepEqual(init.ids, { 'character:hero': 'character1', 'location:home': 'location1', 'arc:main': 'arc1', 'fact:1': 'fact1', 'thread:1': 'thread1', 'seed:1': 'seed1', 'trigger:home:1': 'trigger1' });
-  assert.deepEqual(allocateSessionAssignmentV1({ schemaVersion: 1, kind: 'planning', beats: [{ key: 'opening' }, { key: 'choice' }] }, hash, null).ids, { 'beat:opening': 'beat1', 'beat:choice': 'beat2' });
-  assert.deepEqual(allocateSessionAssignmentV1({ schemaVersion: 1, kind: 'play', events: [{ key: 'e001' }, { key: 'e002' }] }, hash, null).ids, { 'event:e001': 'event1', 'event:e002': 'event2' });
-  const base = { commit: { rootTreeHash: 'b'.repeat(64) }, profileV1: { characterIds: ['character1', 'character3'], locationIds: ['location2'], arcIds: [] } };
-  const reserved = new Set(['character2', 'location1', 'arc1', 'seed1']);
-  assert.deepEqual(allocateSessionAssignmentV1({ schemaVersion: 1, kind: 'revise', operations: [{ op: 'create-character' }, { op: 'create-location' }, { op: 'create-arc' }, { op: 'add-story-seed' }] }, hash, base, reserved).ids, { 'operation:1': 'character4', 'operation:2': 'location3', 'operation:3': 'arc2', 'operation:4': 'seed2' });
-});
 
 test('operation path matrix is closed for all Session kinds', () => {
   assert.equal(assertSessionCandidatePathAllowedV1('init', 'canon/premise.md', null), 'canon/premise.md');

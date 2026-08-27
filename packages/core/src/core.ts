@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
@@ -10,20 +10,22 @@ import { publishMutation, type WorldChange } from './world/publish';
 import { resolvePackagedBoundaries, type PackagedBoundaries } from './promptpile/binaries';
 import { readCallerConfig, type CallerConfig } from './promptpile/config';
 import { appendUser, nodeProcessRunner, type ProcessRunner } from './promptpile/conversation';
-import { runCompressedCompletion } from './promptpile/compression';
-import { runReact } from './promptpile/react-runner';
-import { ARCHIVE_FILE_TOOLS, DRAFT_FILE_TOOLS, startSessionFileRuntimeV1, type SessionFileRuntimeV1 } from './promptpile/session-file-runtime';
-import { materializeArchiveView } from './world/archive-view';
 import { buildContextMessage, createPlayWorkspace } from './session/play';
 import { buildLifecycleContext, createInitWorkspace, createPlanningWorkspace, createReviseWorkspace } from './session/lifecycle';
 import type { CoreSession } from './session/common';
 import { buildSettlementMutationV1 } from './world/builders/settlement';
 import { readStructuredDayEventsV1 } from './world/profile/events';
-import { openDraftV1, type DraftHandleV1 } from './session/draft-store';
+import { openDraftV2, type DraftHandleV2 } from './session/draft-store-v2';
+import type { AggregateHeadV1 } from './session/aggregate-head';
+import { compareAndSwapAggregateHeadV1, readAggregateHeadV1 } from './session/aggregate-head';
+import { verifySnapshotDirectoryV2 } from './session/markdown-draft-snapshot';
+import { materializeConversationRevisionV1 } from './session/conversation-revision';
+import { runTurnCoordinatorV1 } from './session/turn-coordinator';
+import { writeTurnRecordV1, readTurnRecordV1, type TurnAuditV1 } from './session/turn-record';
+import { AiTurnAgentV2 } from './session/turn-agent-v2';
+import { runSubmissionPipelineV2, SubmissionPipelineErrorV2 } from './session/submission-pipeline-v2';
+import { AiSubmissionConverterV2, AiSubmissionPlannerV2, AiSubmissionReviewerV2 } from './session/submission-agent-v2';
 import { acquireWorldRuntimeLockV1, type WorldRuntimeLockV1 } from './session/runtime-lock';
-import { SESSION_FILE_LIMITS } from './session/file-limits';
-import { runSubmissionPipelineV1, SubmissionPipelineErrorV1 } from './session/submission-pipeline';
-import { AiSubmissionConverterV1, AiSubmissionReviewerV1 } from './session/submission-agent';
 import { createHash } from 'node:crypto';
 
 export interface CreateDayloomCoreOptions { worldRoot: string; llmConfigPath: string; runtimeRoot?: string }
@@ -33,6 +35,7 @@ export interface DayloomCore {
   startSession(kind: CoreSessionKind): Promise<CoreResult>;
   send(text: string): Promise<CoreResult>;
   submit(): Promise<CoreResult>;
+  retryDraftSync(): Promise<CoreResult>;
   cancel(): Promise<CoreResult>;
   settle(): Promise<CoreResult>;
   abandonDay(): Promise<CoreResult>;
@@ -43,9 +46,10 @@ interface InternalOptions {
   mutationPublisher?: typeof publishMutation;
   remove?: typeof rm;
   classifier?: typeof classifyWorld;
-  fileRuntimeFactory?: typeof startSessionFileRuntimeV1;
+  turnAgentFactory?:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'curate'>;
+  submissionAgents?:{planner:any;converter:any;reviewer:any};
 }
-interface ActiveSessionRuntime { readonly workspace: CoreSession; readonly files: SessionFileRuntimeV1; readonly draft: DraftHandleV1 }
+interface ActiveSessionRuntime { readonly workspace: CoreSession; readonly draft: DraftHandleV2; readonly persistentRoot:string; head:Readonly<AggregateHeadV1> }
 class DayloomCoreImpl implements DayloomCore {
   private world: PublishedWorld | null;
   private worldState: CoreWorldState;
@@ -58,7 +62,6 @@ class DayloomCoreImpl implements DayloomCore {
   private cancelRequestedSessionId: string | null = null;
   private interruptCancelPromise: Promise<CoreResult> | null = null;
   private disposal: Promise<void> | null = null;
-  private activeReactOperation: { id: string; sessionId: string; workPath: string | null; messageId: string | null; terminalProjected: boolean } | null = null;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   constructor(
     classified: ClassifiedWorld, private readonly worldRoot: string, private readonly runtimeRoot: string, private readonly persistentRuntimeRoot: string,
@@ -66,11 +69,13 @@ class DayloomCoreImpl implements DayloomCore {
     private readonly runner: ProcessRunner, private readonly mutationPublisher: typeof publishMutation,
     private readonly remove: typeof rm,
     private readonly classifier: typeof classifyWorld,
-    private readonly fileRuntimeFactory: typeof startSessionFileRuntimeV1, private readonly runtimeLock: WorldRuntimeLockV1,
+    private readonly runtimeLock: WorldRuntimeLockV1,
+    private readonly turnAgentFactory:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'curate'>,
+    private readonly injectedSubmissionAgents:{planner:any;converter:any;reviewer:any}|null,
   ) { this.world = classified.published; this.worldState = classified.state; }
   private workspace(): CoreSession | null { return this.activeSession?.workspace ?? null; }
   private publicSession(): CoreState['session'] {
-    return this.activeSession && this.sessionPhase ? { id: this.activeSession.workspace.id, kind: this.activeSession.workspace.kind, status: this.sessionPhase } : null;
+    if(!this.activeSession||!this.sessionPhase)return null;const pending=this.activeSession.head.activeSession?.pendingDraftSync;return { id: this.activeSession.workspace.id, kind: this.activeSession.workspace.kind, status: this.sessionPhase, draftSync: pending?{status:'pending' as const,turnId:pending.turnId}:{ status: 'clean' as const } };
   }
   getState() { return buildState(this.worldState, this.publicSession(), this.mutation, this.disposed, this.cancelRequestedSessionId); }
   subscribe(listener: (event: CoreEvent) => void) { if (this.disposed) return () => {}; this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -85,52 +90,6 @@ class DayloomCoreImpl implements DayloomCore {
     let child: ChildProcess | null = null;
     try { await appendUser(this.runner, this.boundaries.promptpileBin, directory, content, (started) => { child = started; this.childStarted(started, sessionId); }); }
     finally { if (child) this.childEnded(child); }
-  }
-  private compressAndComplete<T>(session: CoreSession, completion: () => Promise<T>): Promise<T> {
-    return runCompressedCompletion({
-      runner: this.runner, promptpileBin: this.boundaries.promptpileBin, conversationDir: session.conversationDir,
-      requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
-      onChildStart: (child) => this.childStarted(child, session.id), onChildEnd: (child) => this.childEnded(child), completion,
-    });
-  }
-  private async runSessionReact(session: CoreSession, config: string): Promise<string> {
-    let child: ChildProcess | null = null;
-    const operation = { id: `op_${randomUUID().replaceAll('-', '')}`, sessionId: session.id, workPath: null as string | null, messageId: null as string | null, terminalProjected: false };
-    let messageId: string | null = null;
-    this.activeReactOperation = operation;
-    const live = () => this.activeReactOperation === operation && !operation.terminalProjected && !this.disposed && !this.isCancelRequested(session);
-    const fail = (message: string, status: 'failed' | 'cancelled' = 'failed') => {
-      if (!live()) return;
-      operation.terminalProjected = true;
-      if (messageId) this.emit({ type: 'output.failed', sessionId: session.id, operationId: operation.id, messageId, message });
-      else this.emit({ type: 'work.failed', sessionId: session.id, operationId: operation.id, status, message, workPath: operation.workPath });
-    };
-    try {
-      return await runReact({
-        runner: this.runner, reactBin: this.boundaries.reactBin,
-        validateProcessPile: this.boundaries.validateProcessPile,
-        config, context: session.contextDir, conversation: session.conversationDir,
-        assertBeforeFinal: this.activeSession?.workspace === session
-          ? (workPath) => this.activeSession?.files.assertReadyForFinal(workPath)
-          : undefined,
-        onChild: (started) => { child = started; this.childStarted(started, session.id); },
-        observer: {
-          workStarted: (workPath) => { if (live()) { operation.workPath = workPath; this.emit({ type: 'work.started', sessionId: session.id, operationId: operation.id, workPath }); } },
-          workDelta: (phase, stepIndex, text) => { if (live()) this.emit({ type: 'work.delta', sessionId: session.id, operationId: operation.id, phase, stepIndex, text }); },
-          workCompleted: (workPath) => { if (live()) this.emit({ type: 'work.completed', sessionId: session.id, operationId: operation.id, workPath }); },
-          workFailed: (status, message, workPath) => { operation.workPath = workPath; fail(message, status); },
-          outputStarted: () => { if (live()) { messageId = `msg_${randomUUID().replaceAll('-', '')}`; operation.messageId = messageId; this.emit({ type: 'output.started', sessionId: session.id, operationId: operation.id, messageId }); } },
-          outputDelta: (text) => { if (live() && messageId) this.emit({ type: 'output.delta', sessionId: session.id, operationId: operation.id, messageId, text }); },
-          outputCompleted: () => { if (live() && messageId) { operation.terminalProjected = true; this.emit({ type: 'output.completed', sessionId: session.id, operationId: operation.id, messageId }); } },
-        },
-      });
-    } catch (error) {
-      fail(messageOf(error));
-      throw error;
-    } finally {
-      if (child) this.childEnded(child);
-      if (this.activeReactOperation === operation) this.activeReactOperation = null;
-    }
   }
   private operation(action: () => Promise<CoreResult>): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
@@ -170,27 +129,49 @@ class DayloomCoreImpl implements DayloomCore {
       this.worldState = classified.state;
     } catch { /* error recovery must not replace the original operation result */ }
   }
+  async restorePersistentSession(): Promise<void> {
+    const activeRoot = path.join(this.persistentRuntimeRoot, 'drafts', 'active');
+    let entries;
+    try { entries = await readdir(activeRoot, { withFileTypes: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const slotRoot = path.join(activeRoot, entry.name);
+      const raw = JSON.parse(await readFile(path.join(slotRoot, 'meta.json'), 'utf8')) as any;
+      if (raw.baseCommitId !== (this.world?.commit.id ?? null) || raw.baseRootTreeHash !== (this.world?.commit.rootTreeHash ?? null)) continue;
+      const draft = await openDraftV2({ runtimeRoot: this.persistentRuntimeRoot, kind: raw.kind, worldIdentity: raw.worldIdentity, baseCommitId: raw.baseCommitId, baseRootTreeHash: raw.baseRootTreeHash, targetDay: raw.targetDay });
+      const head = await draft.head();
+      if (head.activeSession === null) continue;
+      if (this.activeSession) throw new Error('Multiple active persistent Sessions exist.');
+      const id = head.activeSession.sessionId;
+      let session: CoreSession;
+      if (raw.kind === 'init') session = await createInitWorkspace(this.runtimeRoot, id, this.config);
+      else if (raw.kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config);
+      else if (raw.kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config);
+      else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config);
+      this.activeSession = { workspace: session, draft, persistentRoot: path.join(draft.root, 'sessions', id), head };
+      this.sessionPhase = 'ready';
+    }
+  }
   startSession(kind: CoreSessionKind) { return this.operation(async () => {
     if (!this.canStart(kind)) return failure('NOT_AVAILABLE', `${kind} Session is not available.`);
     const id = randomUUID(), sessionRoot = path.join(this.runtimeRoot, 'sessions', id);
-    let session: CoreSession | null = null, files: SessionFileRuntimeV1 | null = null;
+    let session: CoreSession | null = null;
     try {
       const targetDay = kind === 'planning' ? (await import('./world/read')).nextDay(this.world?.commit.control.lastSettledDay ?? null) : kind === 'play' ? this.world!.commit.control.day : null;
       const worldIdentity = this.world?.manifest.worldId ?? createHash('sha256').update(this.worldRoot.toLowerCase()).digest('hex');
-      const draft = await openDraftV1({ runtimeRoot: this.persistentRuntimeRoot, kind, worldIdentity, baseCommitId: this.world?.commit.id ?? null, baseRootTreeHash: this.world?.commit.rootTreeHash ?? null, targetDay });
-      let archiveRoot: string | null = null;
-      if (this.world) archiveRoot = (await materializeArchiveView({ worldRoot: this.worldRoot, sessionRoot, world: this.world })).root;
-      files = await this.fileRuntimeFactory({ runtimeRoot: path.join(sessionRoot, 'file-runtime'), promptpileMcpBin: this.boundaries.promptpileMcpBin, filesystemMcp: this.boundaries.filesystemMcp, runner: this.runner, servers: [...(archiveRoot ? [{ id: 'archive' as const, root: archiveRoot, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []), { id: 'draft' as const, root: draft.root, writable: true, tools: DRAFT_FILE_TOOLS }], workspaces: [{ serverId: 'draft', root: draft.root, maxFiles: SESSION_FILE_LIMITS.draftMaxFiles, maxFileBytes: SESSION_FILE_LIMITS.draftMaxFileBytes, maxTotalBytes: SESSION_FILE_LIMITS.draftMaxTotalBytes }], maxToolCallsPerThought: SESSION_FILE_LIMITS.conversationMaxToolCallsPerThought, maxToolResultLineBytes: SESSION_FILE_LIMITS.maxToolResultLineBytes });
-      if (kind === 'init') session = await createInitWorkspace(this.runtimeRoot, id, this.config, files.binding);
-      else if (kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config, files.binding);
-      else if (kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config, files.binding);
-      else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config, files.binding);
+      const draft = await openDraftV2({ runtimeRoot: this.persistentRuntimeRoot, kind, worldIdentity, baseCommitId: this.world?.commit.id ?? null, baseRootTreeHash: this.world?.commit.rootTreeHash ?? null, targetDay });
+      const initialHead=await draft.head();if(initialHead.activeSession!==null)throw new CoreOperationError('NOT_AVAILABLE','This Draft already has an active Session.');
+      if (kind === 'init') session = await createInitWorkspace(this.runtimeRoot, id, this.config);
+      else if (kind === 'planning') session = await createPlanningWorkspace(this.runtimeRoot, id, this.world!, this.config);
+      else if (kind === 'revise') session = await createReviseWorkspace(this.runtimeRoot, id, this.world!, this.config);
+      else session = await createPlayWorkspace(this.runtimeRoot, id, this.world!, this.config);
       const context = kind === 'play' ? buildContextMessage(this.world!) : buildLifecycleContext(session);
       if (context !== null) await this.appendConversation(session.contextDir, context);
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      this.activeSession = Object.freeze({ workspace: session, files, draft }); this.sessionPhase = 'ready'; return success();
+      const persistentRoot=path.join(draft.root,'sessions',id),conversationId=`conv_${randomUUID().replaceAll('-','')}`;await mkdir(path.join(persistentRoot,'turns'),{recursive:true});await writeFile(path.join(persistentRoot,'meta.json'),`${JSON.stringify({schemaVersion:1,sessionId:id,kind,targetDay,createdAt:new Date().toISOString()},null,2)}\n`);await materializeConversationRevisionV1({sessionRoot:persistentRoot,conversationId,source:session.conversationDir});const head=await compareAndSwapAggregateHeadV1({slotRoot:draft.root,expectedRevision:initialHead.revision,next:{schemaVersion:1,revision:initialHead.revision+1,draftHash:initialHead.draftHash,activeSession:{sessionId:id,conversationId,pendingDraftSync:null}}});
+      this.activeSession = { workspace: session, draft,persistentRoot,head }; this.sessionPhase = 'ready'; return success();
     } catch (error) {
-      if (files) await files.close().catch(() => undefined);
       await this.cleanupSessionRoot(session?.root ?? sessionRoot);
       if (error instanceof ArchiveRetrievalError || error instanceof SessionFileRuntimeError) return failure('AGENT_FAILED', error.message);
       if (error instanceof CoreOperationError) return failure(error.code, error.message);
@@ -199,59 +180,116 @@ class DayloomCoreImpl implements DayloomCore {
   }); }
   send(text: string) { return this.operation(async () => {
     const active = this.activeSession;
-    if (!active || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'send is not available.');
+    if (!active || this.sessionPhase !== 'ready' || active.head.activeSession?.pendingDraftSync!==null) return failure('NOT_AVAILABLE', 'send is not available.');
     if (typeof text !== 'string' || text.trim() === '') return failure('INVALID_INPUT', 'Input must be non-empty.');
     const session = active.workspace; this.sessionPhase = 'running'; this.changed();
     try {
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      active.files.assertHealthy();
-      try { await this.appendConversation(session.conversationDir, text, session.id); }
-      catch (error) {
-        if (this.isCancelRequested(session)) return this.cancelledResult();
-        throw new CoreOperationError('CONVERSATION_FAILED', messageOf(error));
-      }
-      if (this.isCancelRequested(session)) return this.cancelledResult();
-      await this.compressAndComplete(session, () => this.runSessionReact(session, session.sendConfig));
-      if (this.isCancelRequested(session)) return this.cancelledResult();
-      if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      this.sessionPhase = 'ready'; return success();
+      const authority = await active.draft.head();
+      if (authority.revision !== active.head.revision || authority.activeSession?.sessionId !== session.id) throw new CoreOperationError('DRAFT_CONFLICT', 'Session authority changed.');
+      const snapshot = await active.draft.snapshot();
+      const conversationRoot = path.join(active.persistentRoot, 'conversations', authority.activeSession.conversationId);
+      const operationRoot = path.join(session.root, 'turn-operations');
+      let projectedOperationId: string | null = null, projectedTurnId: string | null = null;
+      const agent = this.turnAgentFactory({
+        worldRoot: this.worldRoot, operationRoot, slotRoot: active.draft.root,
+        persistentSessionRoot: active.persistentRoot, sessionId: session.id, userInput: text,
+        baseConversationRoot: conversationRoot, baseSnapshot: snapshot, world: this.world,
+        config: this.config, boundaries: this.boundaries, runner: this.runner,
+        requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
+        onChild: (child: ChildProcess) => this.childStarted(child, session.id),
+        onChildEnd: (child: ChildProcess) => this.childEnded(child),
+        observer: () => ({
+          workDelta: (phase: any, _step: number, textDelta: string) => { if (projectedOperationId) this.emit({ type: 'operation.delta', sessionId: session.id, turnId: projectedTurnId, operationId: projectedOperationId, channel: phase, text: textDelta }); },
+          outputDelta: (textDelta: string) => { if (projectedOperationId) this.emit({ type: 'operation.delta', sessionId: session.id, turnId: projectedTurnId, operationId: projectedOperationId, channel: 'response', text: textDelta }); },
+        }),
+      });
+      const result = await runTurnCoordinatorV1({
+        slotRoot: active.draft.root, sessionId: session.id, userInput: text, base: authority,
+        effects: {
+          generate: async (op, attempt, repair) => { projectedOperationId = op; return agent.generate(op, attempt, repair); },
+          arbitrate: async (op, response, attempt) => { projectedOperationId = op; return agent.arbitrate(op, response, attempt); },
+          curate: async (op, request) => { projectedOperationId = op; return agent.curate(op, request); },
+          persist: (record) => writeTurnRecordV1(path.join(active.persistentRoot, 'turns', `${record.turnId}.json`), record),
+          emit: (event) => { if (event.type === 'operation.started') projectedTurnId = event.turnId; this.emit(event); }, cancelled: () => this.isCancelRequested(session) || this.disposed,
+        },
+      });
+      active.head = result.head; this.sessionPhase = 'ready'; this.changed();
+      if(result.status==='committed')return success();if(result.status==='draft-sync-pending')return failure('DRAFT_SYNC_FAILED','The response was accepted, but Draft synchronization is pending.');if(result.status==='policy-rejected')return failure('TURN_POLICY_REJECTED','The response did not pass Turn policy after repair.');if(result.status==='cancelled')return this.cancelledResult();return failure('TURN_REVIEW_FAILED','The Turn could not be accepted.');
     } catch (error) {
-      if (this.isCancelRequested(session)) return this.cancelledResult();
-      await this.terminalize(session); throw error;
+      this.sessionPhase='ready';this.changed();if(this.isCancelRequested(session))return this.cancelledResult();throw error;
     }
   }); }
   submit() { return this.operation(async () => {
     const active = this.activeSession;
-    if (!active || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'submit is not available.');
-    const session = active.workspace, operationId = `op_${randomUUID().replaceAll('-', '')}`; this.sessionPhase = 'submitting'; this.changed();
+    if (!active || this.sessionPhase !== 'ready' || active.head.activeSession?.pendingDraftSync!==null) return failure('NOT_AVAILABLE', 'submit is not available.');
+    const session = active.workspace, groupId = `submission_${randomUUID().replaceAll('-', '')}`;
+    let operationId = `op_${randomUUID().replaceAll('-', '')}`, operationKind: 'submission-conversion'|'submission-repair'|'submission-review' = 'submission-conversion';
+    this.sessionPhase = 'submitting'; this.changed();
+    this.emit({type:'operation.started',sessionId:session.id,turnId:null,operationId,groupId,kind:operationKind,attempt:1});
     try {
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.');
-      active.files.assertHealthy();
       const observer = {
-        workStarted: (workPath: string) => this.emit({ type: 'work.started', sessionId: session.id, operationId, workPath }),
-        workDelta: (phase: 'thought' | 'observe' | 'check', stepIndex: number, text: string) => this.emit({ type: 'work.delta', sessionId: session.id, operationId, phase, stepIndex, text }),
-        workCompleted: (workPath: string) => this.emit({ type: 'work.completed', sessionId: session.id, operationId, workPath }),
+        workDelta: (phase: 'thought' | 'observe' | 'check', _stepIndex: number, text: string) => this.emit({ type: 'operation.delta', sessionId: session.id,turnId:null, operationId, channel:phase, text }),
       };
       const agentOptions = { worldRoot: this.worldRoot, config: this.config, boundaries: this.boundaries, runner: this.runner, onChild: (child: ChildProcess) => this.childStarted(child, session.id), observer };
-      const result = await runSubmissionPipelineV1({ worldRoot: this.worldRoot, transientRoot: session.root, session, draft: active.draft, converter: new AiSubmissionConverterV1(agentOptions), reviewer: new AiSubmissionReviewerV1(agentOptions), stage: (stage, attempt) => this.emit({ type: 'submission.stage', sessionId: session.id, operationId, stage, attempt }), publish: (request) => this.mutationPublisher(this.worldRoot, request) });
+      const turns:TurnAuditV1[]=[];for(const entry of await readdir(path.join(active.persistentRoot,'turns'),{withFileTypes:true}))if(entry.isFile()&&entry.name.endsWith('.json'))turns.push(await readTurnRecordV1(path.join(active.persistentRoot,'turns',entry.name)) as TurnAuditV1);
+      const submissionAgents=this.injectedSubmissionAgents??{planner:new AiSubmissionPlannerV2(agentOptions),converter:new AiSubmissionConverterV2(agentOptions),reviewer:new AiSubmissionReviewerV2(agentOptions)};
+      const projectStage = (stage: import('./session/submission-pipeline-v2').SubmissionStageV2, attempt: number) => {
+        const nextKind = stage === 'repair' ? 'submission-repair' : stage === 'review' ? 'submission-review' : operationKind;
+        if (nextKind !== operationKind || (nextKind === 'submission-repair' && stage === 'repair')) {
+          this.emit({ type: 'operation.finished', sessionId: session.id, turnId: null, operationId, disposition: nextKind === 'submission-review' ? 'committed' : 'superseded' });
+          operationKind = nextKind; operationId = `op_${randomUUID().replaceAll('-', '')}`;
+          this.emit({ type: 'operation.started', sessionId: session.id, turnId: null, operationId, groupId, kind: operationKind, attempt });
+        }
+        this.emit({ type: 'operation.stage', sessionId: session.id, turnId: null, operationId, stage: stage === 'publish' ? 'publish' : stage === 'validate' ? 'validate' : stage === 'review' ? 'verify' : 'materialize' });
+      };
+      const result = await runSubmissionPipelineV2({ worldRoot: this.worldRoot, transientRoot: session.root, session, draft: active.draft,turns, planner:submissionAgents.planner, converter:submissionAgents.converter, reviewer:submissionAgents.reviewer, stage: projectStage, publish: (request) => this.mutationPublisher(this.worldRoot, request) });
       if (this.disposed) throw new CoreOperationError('DISPOSED', 'Core is disposed.'); this.activeChild = null;
       this.installPublished(result.published);
-      this.emit({ type: 'work.completed', sessionId: session.id, operationId, workPath: path.join(session.root, 'submission') });
+      this.emit({type:'operation.produced',sessionId:session.id,turnId:null,operationId,artifactId:result.published.commit.id});this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:'committed'});
       await this.terminalize(session);
       return success();
     } catch (error) {
       this.activeChild = null;
       if (this.isCancelRequested(session)) {
-        this.emit({ type: 'work.failed', sessionId: session.id, operationId, status: 'cancelled', message: '提交已取消。', workPath: null });
+        this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:'abandoned',message:'Submission was cancelled.'});
         this.sessionPhase = 'ready'; this.changed(); return this.cancelledResult();
       }
-      if (error instanceof SubmissionPipelineErrorV1) {
-        if (error.diagnostics.length > 0) this.emit({ type: 'submission.diagnostics', sessionId: session.id, operationId, diagnostics: error.diagnostics });
-        this.emit({ type: 'work.failed', sessionId: session.id, operationId, status: 'failed', message: error.message, workPath: null });
+      if (error instanceof SubmissionPipelineErrorV2) {
+        if (error.diagnostics.length > 0) this.emit({ type: 'operation.diagnostics', sessionId: session.id,turnId:null, operationId, items:error.diagnostics });
+        this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:'failed',message:error.message});
         this.sessionPhase = 'ready'; this.changed(); return failure(error.code, error.message, error.diagnostics);
       }
       this.sessionPhase = 'ready'; this.changed(); throw error;
     }
+  }); }
+  retryDraftSync() { return this.operation(async () => {
+    const active=this.activeSession,pending=active?.head.activeSession?.pendingDraftSync;if(!active||this.sessionPhase!=='ready'||!pending)return failure('NOT_AVAILABLE','retryDraftSync is not available.');const session=active.workspace;this.sessionPhase='running';this.changed();const recordPath=path.join(active.persistentRoot,'turns',`${pending.turnId}.json`),record=structuredClone(await readTurnRecordV1(recordPath)) as TurnAuditV1,generation=record.generationAttempts.find((item)=>item.generationId===pending.acceptedGenerationId);if(!generation){this.sessionPhase='ready';this.changed();return failure('DRAFT_SYNC_FAILED','Pending Turn evidence is missing.');}const snapshot=await active.draft.snapshot(),operationId=`op_${randomUUID().replaceAll('-','')}`,attempt=Math.min(2,record.curationAttempts.length+1) as 1|2;this.emit({type:'operation.started',sessionId:session.id,turnId:null,operationId,groupId:`retry_${pending.turnId}`,kind:'draft-curation',attempt});
+    try {
+      const response = { generationId: generation.generationId, operationId: generation.operationId, responseText: generation.responseText, conversationId: active.head.activeSession!.conversationId };
+      const agent = this.turnAgentFactory({
+        worldRoot: this.worldRoot, operationRoot: path.join(session.root, 'retry-operations'), slotRoot: active.draft.root,
+        persistentSessionRoot: active.persistentRoot, sessionId: session.id, userInput: record.userInput,
+        baseConversationRoot: path.join(active.persistentRoot, 'conversations', response.conversationId), baseSnapshot: snapshot,
+        world: this.world, config: this.config, boundaries: this.boundaries, runner: this.runner,
+        requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
+        onChild: (child: ChildProcess) => this.childStarted(child, session.id),
+        onChildEnd: (child: ChildProcess) => this.childEnded(child),
+        observer: () => ({ workDelta: (phase: any, _step: number, text: string) => this.emit({ type: 'operation.delta', sessionId: session.id, turnId: null, operationId, channel: phase, text }) }),
+      });
+      const curated = await agent.curate(operationId, { turnId: pending.turnId, accepted: response, baseDraftHash: pending.baseDraftHash, attempt });
+      if (this.isCancelRequested(session)) throw new CoreOperationError('CANCELLED', 'Draft retry was cancelled.');
+      const head = await compareAndSwapAggregateHeadV1({ slotRoot: active.draft.root, expectedRevision: active.head.revision, next: { schemaVersion: 1, revision: active.head.revision + 1, draftHash: curated.snapshot.hash, activeSession: { sessionId: session.id, conversationId: response.conversationId, pendingDraftSync: null } } });
+      active.head = head; record.resultDraftHash = curated.snapshot.hash;
+      record.curationAttempts.push({ operationId, attempt, disposition: 'committed', baseDraftHash: pending.baseDraftHash, resultDraftHash: curated.snapshot.hash, diagnostics: [] });
+      record.terminalStatus = 'committed'; await writeTurnRecordV1(recordPath, record);
+      this.emit({ type: 'operation.produced', sessionId: session.id, turnId: null, operationId, artifactId: curated.snapshot.hash });
+      this.emit({ type: 'turn.commit', sessionId: session.id, turnId: pending.turnId, commit: 'draft', headRevision: head.revision });
+      this.emit({ type: 'operation.finished', sessionId: session.id, turnId: null, operationId, disposition: 'committed' });
+      this.sessionPhase = 'ready'; this.changed(); return success();
+    }
+    catch(error){record.curationAttempts.push({operationId,attempt,disposition:this.isCancelRequested(session)?'abandoned':'failed',baseDraftHash:pending.baseDraftHash,resultDraftHash:null,diagnostics:[]});await writeTurnRecordV1(recordPath,record).catch(()=>undefined);this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:this.isCancelRequested(session)?'abandoned':'failed',message:messageOf(error)});this.sessionPhase='ready';this.changed();return this.isCancelRequested(session)?this.cancelledResult():failure('DRAFT_SYNC_FAILED',messageOf(error));}
   }); }
   cancel(): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));
@@ -265,8 +303,34 @@ class DayloomCoreImpl implements DayloomCore {
     return this.operation(async () => {
       const current = this.workspace();
       if (!current || this.sessionPhase !== 'ready') return failure('NOT_AVAILABLE', 'cancel is not available.');
+      const active = this.activeSession!;
+      const head = await active.draft.head();
+      if (head.activeSession?.sessionId !== current.id) return failure('DRAFT_CONFLICT', 'Session authority changed.');
+      const next = await compareAndSwapAggregateHeadV1({ slotRoot: active.draft.root, expectedRevision: head.revision, next: { schemaVersion: 1, revision: head.revision + 1, draftHash: head.draftHash, activeSession: null } });
+      active.head = next;
+      const pending = head.activeSession.pendingDraftSync;
+      if (pending) {
+        const recordPath = path.join(active.persistentRoot, 'turns', `${pending.turnId}.json`);
+        try {
+          const record = structuredClone(await readTurnRecordV1(recordPath)) as TurnAuditV1;
+          record.terminalStatus = 'abandoned-after-accept';
+          await writeTurnRecordV1(recordPath, record);
+        } catch { /* Head is authoritative; the retained Session remains inspectable. */ }
+      }
+      const abandonedRoot = path.join(this.persistentRuntimeRoot, 'drafts', 'abandoned-sessions');
+      await mkdir(abandonedRoot, { recursive: true });
+      let target = path.join(abandonedRoot, current.id);
+      let persistentCleanupError: Error | null = null;
+      try { await rename(active.persistentRoot, target); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST' || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
+          target = path.join(abandonedRoot, `${current.id}-${Date.now()}`);
+          try { await rename(active.persistentRoot, target); } catch (retryError) { persistentCleanupError = retryError instanceof Error ? retryError : new Error('Could not retain abandoned Session.'); }
+        } else persistentCleanupError = error instanceof Error ? error : new Error('Could not retain abandoned Session.');
+      }
       const cleanupError = await this.terminalize(current);
-      return cleanupError === null ? success() : failure('INTERNAL_ERROR', cleanupError.message);
+      const terminalError = persistentCleanupError ?? cleanupError;
+      return terminalError === null ? success() : failure('INTERNAL_ERROR', terminalError.message);
     });
   }
   settle() { return this.operation(async () => {
@@ -304,12 +368,6 @@ class DayloomCoreImpl implements DayloomCore {
   private cancelledResult(): CoreResult { return failure('CANCELLED', 'The active Session operation was cancelled.'); }
   private beginInterruptCancel(session: CoreSession): Promise<CoreResult> {
     this.cancelRequestedSessionId = session.id;
-    const reactOperation = this.activeReactOperation;
-    if (reactOperation?.sessionId === session.id && !reactOperation.terminalProjected) {
-      reactOperation.terminalProjected = true;
-      if (reactOperation.messageId) this.emit({ type: 'output.failed', sessionId: session.id, operationId: reactOperation.id, messageId: reactOperation.messageId, message: 'The active output was cancelled.' });
-      else this.emit({ type: 'work.failed', sessionId: session.id, operationId: reactOperation.id, status: 'cancelled', message: 'The active work was cancelled.', workPath: reactOperation.workPath });
-    }
     const operation = this.currentOperationDone;
     let cancelPromise!: Promise<CoreResult>;
     cancelPromise = (async () => {
@@ -331,10 +389,7 @@ class DayloomCoreImpl implements DayloomCore {
   private async terminalize(session: CoreSession): Promise<Error | null> {
     const active = this.activeSession?.workspace === session ? this.activeSession : null;
     if (active) { this.activeSession = null; this.sessionPhase = null; this.changed(); }
-    let first: Error | null = null;
-    if (active?.files) try { await active.files.close(); } catch (error) { first = error instanceof Error ? error : new Error('Could not close Session File Runtime.'); }
-    const cleanup = await this.cleanupSessionRoot(session.root);
-    return first ?? cleanup;
+    return this.cleanupSessionRoot(session.root);
   }
   private async cleanupSessionRoot(root: string): Promise<Error | null> {
     try { await this.remove(root, { recursive: true, force: true }); return null; }
@@ -350,7 +405,6 @@ class DayloomCoreImpl implements DayloomCore {
       if (interruptCancel) await interruptCancel;
       this.activeChild = null;
       const active = this.activeSession; this.activeSession = null; this.sessionPhase = null;
-      if (active?.files) await active.files.close().catch(() => undefined);
       await this.remove(this.runtimeRoot, { recursive: true, force: true });
       await this.runtimeLock.release().catch(() => undefined);
     })();
@@ -374,14 +428,68 @@ export async function createDayloomCoreInternal(options: CreateDayloomCoreOption
     runtimeLock = await acquireWorldRuntimeLockV1(persistentRuntimeRoot);
     const classified = await classifier(worldRoot), runtimeRoot = path.join(persistentRuntimeRoot, 'transient', runtimeLock.instanceId);
     await mkdir(path.join(runtimeRoot, 'sessions'), { recursive: true });
-    const fileRuntimeFactory = internal.fileRuntimeFactory ?? (internal.runner ? startTestSessionFileRuntime : startSessionFileRuntimeV1);
-    return new DayloomCoreImpl(classified, worldRoot, runtimeRoot, persistentRuntimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier, fileRuntimeFactory, runtimeLock);
-  } catch (error) { await runtimeLock?.release().catch(() => undefined); const code = codeOf(error) === 'WORLD_BUSY' ? 'WORLD_BUSY' : 'INTERNAL_ERROR'; throw new CoreInitializationError(code, code === 'WORLD_BUSY' ? messageOf(error) : 'Could not initialize Core runtime.', { cause: error }); }
+    await recoverDraftSlotsForWorld(persistentRuntimeRoot, classified.published);
+    const core = new DayloomCoreImpl(classified, worldRoot, runtimeRoot, persistentRuntimeRoot, config, boundaries, internal.runner ?? nodeProcessRunner, internal.mutationPublisher ?? publishMutation, internal.remove ?? rm, classifier, runtimeLock, internal.turnAgentFactory ?? ((input) => new AiTurnAgentV2(input)), internal.submissionAgents ?? null);
+    await core.restorePersistentSession();
+    return core;
+  } catch (error) { await runtimeLock?.release().catch(() => undefined); const code = codeOf(error) === 'WORLD_BUSY' ? 'WORLD_BUSY' : messageOf(error).startsWith('DRAFT_MIGRATION_FAILED')?'DRAFT_MIGRATION_FAILED':'INTERNAL_ERROR'; throw new CoreInitializationError(code, code === 'WORLD_BUSY' ? messageOf(error) : code==='DRAFT_MIGRATION_FAILED'?messageOf(error):'Could not initialize Core runtime.', { cause: error }); }
 }
 
-async function startTestSessionFileRuntime(input: Parameters<typeof startSessionFileRuntimeV1>[0]): Promise<SessionFileRuntimeV1> {
-  const retrieval = input.runtimeRoot; await mkdir(retrieval, { recursive: true });
-  const toolsFile = path.join(retrieval, 'tools.toml'), afterHookPath = path.join(retrieval, process.platform === 'win32' ? 'after-hook.cmd' : 'after-hook.sh'), toolNames = input.servers.flatMap((server) => server.tools.map((tool) => `mcp__${server.id}__${tool}`));
-  await Promise.all([writeFile(toolsFile, 'tools = []\n'), writeFile(afterHookPath, process.platform === 'win32' ? '@exit /b 0\r\n' : '#!/bin/sh\nexit 0\n')]);
-  return Object.freeze({ binding: Object.freeze({ toolsFile, afterHookPath, toolNames }), assertHealthy() {}, assertReadyForFinal() {}, async close() {} });
+async function recoverDraftSlotsForWorld(runtimeRoot: string, world: PublishedWorld | null): Promise<void> {
+  const activeRoot = path.join(runtimeRoot, 'drafts', 'active');
+  let entries;
+  try { entries = await readdir(activeRoot, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  const currentCommit = world?.commit.id ?? null;
+  const currentTree = world?.commit.rootTreeHash ?? null;
+  const staleRoot = path.join(runtimeRoot, 'drafts', 'stale');
+  await mkdir(staleRoot, { recursive: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) throw new Error('Draft active root contains a non-directory entry.');
+    const slotRoot = path.join(activeRoot, entry.name);
+    let value: unknown;
+    try { value = JSON.parse(await readFile(path.join(slotRoot, 'meta.json'), 'utf8')); }
+    catch (error) { throw new Error(`Draft slot ${entry.name} has unreadable meta.`, { cause: error }); }
+    if (!isRecoverableDraftMeta(value)) throw new Error(`Draft slot ${entry.name} has invalid meta.`);
+    if (value.baseCommitId === currentCommit && value.baseRootTreeHash === currentTree) continue;
+    const head = await readAggregateHeadV1(slotRoot);
+    const publishedSession = head.activeSession?.sessionId;
+    if (world && publishedSession && world.tree.entries.some((item) => item.path === `audit/sessions/${publishedSession}/meta.json`)) {
+      await finishPublishedDraftArchive(runtimeRoot, slotRoot, value.draftId, head.draftHash);
+      continue;
+    }
+    const target = path.join(staleRoot, `${value.draftId}-${Date.now()}-${entry.name.slice(0, 8)}`);
+    await rename(slotRoot, target);
+  }
+}
+
+async function finishPublishedDraftArchive(runtimeRoot: string, slotRoot: string, draftId: string, draftHash: string): Promise<void> {
+  const draftsRoot = path.join(runtimeRoot, 'drafts'), target = path.join(draftsRoot, 'archive', draftId);
+  await mkdir(path.dirname(target), { recursive: true });
+  try {
+    await verifySnapshotDirectoryV2(path.join(target, 'snapshot'), draftHash);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      try { await readFile(path.join(target, 'meta.json')); } catch (missing) { if ((missing as NodeJS.ErrnoException).code !== 'ENOENT') throw missing; else throw error; }
+      throw error;
+    }
+    const staging = path.join(draftsRoot, 'prepared', `${draftId}-recovery-${randomUUID()}`);
+    await mkdir(staging, { recursive: true });
+    try {
+      await cp(path.join(slotRoot, 'meta.json'), path.join(staging, 'meta.json'));
+      await cp(path.join(slotRoot, 'snapshots', draftHash), path.join(staging, 'snapshot'), { recursive: true });
+      await verifySnapshotDirectoryV2(path.join(staging, 'snapshot'), draftHash);
+      await rename(staging, target);
+    } finally { await rm(staging, { recursive: true, force: true }).catch(() => undefined); }
+  }
+  await rm(slotRoot, { recursive: true, force: true });
+}
+
+function isRecoverableDraftMeta(value: unknown): value is { schemaVersion: 1 | 2; draftId: string; baseCommitId: string | null; baseRootTreeHash: string | null } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (item.schemaVersion === 1 || item.schemaVersion === 2)
+    && typeof item.draftId === 'string' && item.draftId !== ''
+    && (item.baseCommitId === null || typeof item.baseCommitId === 'string')
+    && (item.baseRootTreeHash === null || typeof item.baseRootTreeHash === 'string');
 }

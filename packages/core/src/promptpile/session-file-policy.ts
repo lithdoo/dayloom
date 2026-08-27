@@ -7,6 +7,7 @@ export interface WorkspacePolicyV1 {
   readonly maxFiles: number; readonly maxFileBytes: number; readonly maxTotalBytes: number;
   readonly writeAllowed?: boolean;
   readonly writePrefix?: string;
+  readonly writePaths?: readonly string[];
 }
 
 export function assertWorkspaceCallPolicyV1(calls: readonly ValidatedToolCall[], policies: readonly WorkspacePolicyV1[]): void {
@@ -22,12 +23,13 @@ export function assertWorkspaceCallPolicyV1(calls: readonly ValidatedToolCall[],
     if (typeof rawPath !== 'string') throw new Error(`${call.name} requires a string path.`);
     if ((match[2] === 'list_directory' || match[2] === 'directory_tree') && rawPath === '.') continue;
     const relative = normalizeRelative(rawPath);
-    if (policy.serverId === 'draft' && relative !== 'draft.yaml' && !/^content\/[A-Za-z0-9._/-]+\.md$/.test(relative)) throw new Error(`Draft tool path is not writable/readable: ${relative}`);
+    if (policy.serverId === 'draft' && relative !== 'draft.yaml' && relative !== 'brief.md' && relative !== 'evidence.md' && !/^content\/[A-Za-z0-9._/-]+\.md$/.test(relative)) throw new Error(`Draft tool path is not writable/readable: ${relative}`);
     if (policy.serverId === 'candidate' && !/^[A-Za-z0-9._/-]+\.(?:md|json|yaml)$/.test(relative)) throw new Error(`Candidate tool path is invalid: ${relative}`);
     const identity = `${policy.serverId}:${relative}`;
     if (match[2] === 'read_file_lines') reads.add(identity);
     if (match[2] === 'write_file') {
       if (policy.writeAllowed === false) throw new Error(`${call.name} is read-only in this phase.`);
+      if (policy.writePaths !== undefined && !policy.writePaths.includes(relative)) throw new Error(`${call.name} cannot write Core-owned paths.`);
       if (policy.writePrefix !== undefined && !relative.startsWith(policy.writePrefix)) throw new Error(`${call.name} cannot write Core-owned paths.`);
       if (typeof args.content !== 'string') throw new Error(`${call.name} requires string content.`);
       if (Buffer.byteLength(args.content, 'utf8') > policy.maxFileBytes) throw new Error(`${call.name} content exceeds the byte limit.`);

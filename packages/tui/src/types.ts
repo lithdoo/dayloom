@@ -52,6 +52,7 @@ export type TuiPage =
 export interface TuiSessionControls {
   input: boolean;
   submit: boolean;
+  retry: boolean;
   cancel: boolean;
   dismiss: boolean;
 }
@@ -61,7 +62,7 @@ export interface TuiMessage {
   operationId?: string;
   role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
   text: string;
-  status: 'streaming' | 'complete' | 'error';
+  status: 'streaming' | 'verifying' | 'accepted' | 'superseded' | 'abandoned' | 'complete' | 'error';
 }
 
 export interface TuiWorkingItem {

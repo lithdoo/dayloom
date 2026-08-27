@@ -12,13 +12,14 @@ export type CoreWorldState =
 
 export interface CoreState {
   world: CoreWorldState;
-  session: null | { id: string; kind: CoreSessionKind; status: CoreSessionStatus };
+  session: null | { id: string; kind: CoreSessionKind; status: CoreSessionStatus; draftSync: { status: 'clean' } | { status: 'pending'; turnId: string } };
   capabilities: {
     startSessions: readonly CoreSessionKind[];
     settle: boolean;
     abandonDay: boolean;
     send: boolean;
     submit: boolean;
+    retryDraftSync: boolean;
     cancel: boolean;
   };
 }
@@ -40,6 +41,7 @@ export function buildState(
     else { settle = true; abandonDay = true; }
   }
   const ready = !disposed && session?.status === 'ready' && !mutationInFlight;
+  const pending = session?.draftSync.status === 'pending';
   const cancellable = !disposed
     && session !== null
     && (session.status === 'ready' ? !mutationInFlight : session.status === 'running' || session.status === 'submitting')
@@ -49,7 +51,7 @@ export function buildState(
     session: session === null ? null : Object.freeze({ ...session }),
     capabilities: Object.freeze({
       startSessions: Object.freeze([...startSessions]), settle, abandonDay,
-      send: ready, submit: ready, cancel: cancellable,
+      send: ready && !pending, submit: ready && !pending, retryDraftSync: ready && pending, cancel: cancellable,
     }),
   });
 }

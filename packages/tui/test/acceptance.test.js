@@ -65,7 +65,7 @@ test('tui submitting disables ordinary input but keeps cancellation available', 
   } } });
   const driver = await driverFor(core); await driver.runHubAction('init');
   const submitting = driver.submitSessionText('/submit'); await waitFor(() => driver.getState().session.status === 'submitting');
-  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false, cancel: true, dismiss: false });
+  assert.deepEqual(driver.getState().sessionControls, { input: false, submit: false,retry:false, cancel: true, dismiss: false });
   gate.resolve(); await submitting; await driver.dispose();
 });
 

@@ -17,9 +17,8 @@ export function summarizeCoreEvent(event: CoreEvent): Record<string, unknown> {
   return {
     eventType: event.type,
     sessionId: event.sessionId,
-    operationId: event.operationId,
-    ...(event.type === 'work.delta' || event.type === 'output.delta' ? { deltaLength: event.text.length } : {}),
-    ...(event.type === 'work.delta' ? { phase: event.phase, stepIndex: event.stepIndex } : {}),
+    operationId: 'operationId' in event ? event.operationId : undefined,
+    ...(event.type === 'operation.delta' ? { deltaLength: event.text.length, phase: event.channel } : {}),
     ...('messageId' in event ? { messageId: event.messageId } : {}),
     ...('status' in event ? { status: event.status } : {}),
   };
