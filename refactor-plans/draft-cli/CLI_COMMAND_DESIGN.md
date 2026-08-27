@@ -2,8 +2,8 @@
 
 > 状态：讨论稿  
 > 分支：`refactor/draft-cli-boundary`  
-> 范围：定义新 CLI 的命令面、参数形式与输入边界  
-> 非目标：不冻结 Draft 格式，不引入新的 Draft DSL，不描述具体内部实现
+> 范围：定义新 CLI 的命令面、参数形式、Draft 输入边界与外部 AI 配置边界  
+> 非目标：不冻结 Draft 格式，不引入新的 Draft DSL，不描述完整内部实现
 
 ## 1. 设计原则
 
@@ -19,6 +19,7 @@
 6. `--draft` 与 `--draft-dir` 互斥，避免输入集合含义不明确。
 7. CLI 不暴露 Planner、Converter、Repair、Reviewer 等内部执行阶段参数。
 8. 不提供 `--force`、`--skip-validation`、`--ignore-conflict` 一类绕过领域约束的选项。
+9. CLI 拥有 AI operation 的业务权限、prompt、工具、workspace 与 validation，但不拥有具体 AI provider 适配；外部模型调用继续交给 Promptpile 配置层。
 
 统一命令形态：
 
@@ -29,9 +30,9 @@ dayloom <action> <world> [inputs/options]
 例如：
 
 ```bash
-dayloom plan ./world --draft ./day-plan.md
-dayloom play ./world --draft-dir ./play-draft
-dayloom revise ./world --draft ./a.md --draft ./b.md
+dayloom plan ./world --draft ./day-plan.md --llm-config ./llm.toml
+dayloom play ./world --draft-dir ./play-draft --llm-config ./llm.toml
+dayloom revise ./world --draft ./a.md --draft ./b.md --llm-config ./llm.toml
 dayloom settle ./world
 ```
 
@@ -159,6 +160,7 @@ dayloom play ./world \
 ```text
 dayloom init <world>
         (--draft <file>... | --draft-dir <dir>)
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 ```
@@ -175,6 +177,7 @@ dayloom init <world>
 dayloom plan <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 ```
@@ -191,6 +194,7 @@ dayloom plan <world>
 dayloom play <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 ```
@@ -205,6 +209,7 @@ dayloom play <world>
 dayloom revise <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 ```
@@ -346,7 +351,7 @@ Draft lint
 basic structural validation
 ```
 
-不调用 AI，不生成 Candidate，不 publish。
+不调用 AI，不生成 Candidate，不 publish，因此不要求存在 LLM 配置。
 
 ### 7.3 `--dry-run`
 
@@ -366,9 +371,9 @@ lint
   -> diff
 ```
 
-但在 publish 前停止。
+但在 publish 前停止。因为会执行 AI submission pipeline，所以 Draft 驱动命令的 `--dry-run` 仍需要 LLM 配置。
 
-对于 `settle / abandon`，执行完整确定性 candidate / validation / diff，但不 publish。
+对于 `settle / abandon`，执行完整确定性 candidate / validation / diff，但不 publish，不需要 LLM 配置。
 
 `--check` 与 `--dry-run` 互斥。
 
@@ -388,33 +393,300 @@ dayloom plan ./world --draft ./plan.md --base commit_17
 
 未提供 `--base` 时，以命令启动时读取到的 current World 作为本次 operation 的 pinned base，并在 publish 前再次检查。
 
-## 8. 配置边界
+### 7.5 `--llm-config <file>`
 
-CLI 不应在每个领域命令上暴露内部 AI pipeline 参数，例如：
+适用于需要 AI 的 Draft 驱动 execution。
+
+例如：
+
+```bash
+dayloom plan ./world \
+  --draft ./plan.md \
+  --llm-config ./llm.toml
+```
+
+配置解析优先级：
+
+```text
+--llm-config <file>
+        ↓
+DAYLOOM_LLM_CONFIG
+        ↓
+missing
+```
+
+如果当前 execution 需要 AI，但最终无法解析到配置，则返回稳定错误，例如：
+
+```text
+LLM_CONFIG_REQUIRED
+```
+
+以下 execution 不需要 LLM 配置：
+
+```text
+init/plan/play/revise --check
+settle
+abandon
+status
+verify
+settle/abandon --dry-run
+```
+
+以下 execution 需要 LLM 配置：
+
+```text
+init
+plan
+play
+revise
+init/plan/play/revise --dry-run
+```
+
+## 8. 外部 AI 模型配置边界
+
+### 8.1 保留旧实现中 provider/configuration 的分层
+
+旧实现中，Dayloom 自己不实现 OpenAI、DeepSeek、Anthropic 等 provider adapter。调用方通过 Promptpile caller configuration 指定实际外部模型，Promptpile 负责连接模型 API。
+
+典型配置：
+
+```toml
+[[llm_api]]
+name = "deepseek"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[promptpile]
+llm_api = "deepseek"
+```
+
+新 CLI 应继续这一模型：
+
+```text
+Dayloom CLI
+    │
+    │ caller-owned llm.toml
+    ▼
+Promptpile / Promptpile React
+    │
+    ▼
+External LLM API
+```
+
+Dayloom 不新增自己的 provider interface，也不在 CLI 中实现 provider-specific client。
+
+### 8.2 配置权与执行权分离
+
+调用方可以决定：
+
+```text
+provider / llm_api
+model
+base_url
+API key 来源
+temperature 等模型参数
+```
+
+但调用方不能决定：
+
+```text
+AI 可以访问哪些 World / Draft / Candidate 文件
+AI 可以调用哪些工具
+Dayloom operation prompt
+after hook
+workspace 路径
+candidate write scope
+validation 与 publish policy
+```
+
+这些仍由 Dayloom CLI 拥有。
+
+即：
+
+> CLI 决定 AI 做什么以及允许做什么；Promptpile 决定如何调用具体外部模型；调用方只提供模型配置。
+
+### 8.3 caller-owned Promptpile 配置必须受约束
+
+新 CLI 应继续沿用旧实现的安全原则：caller-owned 配置允许指定模型相关字段，但不得覆盖 Dayloom 自己拥有的 runtime 字段。
+
+至少应禁止调用方控制类似：
+
+```text
+dir
+dirs
+output_dir
+input
+continue
+tools_file
+after_hook
+promptpile-react runtime section
+```
+
+CLI 在每个 AI operation 内生成 operation-local Promptpile / ReAct config，将 caller 的模型配置与 Dayloom 自己控制的 prompt、tools、after-hook、workspace 合并。
+
+### 8.4 CLI 只保留 Submission AI
+
+旧 Core 同时拥有两类 AI：
+
+```text
+Conversation AI
+  -> response
+  -> arbitration
+  -> Draft curation
+
+Submission AI
+  -> planner
+  -> converter
+  -> repair
+  -> reviewer
+```
+
+新架构中职责拆分为：
+
+```text
+New TUI
+  owns Conversation AI
+        ↓
+      Draft
+        ↓
+Dayloom CLI
+  owns Submission AI
+        ↓
+      Archive
+```
+
+因此新 CLI 不迁移以下旧 runtime 能力：
+
+```text
+AiTurnAgent
+Turn Coordinator
+Conversation compression
+response arbitration
+Draft curation
+Conversation revision
+Session recovery
+```
+
+CLI 只保留 submission 所需的 AI 能力：
+
+```text
+Planner
+Converter
+bounded Repair
+Reviewer
+```
+
+### 8.5 AI 运行时内部结构保持薄层
+
+新 CLI 内部可以保留一个很薄的 AI boundary，例如：
+
+```text
+src/
+  ai/
+    config.ts
+    boundaries.ts
+    react.ts
+    submission/
+      planner.ts
+      converter.ts
+      reviewer.ts
+```
+
+职责：
+
+- `config.ts`：读取 caller LLM config、禁止危险字段、生成 operation-local config。
+- `boundaries.ts`：解析 packaged Promptpile / Promptpile React / MCP / filesystem runtime 边界。
+- `react.ts`：启动 Promptpile React、验证其结构化 process output、返回最终结果。
+- `submission/*`：实现 Planner / Converter / Reviewer 等 Dayloom-specific AI operation。
+
+不重新创建 CoreEvent、SessionEvent 或长期 AI runtime。
+
+### 8.6 TUI 与 CLI 可以共享同一份模型配置
+
+推荐使用：
+
+```bash
+export DAYLOOM_LLM_CONFIG=~/.config/dayloom/llm.toml
+```
+
+这样新 TUI 可以使用它生成 / 修改 Draft，而 CLI 在被 TUI 调用时继承相同环境变量并执行 Draft submission。
+
+逻辑上：
+
+```text
+                  llm.toml
+                 /        \
+                /          \
+               ▼            ▼
+           New TUI        Dayloom CLI
+              │               │
+       Conversation AI   Submission AI
+              │               │
+              ▼               ▼
+            Draft --------> Archive
+```
+
+二者共享模型配置，但不共享长期 AI runtime 或 Session authority。
+
+### 8.7 模型配置不是 World 数据
+
+以下内容不得写入 World 或作为 Archive authority 的组成部分：
+
+```text
+llm.toml
+API key
+provider credential
+base_url secret
+环境变量值
+```
+
+模型选择属于 execution environment，不属于 World domain state。
+
+如果未来 Audit 需要最低限度的 AI 可追溯信息，可以考虑只记录非敏感标识，例如 runtime 与 model name；不得为了 reproducibility 保存 secret 或完整 caller config。
+
+### 8.8 暂不设计多模型 orchestration
+
+虽然 Promptpile configuration 可以支持多个模型配置，但 v1 不新增：
 
 ```text
 --planner-model
 --converter-model
 --repair-model
---review-model
+--reviewer-model
+```
+
+也不新增 Dayloom-specific 多模型 routing 配置。
+
+默认由 caller Promptpile config 选择当前模型。只有未来出现明确、稳定的不同 operation 需要不同模型的产品需求时，再单独扩展。
+
+## 9. 配置边界
+
+除 `--llm-config` 外，CLI 不应在每个领域命令上暴露内部 AI pipeline 参数，例如：
+
+```text
+--provider
+--model
+--base-url
+--api-key
+--planner-model
+--converter-model
+--repair-model
+--reviewer-model
 --max-repair
 ```
 
-这些属于 Dayloom 配置，而不是领域命令参数。
+这些要么属于 Promptpile caller configuration，要么属于 Dayloom 内部策略，不属于领域命令参数。
 
-未来如有需要，可以提供统一：
+未来如有 Dayloom 自身的非 LLM execution 配置需要，可以另行讨论统一：
 
 ```text
 --config <file>
 ```
 
-例如：
+但不得与 `--llm-config` 混为同一个不透明配置入口。
 
-```bash
-dayloom plan ./world --draft ./plan.md --config ./dayloom.json
-```
-
-## 9. 明确不提供的绕过选项
+## 10. 明确不提供的绕过选项
 
 不提供：
 
@@ -427,29 +699,33 @@ dayloom plan ./world --draft ./plan.md --config ./dayloom.json
 
 原则保持不变：调用方和 AI 可以提出变更，但不能绕过程序化领域校验与 Archive publication authority。
 
-## 10. v1 CLI Grammar 汇总
+## 11. v1 CLI Grammar 汇总
 
 ```text
 dayloom init <world>
         (--draft <file>... | --draft-dir <dir>)
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 
 dayloom plan <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 
 dayloom play <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 
 dayloom revise <world>
         (--draft <file>... | --draft-dir <dir>)
         [--base <commit>]
+        [--llm-config <file>]
         [--check | --dry-run]
         [--json]
 
@@ -470,13 +746,16 @@ dayloom verify <world>
         [--json]
 ```
 
-## 11. 当前待继续设计的问题
+说明：`--llm-config` 虽列在 Draft 驱动命令 grammar 中，但 `--check` 模式不会读取或要求它。
 
-本文件只定义命令面。下一步需要单独设计：
+## 12. 当前待继续设计的问题
+
+本文件只定义命令面与模型配置边界。下一步需要单独设计：
 
 1. 每个命令的稳定 JSON 输出 schema。
 2. CLI exit code 体系。
-3. `DRAFT_INVALID`、`WORLD_CONFLICT`、AI conversion failure、candidate validation failure 等错误分类。
+3. `DRAFT_INVALID`、`WORLD_CONFLICT`、`LLM_CONFIG_REQUIRED`、AI conversion failure、candidate validation failure 等错误分类。
 4. 多个 `--draft` 如何形成 submission input，是否允许 command-specific 数量限制。
 5. `--draft-dir` 对每种 Draft kind 的精确加载规则。
 6. CLI 如何向新 TUI 暴露长时间 submission 的进度，而不重新引入旧 CoreEvent 模型。
+7. 新 TUI 如何消费同一份 Promptpile caller config，同时保持 Conversation AI 与 CLI Submission AI 完全解耦。
