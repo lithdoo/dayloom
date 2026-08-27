@@ -58,6 +58,16 @@ test('tui projects Core world states and exact Hub actions', async () => {
   }
 });
 
+test('tui enters a Core-restored Session instead of exposing an actionless Hub', async () => {
+  const restored = { id: 'restored-init', kind: 'init', status: 'ready', draftSync: { status: 'clean' } };
+  const core = new ScriptedDayloomCore({ session: restored });
+  const driver = await driverFor(core);
+  assert.deepEqual(driver.getState().page, { kind: 'session', sessionId: restored.id, sessionKind: restored.kind });
+  assert.deepEqual(driver.getState().session, { id: restored.id, kind: restored.kind, status: restored.status, error: null });
+  assert.deepEqual(driver.getState().sessionControls, { input: true, submit: true, retry: false, cancel: true, dismiss: false });
+  await driver.dispose();
+});
+
 test('tui-daily-maps-to-startSession-planning and all business actions map exactly once', async () => {
   const cases = [
     [new ScriptedDayloomCore(), 'init', ['startSession', 'init']],

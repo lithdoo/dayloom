@@ -44,10 +44,14 @@ export function createDriverFromCore(options: {
   let activeSendRequest: ActiveSendRequest | null = null;
   let pendingSessionCancel: PendingSessionCancel | null = null;
   let recent: TuiRecentResult | null = null;
-  let presentedSession: TuiSessionPresentation | null = null;
+  let presentedSession: TuiSessionPresentation | null = latestCoreState.session === null
+    ? null
+    : { id: latestCoreState.session.id, kind: latestCoreState.session.kind, status: latestCoreState.session.status, error: null };
   let messages: TuiMessage[] = [];
   let presentation: PresentationState = { items: [], operation: null };
-  let page: TuiDriverState['page'] = { kind: 'hub', mode: hubMode, busy: null };
+  let page: TuiDriverState['page'] = presentedSession === null
+    ? { kind: 'hub', mode: hubMode, busy: null }
+    : { kind: 'session', sessionId: presentedSession.id, sessionKind: presentedSession.kind };
   let nextMessageId = 1;
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
