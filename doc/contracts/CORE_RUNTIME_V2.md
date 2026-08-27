@@ -19,6 +19,8 @@ public Session status 不增加 degraded 枚举。能力只由 Head、Session ph
 
 四类 Session 同时使用 Turn Coordinator V1 与 Submission V2；不存在 caller-selectable V1/V2 flag。普通 Session 生命周期不持有长驻 Draft file server，每个 AI Operation 自己创建最小权限 runtime 并在结束时关闭。
 
+控制型 Operation 使用统一 sealed-control Final Gate；普通 Operation 不拥有该 Gate。Draft 工具按 read/write capability 分离，模型不可见的权限不依赖 after-hook 模拟。只有 Response Operation 可以发布用户可见 output delta。
+
 ## 3. 恢复
 
 - 初始化持有 world writer lock 后读取 Head，不按 mtime、目录编号或内容猜测 authority。

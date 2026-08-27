@@ -1,5 +1,7 @@
 import type { ValidateFunction } from 'ajv';
 import type { ChildProcess } from 'node:child_process';
+import { mkdir, rm } from 'node:fs/promises';
+import path from 'node:path';
 import type { ReactWorkPhase } from '../events';
 import type { ProcessRunner } from './conversation';
 import { SESSION_FILE_LIMITS } from '../session/file-limits';
@@ -31,6 +33,7 @@ export interface RunReactInput {
   config: string;
   context: string;
   conversation: string;
+  workRoot: string;
   observer?: ReactProcessObserver;
   onChild?: (child: ChildProcess) => void;
   assertBeforeFinal?: (workPath: string) => void;
@@ -53,8 +56,11 @@ export async function runReact(input: RunReactInput): Promise<string> {
 }
 
 async function runProcessPile(input: RunReactInput): Promise<string> {
-  const args = [...baseArgs(input), '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json'];
-  const reducer = new ProcessPileReducer(input.validateProcessPile, input.observer, input.assertBeforeFinal);
+  const workRoot = resolveOwnedWorkRoot(input);
+  await rm(workRoot, { recursive: true, force: true });
+  await mkdir(workRoot, { recursive: true });
+  const args = [...baseArgs(input), '--work-root', workRoot, '--work-lifecycle', 'caller', '--quiet', '--process-pile-fd', '3', '--process-pile-format', 'json'];
+  const reducer = new ProcessPileReducer(input.validateProcessPile, workRoot, input.observer, input.assertBeforeFinal);
   let buffer = '';
   let failedProjected = false;
   const projectLocalFailure = (message: string) => {
@@ -82,7 +88,17 @@ async function runProcessPile(input: RunReactInput): Promise<string> {
   } catch (error) {
     projectLocalFailure(error instanceof Error ? error.message : 'React Process Pile failed.');
     throw error;
+  } finally {
+    await rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+function resolveOwnedWorkRoot(input: RunReactInput): string {
+  const config = path.resolve(input.config);
+  const expected = path.join(path.dirname(path.dirname(config)), 'react-work');
+  const supplied = path.resolve(input.workRoot);
+  if (supplied !== expected) throw new Error('React work root must be the operation-local react-work directory.');
+  return supplied;
 }
 
 function baseArgs(input: RunReactInput): string[] {
@@ -105,6 +121,7 @@ class ProcessPileReducer {
 
   constructor(
     private readonly validate: ValidateFunction,
+    private readonly expectedWorkRoot: string,
     private readonly observer?: ReactProcessObserver,
     private readonly assertBeforeFinal?: (workPath: string) => void,
   ) {}
@@ -118,6 +135,7 @@ class ProcessPileReducer {
     if (event.sequence !== this.expectedSequence++) throw protocolError('SEQUENCE', 'React Process Pile sequence is not contiguous.');
     if (this.processId === null) {
       if (event.type !== 'process.started' || event.sequence !== 0) throw protocolError('SEQUENCE', 'First Process Pile event must be process.started.');
+      if (event.work_lifecycle !== 'caller' || !isDescendant(this.expectedWorkRoot, event.work_path!)) throw protocolError('PHASE', 'React Process Pile work ownership is invalid.');
       this.processId = event.process_id; this.workId = event.work_id!; this.workPath = event.work_path!; this.maxSteps = event.max_steps!;
       this.observer?.workStarted?.(this.workPath);
       return;
@@ -195,4 +213,9 @@ class ProcessPileReducer {
       throw protocolError(event.stop_reason !== this.expectedStopReason ? 'STOP_REASON' : 'FINAL_EVIDENCE', 'React Process Pile skipped Final evidence is inconsistent.');
     } else throw protocolError('FINAL_EVIDENCE', 'React Final was skipped.');
   }
+}
+
+function isDescendant(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
 }

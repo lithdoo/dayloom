@@ -126,7 +126,7 @@ L4  Published World
 | 层次 | 推测产物 | 验证边界 | 提升后的 authority | 未提升时 |
 | --- | --- | --- | --- | --- |
 | Thought | ReAct private work | Observe / Check / Final discipline | Response Candidate | 清理 work；必要时保留诊断 |
-| Response | 用户可见流式 generation | Turn Arbiter | Accepted Conversation | superseded / abandoned |
+| Response | 用户可见流式 generation | Turn Arbiter | Accepted Conversation | superseded / discarded / cancelled |
 | Draft | staged Markdown snapshot | technical check / hash / effect check | Accepted Draft Snapshot | 丢弃 staging |
 | World | Candidate World | program validator / publisher | Published World | 丢弃 Candidate / rollback prepared publish |
 
@@ -191,19 +191,21 @@ Operation Scope 只负责：
 
 ### 4.1 Operation disposition
 
-所有 speculative operation 只有四种终局：
+所有 speculative operation 只有五种终局：
 
 ```ts
 type OperationDispositionV1 =
   | 'committed'
   | 'superseded'
-  | 'abandoned'
+  | 'discarded'
+  | 'cancelled'
   | 'failed';
 ```
 
 - `committed`：产物被提升到下一层 authority；
 - `superseded`：产物完整产生、可能已经展示，但被后续 attempt 替代；
-- `abandoned`：取消或中断，没有完成权威评审；
+- `discarded`：产物完整产生，但未通过或未完成提升边界；
+- `cancelled`：用户取消、Core dispose 或明确中断；
 - `failed`：执行、协议或验证失败。
 
 每个 operation 恰好发送一次 started 和一次 terminal disposition；produced artifact 的 operation 恰好发送一次 produced。terminal disposition 后禁止任何 stage、delta 或 produced event。
@@ -857,7 +859,8 @@ type ResponsePresentationStatus =
   | 'verifying'
   | 'accepted'
   | 'superseded'
-  | 'abandoned'
+  | 'discarded'
+  | 'cancelled'
   | 'error';
 ```
 
@@ -868,7 +871,8 @@ response stream start     -> streaming
 response stream complete  -> verifying
 Arbiter ACCEPT + Commit A -> accepted
 Arbiter REJECT            -> superseded
-cancel before Commit A    -> abandoned
+Arbiter/Commit A failure  -> discarded
+cancel before Commit A    -> cancelled
 operation failure         -> error
 ```
 
@@ -876,7 +880,7 @@ superseded response 默认折叠但保留全文入口。用户已经看到的内
 
 ### 13.2 Thought 与 Response 分组
 
-一次 Response attempt 就是一个 Response Operation；Promptpile Thought / Observe / Check / Final 是它的 stage。attempt 被 superseded 或 abandoned 时，TUI 按 operationId 将这些 stage 与 Response 一起折叠，不为 ReAct work 或 Thought step 建立子 operation 和单独回滚状态。
+一次 Response attempt 就是一个 Response Operation；Promptpile Thought / Observe / Check / Final 是它的 stage。attempt 被 superseded、discarded 或 cancelled 时，TUI 按 operationId 将这些 stage 与 Response 一起折叠，不为 ReAct work 或 Thought step 建立子 operation 和单独回滚状态。
 
 ### 13.3 Event V2
 
@@ -1008,11 +1012,11 @@ POLICY LIMIT
   turn.terminal(policy-rejected)
 
 COMMIT A 后 Curator fail/cancel
-  draft-curation finished(failed|abandoned)
+  draft-curation finished(failed|cancelled)
   turn.terminal(draft-sync-pending)
 
 COMMIT A 前 cancel
-  每个 started-but-unfinished operation finished(abandoned)
+  每个 started-but-unfinished operation 按实际原因 finished(cancelled|failed)
   turn.terminal(cancelled)
 ```
 
@@ -1021,13 +1025,13 @@ COMMIT A 前 cancel
 | 失败点 | Response | 当前辅助 operation | Turn |
 | --- | --- | --- | --- |
 | Response execution/protocol/size | `failed` | 无 | `failed` |
-| Arbiter execution/tool/protocol | `abandoned` | Arbitration `failed` | `failed` |
+| Arbiter execution/tool/protocol | `discarded` | Arbitration `failed` | `failed` |
 | Arbiter REJECT 且仍有 repair | `superseded` | Arbitration `committed` | 继续下一 attempt |
 | Arbiter REJECT 且达上限 | `superseded` | Arbitration `committed` | `policy-rejected` |
-| Conversation promotion validate/materialize | `failed` | Arbitration `committed` | `failed` |
-| Commit A CAS conflict | `abandoned` | Arbitration `committed` | `failed` |
+| Conversation promotion validate/materialize | `discarded` | Arbitration `committed` | `failed` |
+| Commit A CAS conflict | `discarded` | Arbitration `committed` | `failed` |
 | Curator execution/technical check | 已 `committed` | Draft Curation `failed` | `draft-sync-pending` |
-| Commit B CAS conflict | 已 `committed` | Draft Curation `abandoned` | `draft-sync-pending` |
+| Commit B CAS conflict | 已 `committed` | Draft Curation `failed` | `draft-sync-pending` |
 
 上述表中的 Turn 值即 `turn.terminal.status`；public error code 由第 18 节映射。Commit A 后 Response 已经终局为 committed，后续 Curator 失败不得再次改写其 disposition。
 
@@ -1042,7 +1046,7 @@ CoreEvent V2 采用一次性切换，不在生产 reducer 中长期保留 V1/V2 
 包括 Response、Arbiter 和 regeneration：
 
 - 终止 active operation 的 process/resources；
-- attempt 标记 abandoned；
+- attempt 标记 cancelled；
 - accepted Conversation 与 Draft head 不变；
 - 不启动后续 operation。
 - `send()` 返回 `CANCELLED`，Session 回到 ready 且无 pending。
@@ -1122,7 +1126,7 @@ interface TurnAuditV1 {
 
 Turn record 在每个 produced、verdict、curation attempt terminal 和 turn terminal 后使用原子文件替换更新，但它不决定 authority。正式 Conversation transcript 从 Aggregate Head 指向的 immutable Conversation revision 导出，只包含 accepted generation。
 
-Core 在内存中累积每个 response stream，并在 operation produced/abandoned/failed 时一次性写入 audit；不持久化每个 delta。完整产生或正常取消的 generation 可审计；进程被强制终止时，尚未写入 terminal record 的部分 delta 只属于 presentation，不承诺跨进程恢复。Conversation compression 只作用于 accepted Conversation，不读取 attempt audit。
+Core 在内存中累积每个 response stream，并在 operation produced/discarded/cancelled/failed 时一次性写入 audit；不持久化每个 delta。完整产生或正常取消的 generation 可审计；进程被强制终止时，尚未写入 terminal record 的部分 delta 只属于 presentation，不承诺跨进程恢复。Conversation compression 只作用于 accepted Conversation，不读取 attempt audit。
 
 固定限制：每个 responseText 最大 1 MiB UTF-8、每个 Turn record 最大 3 MiB UTF-8、最多两个 generation attempts 和两个 curation attempts、diagnostics 受 Core Runtime V2 固定上限约束。超限 operation 失败关闭。
 
@@ -1611,7 +1615,7 @@ doc/contracts/CORE_RUNTIME_V2.md
 - generation 使用私有 Conversation；
 - Final 变为 produced Response Candidate；
 - 保持即时 streaming；
-- TUI 按 groupId/operationId 支持 verifying、superseded、abandoned；
+- TUI 按 groupId/operationId 支持 verifying、superseded、discarded、cancelled；
 - operation 只在 disposition 后终止。
 
 ### Stage 4：Turn Arbiter
@@ -1875,3 +1879,50 @@ Presentation 可以提前观察；
 Core 只验证来源、事务和真实领域边界；
 未提升的产物只 discard，不污染正式状态。
 ```
+
+## 25. Sealed Control 与 Speculative Artifact 实施收敛
+
+### 25.1 两类 Operation
+
+运行时只保留两类结束语义：
+
+- 开放式 Operation：Response、Curator、Converter、Reviewer 可以在各自固定技术检查通过后产生自然语言 Final；
+- 封存型 Operation：Turn Arbiter 与 Change Plan 必须在 Final 前通过唯一 control tool 产生一个 Core 可验证的 sealed result。
+
+封存型 Operation 统一使用同一个 operation-local sealed-control lifecycle。该 lifecycle 持有 control server、严格 runtime schema、协议状态和 Final Gate；调用方不得直接读取结果文件并使用类型断言。Final Gate 固定验证工具调用闭包、`status=sealed`、调用次数为一以及结果 schema。open、missing、invalid、violated、残缺 ToolResult 或非零 child exit 全部失败关闭，不存在默认 ACCEPT、KEEP 或从 Final 文本恢复结构化结果的降级路径。
+
+凡是 Final Gate 需要读取 ReAct `work_path`，工作目录生命周期必须同属该 Operation：Core 传入固定的 operation-local `react-work` root，并显式选择 `work_lifecycle=caller`；Process Pile 回报的 `work_path` 必须位于该 root 内。Core 在 `work.ready` 时完成门禁读取，只在 Process Pile 终止或失败后清理该 root。不得使用 ReAct 的默认自动清理，因为“子进程发出 `work.ready`”与“父进程消费并校验事件”之间存在竞态，自动清理会让已就绪的目录在门禁读取前消失。
+
+Turn verdict 的嵌套 Zod schema 是 sealed result reader、Turn record validator 和测试的领域事实来源。MCP 模型边界使用无 union、字段全部必填的扁平 transport DTO（`response_verdict`、`rejection_code`、`response_evidence`、`draft_verdict`、`draft_evidence`）；control server 是唯一 DTO→领域 verdict 映射点，并在写入 sealed result 前用领域 schema 复核组合约束。不得把根 union 直接交给 MCP schema 导出，也不得让 transport DTO 泄漏进 Head 或 Turn record。Change Plan 同样经 sealed-control lifecycle 返回，并在 Core 侧重新 canonicalize plan、重算 assignment 后比较，不信任结果文件中的派生字段。
+
+### 25.2 专属 Agent loop 与最小权限
+
+Arbiter 使用专属 Observe / Check：证据不足时只能继续只读检索，证据充分且尚未 sealed 时唯一下一动作是 `mcp__turn_control__turn_verdict`，sealed 后才允许进入 Final。普通 Draft Agent 的“用户问题已经可以回答即可 Final”规则不得用于控制型 Operation。
+
+Draft 工具显式拆为 read 与 write 集合。Response、Arbiter、Change Plan 只看到 list/read；Curator 才看到受 `brief.md` path policy 约束的 write。Hook 保留为纵深防御，但不再承担隐藏无权限工具的职责。
+
+Arbiter 判定 `draft=UPDATE` 后，Core 必须先把最新 user 原文以自然 Markdown 引用块确定性锚定到 staging `brief.md`，再启动 Curator 做归纳整理。Curator 可以重组并去掉临时标题，但不得丢失该语义。这样 UPDATE 的最小持久化结果由 Core 保证，不依赖模型是否记得调用 write；即使 Curator 未进一步改写，technical check 仍能验证一个包含用户原文的非空 brief delta。`evidence.md` 仍只由 Core 追加固定 evidence block。
+
+### 25.3 Speculative Conversation transaction
+
+Response attempt 的 Conversation 只存在于 operation-local staging root。生成完成后可立即流式展示全文，但 Arbiter ACCEPT 前不得物化到 persistent Session。ACCEPT 后 Core 执行：
+
+```text
+prepare immutable Conversation -> Commit A CAS -> commit prepared handle
+```
+
+Arbiter failure、REJECT、cancel、prepare failure 或 Commit A CAS failure 均 rollback/discard staging，Aggregate Head 保持不变。Commit A 成功后，transient staging cleanup 失败不得反转已经线性化的 authority；恢复仍只依据 Head。
+
+### 25.4 Event ownership
+
+只有 `operation.kind=response` 的 Final delta 可以投影为 `channel=response`。Arbiter、Curator 与 Submission Final 是内部调试输出，不进入用户 transcript。Operation disposition 固定区分：`cancelled` 表示真实取消，`superseded` 表示被 repair attempt 替代，`discarded` 表示已产生但未通过提升边界，`failed` 表示 operation 自身失败，`committed` 表示已经进入 authority。TUI 不得再把 discarded 映射为 cancelled。
+
+### 25.5 必测闭环
+
+- sealed result 缺失、非法、重复与合法单次调用；
+- caller-owned ReAct 工作目录在 Final Gate 前可读、Operation 终止后清理，且越界 `work_path` 被拒绝；
+- 真实 Session File Runtime 中 Arbiter 只暴露 Draft RO 和 verdict tool；
+- Arbiter failure 时 staged Response 被 discarded 且 Head revision 不变；
+- ACCEPT 后才 prepare Conversation，Commit A/B 顺序保持；
+- Arbiter Final 不产生第二条用户可见 AI 消息；
+- discarded 与 cancelled 在 Core event、Turn Audit 和 TUI 中语义一致。

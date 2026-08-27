@@ -1,14 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { PackagedBoundaries } from '../promptpile/binaries';
 import type { CallerConfig } from '../promptpile/config';
 import { writeReactConfig } from '../promptpile/config';
 import { appendUser, type ProcessRunner } from '../promptpile/conversation';
 import { runReact, type ReactProcessObserver } from '../promptpile/react-runner';
-import { ARCHIVE_FILE_TOOLS, CANDIDATE_FILE_TOOLS, DRAFT_FILE_TOOLS, startSessionFileRuntimeV1, type SessionFileRuntimeV1 } from '../promptpile/session-file-runtime';
+import { ARCHIVE_FILE_TOOLS, CANDIDATE_FILE_TOOLS, DRAFT_READ_TOOLS, startSessionFileRuntimeV1, type SessionFileRuntimeV1 } from '../promptpile/session-file-runtime';
 import { materializeArchiveView } from '../world/archive-view';
 import { readHistoricalAssignmentIdsV1 } from './assignment';
+import { assignChangePlanV2, canonicalizeChangePlanV2 } from './change-plan-v2';
+import { createSealedControlOperationV1 } from './sealed-control-operation';
 import { SESSION_FILE_LIMITS } from './file-limits';
 import { buildDayloomCheckPrompt } from './prompts/check';
 import { buildDayloomObservePrompt } from './prompts/observe';
@@ -30,28 +32,27 @@ export class AiSubmissionPlannerV2 implements SubmissionPlannerV2 {
 
   async plan(input: Parameters<SubmissionPlannerV2['plan']>[0]) {
     const root = path.join(input.session.root, 'submission-v2', 'plan');
-    const resultPath = path.join(root, 'sealed.json');
-    const contextPath = path.join(root, 'control.json');
     await reset(root);
     const reservedIds = [...await readHistoricalAssignmentIdsV1(this.options.worldRoot, input.session.pinned)];
-    await writeFile(contextPath, `${JSON.stringify({ mode: 'change-plan', resultPath, baseRootTreeHash: input.session.pinned?.commit.rootTreeHash ?? null, reservedIds }, null, 2)}\n`);
+    const baseRootTreeHash = input.session.pinned?.commit.rootTreeHash ?? null;
+    const control = await createSealedControlOperationV1({ root, mode: 'change-plan', serverId: 'change_plan', toolName: 'declare_change_plan', context: { baseRootTreeHash, reservedIds }, serverScript: path.join(__dirname, '../promptpile/operation-control-server.js'), parse: (value) => parseSealedPlan(value, baseRootTreeHash, reservedIds) });
     const archive = await archiveRoot(this.options, input.session, root);
     const runtime = await startSessionFileRuntimeV1({
       runtimeRoot: path.join(root, 'file-runtime'), promptpileMcpBin: this.options.boundaries.promptpileMcpBin,
       filesystemMcp: this.options.boundaries.filesystemMcp, runner: this.options.runner,
       servers: [
         ...(archive ? [{ id: 'archive' as const, root: archive, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []),
-        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_FILE_TOOLS },
-        { id: 'change_plan' as const, root, writable: false, tools: ['declare_change_plan'], command: { command: process.execPath, argsPrefix: [path.join(__dirname, '../promptpile/operation-control-server.js'), contextPath] } },
+        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_READ_TOOLS },
+        control.server,
       ],
       workspaces: [draftPolicy(input.draft.root)], maxToolCallsPerThought: SESSION_FILE_LIMITS.conversionMaxToolCallsPerThought,
-      maxToolResultLineBytes: SESSION_FILE_LIMITS.maxToolResultLineBytes,
+      maxToolResultLineBytes: SESSION_FILE_LIMITS.maxToolResultLineBytes, finalGates: [control],
     });
     try {
       const thought = 'Read brief.md and only the necessary evidence.md or Published Archive ranges. Include only explicit agreements; proposed and unresolved material must not become changes. Call mcp__change_plan__declare_change_plan exactly once with the complete Change Plan. Never assign persistent IDs yourself.';
       const config = await makeConfig(root, this.options, runtime, thought);
       await execute(root, this.options, runtime, config, `Session kind: ${input.session.kind}\nTarget day: ${input.session.day ?? '<none>'}\nBase Draft hash: ${input.draft.hash}`);
-      return JSON.parse(await readFile(resultPath, 'utf8'));
+      return control.finish();
     } finally { await runtime.close(); }
   }
 }
@@ -71,7 +72,7 @@ export class AiSubmissionConverterV2 implements SubmissionConverterV2 {
       filesystemMcp: this.options.boundaries.filesystemMcp, runner: this.options.runner,
       servers: [
         ...(archive ? [{ id: 'archive' as const, root: archive, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []),
-        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_FILE_TOOLS },
+        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_READ_TOOLS },
         { id: 'candidate' as const, root: candidateParent, writable: true, tools: CANDIDATE_FILE_TOOLS },
       ],
       workspaces: [draftPolicy(input.draft.root), candidatePolicy(candidateParent, true)],
@@ -101,7 +102,7 @@ export class AiSubmissionReviewerV2 implements SubmissionReviewerV2 {
       filesystemMcp: this.options.boundaries.filesystemMcp, runner: this.options.runner,
       servers: [
         ...(archive ? [{ id: 'archive' as const, root: archive, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []),
-        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_FILE_TOOLS },
+        { id: 'draft' as const, root: input.draft.root, writable: false, tools: DRAFT_READ_TOOLS },
         { id: 'candidate' as const, root: candidateParent, writable: false, tools: CANDIDATE_FILE_TOOLS },
       ],
       workspaces: [draftPolicy(input.draft.root), candidatePolicy(candidateParent, false)],
@@ -154,5 +155,14 @@ async function makeConfig(root: string, options: AgentOptionsV2, runtime: Sessio
 async function execute(root: string, options: AgentOptionsV2, runtime: SessionFileRuntimeV1, config: string, task: string) {
   const conversation = path.join(root, 'conversation');
   await appendUser(options.runner, options.boundaries.promptpileBin, conversation, task, options.onChild);
-  return runReact({ runner: options.runner, reactBin: options.boundaries.reactBin, validateProcessPile: options.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, observer: options.observer, onChild: options.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.conversionTimeoutMs });
+  return runReact({ runner: options.runner, reactBin: options.boundaries.reactBin, validateProcessPile: options.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, workRoot: path.join(root, 'react-work'), observer: options.observer, onChild: options.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.conversionTimeoutMs });
+}
+
+function parseSealedPlan(value: unknown, baseRootTreeHash: string | null, reservedIds: readonly string[]) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Sealed Change Plan result must be an object.');
+  const row = value as Record<string, unknown>, keys = Object.keys(row).sort();
+  if (keys.length !== 2 || keys[0] !== 'assignment' || keys[1] !== 'plan') throw new Error('Sealed Change Plan result has unknown or missing fields.');
+  const plan = canonicalizeChangePlanV2(row.plan), assignment = assignChangePlanV2(plan, baseRootTreeHash, new Set(reservedIds));
+  if (JSON.stringify(row.assignment) !== JSON.stringify(assignment)) throw new Error('Sealed Change Plan assignment is inconsistent.');
+  return Object.freeze({ plan, assignment });
 }

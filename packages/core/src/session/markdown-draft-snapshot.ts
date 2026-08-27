@@ -177,6 +177,15 @@ export async function technicalCheckMarkdownDraftV2(input: {
   return diagnostics.length === 0 ? Object.freeze({ ok: true as const }) : Object.freeze({ ok: false as const, diagnostics: Object.freeze(diagnostics) });
 }
 
+export function anchorAcceptedUserIntentV2(baseBrief: Uint8Array, userInput: string): Buffer {
+  const normalized = userInput.replace(/\r\n?/g, '\n').trim();
+  if (normalized === '') throw new Error('Accepted user intent must be non-empty.');
+  const prefix = Buffer.from(baseBrief);
+  const separation = prefix.byteLength === 0 ? '' : prefix[prefix.byteLength - 1] === 0x0a ? '\n' : '\n\n';
+  const quoted = normalized.split('\n').map((line) => `> ${line}`).join('\n');
+  return Buffer.concat([prefix, Buffer.from(`${separation}## Accepted user intent\n\n${quoted}\n`, 'utf8')]);
+}
+
 function validateDraftBytes(brief: Uint8Array, evidence: Uint8Array): void {
   validateUtf8(brief, 'brief.md'); validateUtf8(evidence, 'evidence.md');
   if (brief.byteLength > BRIEF_MAX_BYTES) throw new Error('brief.md exceeds 8 MiB.');

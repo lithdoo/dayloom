@@ -25,11 +25,11 @@
 
 ## 4. 取消
 
-- 取消只终止 active process/resources，并把尚未提升的 artifact 标为 abandoned。
+- 取消只终止 active process/resources，并把尚未提升的 artifact 标为 `cancelled`；验证或提升失败的完整 artifact 标为 `discarded`。
 - Commit A 前取消不得改变 Head。
 - Commit A 后取消不得抹除 accepted response；pending 只能由 retry、ready cancel 或 Commit B 消解。
 - ready cancel 先 CAS 清空 `activeSession`，再移动 Session；CAS 是 authority 线性化点。
 
 ## 5. 可观察性
 
-TUI 可以展示未验证回答，并必须明确区分 streaming、verifying、accepted、superseded、abandoned 和 error。正式 transcript 只读取 Aggregate Head 指向的 accepted Conversation revision。
+TUI 可以展示未验证回答，并必须明确区分 streaming、verifying、accepted、superseded、discarded、cancelled 和 error。只有 Response Operation 可以产生用户可见回答 delta；正式 transcript 只读取 Aggregate Head 指向的 accepted Conversation revision。

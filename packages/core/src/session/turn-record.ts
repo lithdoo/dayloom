@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { ValidationIssueV1 } from './diagnostics';
+import { parseTurnVerdictV1, type TurnVerdictV1 } from './control-protocol';
 
-export type OperationDispositionV1 = 'committed' | 'superseded' | 'failed' | 'abandoned';
-export type TurnVerdictV1 = { decision: 'ACCEPT'; draft: 'KEEP' | 'UPDATE' } | { decision: 'REJECT'; repairConstraint: string };
+export type OperationDispositionV1 = 'committed' | 'superseded' | 'discarded' | 'failed' | 'cancelled';
+export type { TurnVerdictV1 } from './control-protocol';
 export interface TurnAuditV1 {
   schemaVersion: 1; turnId: string; sessionId: string; userInput: string; baseConversationId: string; baseDraftHash: string;
   generationAttempts: Array<{ generationId: string; operationId: string; attempt: 1 | 2; responseText: string; complete: boolean; disposition: OperationDispositionV1; verdict: TurnVerdictV1 | null }>;
@@ -15,7 +16,7 @@ export interface TurnAuditV1 {
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const HASH = /^[0-9a-f]{64}$/;
-const DISPOSITIONS = new Set<OperationDispositionV1>(['committed','superseded','failed','abandoned']);
+const DISPOSITIONS = new Set<OperationDispositionV1>(['committed','superseded','discarded','failed','cancelled']);
 const TERMINALS = new Set<NonNullable<TurnAuditV1['terminalStatus']>>(['committed','draft-sync-pending','policy-rejected','abandoned-after-accept','cancelled','failed']);
 
 export async function writeTurnRecordV1(target: string, value: Readonly<TurnAuditV1>): Promise<void> {
@@ -70,16 +71,7 @@ function validateTurnRecord(value: unknown): asserts value is TurnAuditV1 {
 }
 
 function verdict(value: unknown): void {
-  if (value === null) return;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('verdict');
-  const item = value as Record<string, unknown>;
-  if (item.decision === 'ACCEPT') {
-    exact(item, ['decision','draft'], 'accept verdict');
-    if (item.draft !== 'KEEP' && item.draft !== 'UPDATE') invalid('verdict draft');
-    return;
-  }
-  exact(item, ['decision','repairConstraint'], 'reject verdict');
-  if (item.decision !== 'REJECT' || typeof item.repairConstraint !== 'string' || Buffer.byteLength(item.repairConstraint) > 16 * 1024) invalid('reject verdict');
+  if (value === null) return; try { parseTurnVerdictV1(value); } catch { invalid('verdict'); }
 }
 function exact(value: unknown, keys: readonly string[], label: string): Record<string, any> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} is invalid.`); const item=value as Record<string,any>,actual=Object.keys(item).sort(),expected=[...keys].sort();if(actual.length!==expected.length||actual.some((key,index)=>key!==expected[index]))throw new Error(`${label} has unknown or missing fields.`);return item; }
 function id(value: unknown, label: string): void { if (typeof value !== 'string' || !ID.test(value)) invalid(label); }

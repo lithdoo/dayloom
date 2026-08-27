@@ -8,17 +8,19 @@ import { writeReactConfig } from '../promptpile/config';
 import { runCompressedCompletion } from '../promptpile/compression';
 import { appendUser, type ProcessRunner } from '../promptpile/conversation';
 import { runReact, type ReactProcessObserver } from '../promptpile/react-runner';
-import { ARCHIVE_FILE_TOOLS, DRAFT_FILE_TOOLS, startSessionFileRuntimeV1 } from '../promptpile/session-file-runtime';
+import { ARCHIVE_FILE_TOOLS, DRAFT_READ_TOOLS, DRAFT_WRITE_TOOLS, startSessionFileRuntimeV1 } from '../promptpile/session-file-runtime';
 import { materializeArchiveView } from '../world/archive-view';
 import type { PublishedWorld } from '../world/read';
-import { forkConversationAttemptV1, materializeConversationRevisionV1, validateConversationPromotionV1 } from './conversation-revision';
+import type { CoreSessionKind } from '../state';
+import { forkConversationAttemptV1, prepareConversationRevisionV1, validateConversationPromotionV1 } from './conversation-revision';
 import { SESSION_FILE_LIMITS } from './file-limits';
-import { materializeMarkdownDraftSnapshotV2, renderEvidenceBlockV1, technicalCheckMarkdownDraftV2, type MarkdownDraftSnapshotV2 } from './markdown-draft-snapshot';
+import { anchorAcceptedUserIntentV2, materializeMarkdownDraftSnapshotV2, renderEvidenceBlockV1, technicalCheckMarkdownDraftV2, type MarkdownDraftSnapshotV2 } from './markdown-draft-snapshot';
 import { buildDayloomCheckPrompt } from './prompts/check';
 import { buildDayloomObservePrompt } from './prompts/observe';
-import { ARBITER_FINAL_V2, ARBITER_THOUGHT_V2, CURATOR_FINAL_V2, CURATOR_THOUGHT_V2, RESPONSE_FINAL_V2, RESPONSE_THOUGHT_V2 } from './prompts/turn-v2';
+import { ARBITER_CHECK_V2, ARBITER_FINAL_V2, ARBITER_OBSERVE_V2, CURATOR_FINAL_V2, CURATOR_THOUGHT_V2, RESPONSE_CHECK_V2, RESPONSE_FINAL_V2, RESPONSE_OBSERVE_V2, buildArbiterThoughtV2, buildResponseThoughtV2 } from './prompts/turn-v2';
 import type { ProducedCurationV1, ProducedResponseV1 } from './turn-coordinator';
-import type { TurnVerdictV1 } from './turn-record';
+import { parseTurnVerdictV1, type TurnVerdictV1 } from './control-protocol';
+import { createSealedControlOperationV1 } from './sealed-control-operation';
 
 interface TurnAgentInputV2 {
   worldRoot: string;
@@ -26,6 +28,7 @@ interface TurnAgentInputV2 {
   slotRoot: string;
   persistentSessionRoot: string;
   sessionId: string;
+  sessionKind: CoreSessionKind;
   userInput: string;
   baseConversationRoot: string;
   baseSnapshot: Readonly<MarkdownDraftSnapshotV2>;
@@ -53,7 +56,7 @@ export class AiTurnAgentV2 {
     await appendUser(this.input.runner, this.input.boundaries.promptpileBin, conversation, this.input.userInput, this.input.onChild);
     const runtime = await this.fileRuntime(root, this.input.baseSnapshot.root, false);
     try {
-      const config = await this.reactConfig(root, `${RESPONSE_THOUGHT_V2}${repairConstraint ? `\n\nRepair constraint: ${repairConstraint}` : ''}`, RESPONSE_FINAL_V2, runtime.binding);
+      const config = await this.reactConfig(root, `${buildResponseThoughtV2(this.input.sessionKind)}${repairConstraint ? `\n\nRepair constraint: ${repairConstraint}` : ''}`, RESPONSE_FINAL_V2, runtime.binding, RESPONSE_OBSERVE_V2, RESPONSE_CHECK_V2);
       const final = await runCompressedCompletion({
         runner: this.input.runner,
         promptpileBin: this.input.boundaries.promptpileBin,
@@ -70,6 +73,7 @@ export class AiTurnAgentV2 {
           config,
           context: path.join(root, 'context'),
           conversation,
+          workRoot: path.join(root, 'react-work'),
           observer: this.input.observer?.(operationId),
           onChild: this.input.onChild,
           assertBeforeFinal: (work) => runtime.assertReadyForFinal(work),
@@ -77,9 +81,7 @@ export class AiTurnAgentV2 {
         }),
       });
       await validateConversationPromotionV1({ baseRoot: this.input.baseConversationRoot, attemptRoot: conversation, userText: this.input.userInput, finalText: final });
-      const conversationId = `conv_${randomUUID().replaceAll('-', '')}`;
-      await materializeConversationRevisionV1({ sessionRoot: this.input.persistentSessionRoot, conversationId, source: conversation });
-      return { generationId, operationId, responseText: final, conversationId };
+      return { generationId, operationId, responseText: final, stagedConversationRoot: conversation };
     } finally {
       await runtime.close();
     }
@@ -87,22 +89,28 @@ export class AiTurnAgentV2 {
 
   async arbitrate(operationId: string, response: ProducedResponseV1, attempt: 1 | 2): Promise<{ operationId: string; verdict: TurnVerdictV1 }> {
     const root = path.join(this.input.operationRoot, `arbitration-${attempt}`);
-    const resultPath = path.join(root, 'verdict.json');
-    const contextPath = path.join(root, 'control-context.json');
     await rm(root, { recursive: true, force: true });
     await mkdir(root, { recursive: true });
-    await writeFile(contextPath, `${JSON.stringify({ mode: 'turn-verdict', resultPath }, null, 2)}\n`);
-    const runtime = await this.fileRuntime(root, this.input.baseSnapshot.root, false, { id: 'turn_control', tool: 'turn_verdict', contextPath });
+    const control = await createSealedControlOperationV1({ root, mode: 'turn-verdict', serverId: 'turn_control', toolName: 'turn_verdict', context: {}, serverScript: path.join(__dirname, '../promptpile/operation-control-server.js'), parse: parseTurnVerdictV1 });
+    const runtime = await this.fileRuntime(root, this.input.baseSnapshot.root, false, control.server, control);
     try {
-      const config = await this.reactConfig(root, ARBITER_THOUGHT_V2, ARBITER_FINAL_V2, runtime.binding);
+      const config = await this.reactConfig(root, buildArbiterThoughtV2(this.input.sessionKind), ARBITER_FINAL_V2, runtime.binding, ARBITER_OBSERVE_V2, ARBITER_CHECK_V2);
       const conversation = path.join(root, 'conversation');
       await mkdir(conversation);
       await appendUser(this.input.runner, this.input.boundaries.promptpileBin, conversation, `[TURN]\n${this.input.userInput}\n\n[RESPONSE CANDIDATE]\n${response.responseText}`, this.input.onChild);
-      await runReact({ runner: this.input.runner, reactBin: this.input.boundaries.reactBin, validateProcessPile: this.input.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, observer: this.input.observer?.(operationId), onChild: this.input.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.reviewTimeoutMs });
-      return { operationId, verdict: JSON.parse(await readFile(resultPath, 'utf8')) as TurnVerdictV1 };
+      await runReact({ runner: this.input.runner, reactBin: this.input.boundaries.reactBin, validateProcessPile: this.input.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, workRoot: path.join(root, 'react-work'), observer: this.input.observer?.(operationId), onChild: this.input.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.arbitrationTimeoutMs });
+      return { operationId, verdict: await control.finish() };
     } finally {
       await runtime.close();
     }
+  }
+
+  async prepareConversation(response: ProducedResponseV1) {
+    return prepareConversationRevisionV1({ sessionRoot: this.input.persistentSessionRoot, conversationId: `conv_${randomUUID().replaceAll('-', '')}`, source: response.stagedConversationRoot });
+  }
+
+  async discardResponse(response: ProducedResponseV1): Promise<void> {
+    await rm(path.dirname(response.stagedConversationRoot), { recursive: true, force: true });
   }
 
   async curate(operationId: string, request: { turnId: string; accepted: ProducedResponseV1; baseDraftHash: string; attempt: 1 | 2 }): Promise<ProducedCurationV1> {
@@ -110,7 +118,8 @@ export class AiTurnAgentV2 {
     const staging = path.join(root, 'draft');
     await rm(root, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
-    await cp(path.join(this.input.baseSnapshot.root, 'brief.md'), path.join(staging, 'brief.md'));
+    const baseBrief = await readFile(path.join(this.input.baseSnapshot.root, 'brief.md'));
+    await writeFile(path.join(staging, 'brief.md'), anchorAcceptedUserIntentV2(baseBrief, this.input.userInput));
     await cp(path.join(this.input.baseSnapshot.root, 'evidence.md'), path.join(staging, 'evidence.md'));
     const runtime = await this.fileRuntime(root, staging, true);
     try {
@@ -118,7 +127,7 @@ export class AiTurnAgentV2 {
       const conversation = path.join(root, 'conversation');
       await mkdir(conversation);
       await appendUser(this.input.runner, this.input.boundaries.promptpileBin, conversation, `[USER INPUT]\n${this.input.userInput}\n\n[ACCEPTED RESPONSE]\n${request.accepted.responseText}`, this.input.onChild);
-      const note = await runReact({ runner: this.input.runner, reactBin: this.input.boundaries.reactBin, validateProcessPile: this.input.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, observer: this.input.observer?.(operationId), onChild: this.input.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.reviewTimeoutMs });
+      const note = await runReact({ runner: this.input.runner, reactBin: this.input.boundaries.reactBin, validateProcessPile: this.input.boundaries.validateProcessPile, config, context: path.join(root, 'context'), conversation, workRoot: path.join(root, 'react-work'), observer: this.input.observer?.(operationId), onChild: this.input.onChild, assertBeforeFinal: (work) => runtime.assertReadyForFinal(work), timeoutMs: SESSION_FILE_LIMITS.reviewTimeoutMs });
       const block = renderEvidenceBlockV1({ turnId: request.turnId, generationId: request.accepted.generationId, userInput: this.input.userInput, acceptedResponse: request.accepted.responseText, curatorNote: note });
       const brief = await readFile(path.join(staging, 'brief.md'));
       const baseEvidence = await readFile(path.join(this.input.baseSnapshot.root, 'evidence.md'));
@@ -131,13 +140,12 @@ export class AiTurnAgentV2 {
     }
   }
 
-  private async fileRuntime(root: string, draftRoot: string, writable: boolean, control?: { id: 'turn_control'; tool: string; contextPath: string }) {
+  private async fileRuntime(root: string, draftRoot: string, writable: boolean, controlServer?: import('../promptpile/session-file-runtime').SessionFileServerV1, finalGate?: { assertReadyForFinal(workPath: string): void }) {
     const archiveRoot = this.input.world ? (await materializeArchiveView({ worldRoot: this.input.worldRoot, sessionRoot: root, world: this.input.world })).root : null;
-    const controlServer = control ? { id: control.id, root, writable: false, tools: [control.tool], command: { command: process.execPath, argsPrefix: [path.join(__dirname, '../promptpile/operation-control-server.js'), control.contextPath] } } : null;
-    return startSessionFileRuntimeV1({ runtimeRoot: path.join(root, 'file-runtime'), promptpileMcpBin: this.input.boundaries.promptpileMcpBin, filesystemMcp: this.input.boundaries.filesystemMcp, runner: this.input.runner, servers: [...(archiveRoot ? [{ id: 'archive' as const, root: archiveRoot, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []), { id: 'draft' as const, root: draftRoot, writable, tools: DRAFT_FILE_TOOLS }, ...(controlServer ? [controlServer] : [])], workspaces: [{ serverId: 'draft', root: draftRoot, writeAllowed: writable, writePaths: writable ? ['brief.md'] : [], maxFiles: 2, maxFileBytes: 32 * 1024 * 1024, maxTotalBytes: 40 * 1024 * 1024 }], maxToolCallsPerThought: SESSION_FILE_LIMITS.conversationMaxToolCallsPerThought, maxToolResultLineBytes: SESSION_FILE_LIMITS.maxToolResultLineBytes });
+    return startSessionFileRuntimeV1({ runtimeRoot: path.join(root, 'file-runtime'), promptpileMcpBin: this.input.boundaries.promptpileMcpBin, filesystemMcp: this.input.boundaries.filesystemMcp, runner: this.input.runner, servers: [...(archiveRoot ? [{ id: 'archive' as const, root: archiveRoot, writable: false, tools: ARCHIVE_FILE_TOOLS }] : []), { id: 'draft' as const, root: draftRoot, writable, tools: writable ? DRAFT_WRITE_TOOLS : DRAFT_READ_TOOLS }, ...(controlServer ? [controlServer] : [])], workspaces: [{ serverId: 'draft', root: draftRoot, writeAllowed: writable, writePaths: writable ? ['brief.md'] : [], maxFiles: 2, maxFileBytes: 32 * 1024 * 1024, maxTotalBytes: 40 * 1024 * 1024 }], finalGates: finalGate ? [finalGate] : [], maxToolCallsPerThought: SESSION_FILE_LIMITS.conversationMaxToolCallsPerThought, maxToolResultLineBytes: SESSION_FILE_LIMITS.maxToolResultLineBytes });
   }
 
-  private async reactConfig(root: string, thoughtText: string, finalText: string, binding: { toolsFile: string; afterHookPath: string }) {
+  private async reactConfig(root: string, thoughtText: string, finalText: string, binding: { toolsFile: string; afterHookPath: string }, observeText = buildDayloomObservePrompt(true), checkText = buildDayloomCheckPrompt(true)) {
     const context = path.join(root, 'context');
     const react = path.join(root, 'react');
     await Promise.all([mkdir(context, { recursive: true }), mkdir(react, { recursive: true })]);
@@ -146,7 +154,7 @@ export class AiTurnAgentV2 {
     const check = path.join(react, 'check.md');
     const final = path.join(react, 'final.md');
     const config = path.join(react, 'config.toml');
-    await Promise.all([writeFile(thought, thoughtText), writeFile(observe, buildDayloomObservePrompt(true)), writeFile(check, buildDayloomCheckPrompt(true)), writeFile(final, finalText)]);
+    await Promise.all([writeFile(thought, thoughtText), writeFile(observe, observeText), writeFile(check, checkText), writeFile(final, finalText)]);
     await writeReactConfig(this.input.config, { thoughtPrompt: thought, observePrompt: observe, checkPrompt: check, toolsFile: binding.toolsFile, afterHookPath: binding.afterHookPath, finalPrompt: final, config });
     return config;
   }

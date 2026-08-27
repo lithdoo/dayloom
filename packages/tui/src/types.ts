@@ -62,7 +62,7 @@ export interface TuiMessage {
   operationId?: string;
   role: 'user' | 'assistant' | 'system' | 'error' | 'warn';
   text: string;
-  status: 'streaming' | 'verifying' | 'accepted' | 'superseded' | 'abandoned' | 'complete' | 'error';
+  status: 'streaming' | 'verifying' | 'accepted' | 'superseded' | 'discarded' | 'cancelled' | 'complete' | 'error';
 }
 
 export interface TuiWorkingItem {

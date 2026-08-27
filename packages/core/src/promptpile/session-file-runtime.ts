@@ -12,7 +12,8 @@ import { assertWorkspaceTreeV1, type WorkspacePolicyV1 } from './session-file-po
 import type { SessionFileHookConfigV1 } from './session-file-hook';
 
 export const ARCHIVE_FILE_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'search_files', 'search_files_content', 'read_file_lines'] as const);
-export const DRAFT_FILE_TOOLS = Object.freeze(['list_directory', 'read_file_lines', 'write_file'] as const);
+export const DRAFT_READ_TOOLS = Object.freeze(['list_directory', 'read_file_lines'] as const);
+export const DRAFT_WRITE_TOOLS = Object.freeze([...DRAFT_READ_TOOLS, 'write_file'] as const);
 export const CANDIDATE_FILE_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'read_file_lines', 'write_file'] as const);
 export interface SessionFileServerV1 { readonly id: 'archive' | 'draft' | 'candidate' | 'turn_control' | 'change_plan'; readonly root: string; readonly writable: boolean; readonly tools: readonly string[]; readonly command?: CommandBoundary }
 export interface SessionFileBindingV1 { readonly toolsFile: string; readonly afterHookPath: string; readonly toolNames: readonly string[] }
@@ -26,6 +27,7 @@ export async function startSessionFileRuntimeV1(input: {
   runtimeRoot: string; promptpileMcpBin: string; filesystemMcp: CommandBoundary; runner: ProcessRunner;
   servers: readonly SessionFileServerV1[]; maxToolCallsPerThought: number; maxToolResultLineBytes: number;
   workspaces: readonly WorkspacePolicyV1[];
+  finalGates?: readonly { assertReadyForFinal(workPath: string): void }[];
 }): Promise<SessionFileRuntimeV1> {
   if (input.servers.length === 0 || new Set(input.servers.map((server) => server.id)).size !== input.servers.length) throw fileError('startup', 'Session File Runtime servers are invalid.');
   await mkdir(input.runtimeRoot, { recursive: true });
@@ -63,7 +65,7 @@ export async function startSessionFileRuntimeV1(input: {
       return Object.freeze({
         binding: Object.freeze({ toolsFile, afterHookPath, toolNames: Object.freeze(expectedTools) }),
         assertHealthy() { if (state !== 'ready') throw fileError('runtime', `Session File Runtime is ${state}.`); },
-        assertReadyForFinal(workPath: string) { if (state !== 'ready') throw fileError('runtime', `Session File Runtime is ${state}.`); assertWorkRetrievalClosure(workPath, artifactPolicy); for (const workspace of input.workspaces) assertWorkspaceTreeV1(workspace); },
+        assertReadyForFinal(workPath: string) { if (state !== 'ready') throw fileError('runtime', `Session File Runtime is ${state}.`); assertWorkRetrievalClosure(workPath, artifactPolicy); for (const workspace of input.workspaces) assertWorkspaceTreeV1(workspace); for (const gate of input.finalGates ?? []) gate.assertReadyForFinal(workPath); },
         async close() { if (state === 'closed' || state === 'closing') { if (state === 'closing') await waitForExit(child); return; } state = 'closing'; if (!await waitForExit(child, 0)) child.kill(); if (!await waitForExit(child, settings.closeMs)) { child.kill('SIGKILL'); await waitForExit(child); } state = 'closed'; },
       });
     } catch (error) { lastError = error; state = 'closing'; child.kill(); await waitForExit(child, settings.closeMs); state = 'closed'; await rm(candidatePath, { force: true }); if (!/EADDRINUSE/i.test(stderr) || attempt + 1 >= settings.ports) break; }

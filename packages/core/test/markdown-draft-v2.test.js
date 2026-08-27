@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   INITIAL_BRIEF_V2, INITIAL_EVIDENCE_V2, hashMarkdownDraftV2,
-  materializeMarkdownDraftSnapshotV2, renderEvidenceBlockV1, renderLegacyDraftImportV1, technicalCheckMarkdownDraftV2,
+  anchorAcceptedUserIntentV2, materializeMarkdownDraftSnapshotV2, renderEvidenceBlockV1, renderLegacyDraftImportV1, technicalCheckMarkdownDraftV2,
 } = require('../dist/session/markdown-draft-snapshot');
 const { compareAndSwapAggregateHeadV1, installAggregateHeadV1, readAggregateHeadV1 } = require('../dist/session/aggregate-head');
 
@@ -21,6 +21,11 @@ test('evidence renderer preserves exact UTF-8 bytes and chooses the shortest saf
   assert.match(text, /### accepted-response\n\nBytes: 0\nSHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n\n```text\n\n```\n/);
   assert.equal(rendered.subarray(rendered.indexOf(Buffer.from('a```b')),
     rendered.indexOf(Buffer.from('a```b')) + Buffer.byteLength(input.userInput)).equals(Buffer.from(input.userInput)), true);
+});
+
+test('accepted user intent is deterministically anchored as natural Markdown before AI curation',()=>{
+  const anchored=anchorAcceptedUserIntentV2(Buffer.from('# Dayloom Draft Brief\n'),'科幻\r\n太空歌剧').toString('utf8');
+  assert.equal(anchored,'# Dayloom Draft Brief\n\n## Accepted user intent\n\n> 科幻\n> 太空歌剧\n');
 });
 
 test('Legacy Draft renderer is deterministic, lossless, and records source hashes', () => {

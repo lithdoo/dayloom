@@ -46,7 +46,7 @@ interface InternalOptions {
   mutationPublisher?: typeof publishMutation;
   remove?: typeof rm;
   classifier?: typeof classifyWorld;
-  turnAgentFactory?:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'curate'>;
+  turnAgentFactory?:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'prepareConversation'|'discardResponse'|'curate'>;
   submissionAgents?:{planner:any;converter:any;reviewer:any};
 }
 interface ActiveSessionRuntime { readonly workspace: CoreSession; readonly draft: DraftHandleV2; readonly persistentRoot:string; head:Readonly<AggregateHeadV1> }
@@ -70,7 +70,7 @@ class DayloomCoreImpl implements DayloomCore {
     private readonly remove: typeof rm,
     private readonly classifier: typeof classifyWorld,
     private readonly runtimeLock: WorldRuntimeLockV1,
-    private readonly turnAgentFactory:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'curate'>,
+    private readonly turnAgentFactory:(input:any)=>Pick<AiTurnAgentV2,'generate'|'arbitrate'|'prepareConversation'|'discardResponse'|'curate'>,
     private readonly injectedSubmissionAgents:{planner:any;converter:any;reviewer:any}|null,
   ) { this.world = classified.published; this.worldState = classified.state; }
   private workspace(): CoreSession | null { return this.activeSession?.workspace ?? null; }
@@ -190,10 +190,10 @@ class DayloomCoreImpl implements DayloomCore {
       const snapshot = await active.draft.snapshot();
       const conversationRoot = path.join(active.persistentRoot, 'conversations', authority.activeSession.conversationId);
       const operationRoot = path.join(session.root, 'turn-operations');
-      let projectedOperationId: string | null = null, projectedTurnId: string | null = null;
+      let projectedOperationId: string | null = null, projectedTurnId: string | null = null, projectedKind: import('./session/turn-coordinator').OperationKindV1 | null = null;
       const agent = this.turnAgentFactory({
         worldRoot: this.worldRoot, operationRoot, slotRoot: active.draft.root,
-        persistentSessionRoot: active.persistentRoot, sessionId: session.id, userInput: text,
+        persistentSessionRoot: active.persistentRoot, sessionId: session.id, sessionKind: session.kind, userInput: text,
         baseConversationRoot: conversationRoot, baseSnapshot: snapshot, world: this.world,
         config: this.config, boundaries: this.boundaries, runner: this.runner,
         requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
@@ -201,17 +201,19 @@ class DayloomCoreImpl implements DayloomCore {
         onChildEnd: (child: ChildProcess) => this.childEnded(child),
         observer: () => ({
           workDelta: (phase: any, _step: number, textDelta: string) => { if (projectedOperationId) this.emit({ type: 'operation.delta', sessionId: session.id, turnId: projectedTurnId, operationId: projectedOperationId, channel: phase, text: textDelta }); },
-          outputDelta: (textDelta: string) => { if (projectedOperationId) this.emit({ type: 'operation.delta', sessionId: session.id, turnId: projectedTurnId, operationId: projectedOperationId, channel: 'response', text: textDelta }); },
+          outputDelta: (textDelta: string) => { if (projectedOperationId && projectedKind === 'response') this.emit({ type: 'operation.delta', sessionId: session.id, turnId: projectedTurnId, operationId: projectedOperationId, channel: 'response', text: textDelta }); },
         }),
       });
       const result = await runTurnCoordinatorV1({
         slotRoot: active.draft.root, sessionId: session.id, userInput: text, base: authority,
         effects: {
-          generate: async (op, attempt, repair) => { projectedOperationId = op; return agent.generate(op, attempt, repair); },
-          arbitrate: async (op, response, attempt) => { projectedOperationId = op; return agent.arbitrate(op, response, attempt); },
-          curate: async (op, request) => { projectedOperationId = op; return agent.curate(op, request); },
+          generate: async (op, attempt, repair) => { projectedOperationId = op; projectedKind = 'response'; return agent.generate(op, attempt, repair); },
+          arbitrate: async (op, response, attempt) => { projectedOperationId = op; projectedKind = 'arbitration'; return agent.arbitrate(op, response, attempt); },
+          prepareConversation: (response) => agent.prepareConversation(response),
+          discardResponse: (response) => agent.discardResponse(response),
+          curate: async (op, request) => { projectedOperationId = op; projectedKind = 'draft-curation'; return agent.curate(op, request); },
           persist: (record) => writeTurnRecordV1(path.join(active.persistentRoot, 'turns', `${record.turnId}.json`), record),
-          emit: (event) => { if (event.type === 'operation.started') projectedTurnId = event.turnId; this.emit(event); }, cancelled: () => this.isCancelRequested(session) || this.disposed,
+          emit: (event) => { if (event.type === 'operation.started') { projectedTurnId = event.turnId; projectedKind = event.kind; } this.emit(event); }, cancelled: () => this.isCancelRequested(session) || this.disposed,
         },
       });
       active.head = result.head; this.sessionPhase = 'ready'; this.changed();
@@ -253,7 +255,7 @@ class DayloomCoreImpl implements DayloomCore {
     } catch (error) {
       this.activeChild = null;
       if (this.isCancelRequested(session)) {
-        this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:'abandoned',message:'Submission was cancelled.'});
+        this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:'cancelled',message:'Submission was cancelled.'});
         this.sessionPhase = 'ready'; this.changed(); return this.cancelledResult();
       }
       if (error instanceof SubmissionPipelineErrorV2) {
@@ -267,11 +269,11 @@ class DayloomCoreImpl implements DayloomCore {
   retryDraftSync() { return this.operation(async () => {
     const active=this.activeSession,pending=active?.head.activeSession?.pendingDraftSync;if(!active||this.sessionPhase!=='ready'||!pending)return failure('NOT_AVAILABLE','retryDraftSync is not available.');const session=active.workspace;this.sessionPhase='running';this.changed();const recordPath=path.join(active.persistentRoot,'turns',`${pending.turnId}.json`),record=structuredClone(await readTurnRecordV1(recordPath)) as TurnAuditV1,generation=record.generationAttempts.find((item)=>item.generationId===pending.acceptedGenerationId);if(!generation){this.sessionPhase='ready';this.changed();return failure('DRAFT_SYNC_FAILED','Pending Turn evidence is missing.');}const snapshot=await active.draft.snapshot(),operationId=`op_${randomUUID().replaceAll('-','')}`,attempt=Math.min(2,record.curationAttempts.length+1) as 1|2;this.emit({type:'operation.started',sessionId:session.id,turnId:null,operationId,groupId:`retry_${pending.turnId}`,kind:'draft-curation',attempt});
     try {
-      const response = { generationId: generation.generationId, operationId: generation.operationId, responseText: generation.responseText, conversationId: active.head.activeSession!.conversationId };
+      const response = { generationId: generation.generationId, operationId: generation.operationId, responseText: generation.responseText, stagedConversationRoot: path.join(active.persistentRoot, 'conversations', active.head.activeSession!.conversationId) };
       const agent = this.turnAgentFactory({
         worldRoot: this.worldRoot, operationRoot: path.join(session.root, 'retry-operations'), slotRoot: active.draft.root,
         persistentSessionRoot: active.persistentRoot, sessionId: session.id, userInput: record.userInput,
-        baseConversationRoot: path.join(active.persistentRoot, 'conversations', response.conversationId), baseSnapshot: snapshot,
+        baseConversationRoot: path.join(active.persistentRoot, 'conversations', active.head.activeSession!.conversationId), baseSnapshot: snapshot,
         world: this.world, config: this.config, boundaries: this.boundaries, runner: this.runner,
         requestsDir: session.requestsDir, summaryConfigPath: session.summaryConfigPath, summaryPromptPath: session.summaryPromptPath,
         onChild: (child: ChildProcess) => this.childStarted(child, session.id),
@@ -280,7 +282,7 @@ class DayloomCoreImpl implements DayloomCore {
       });
       const curated = await agent.curate(operationId, { turnId: pending.turnId, accepted: response, baseDraftHash: pending.baseDraftHash, attempt });
       if (this.isCancelRequested(session)) throw new CoreOperationError('CANCELLED', 'Draft retry was cancelled.');
-      const head = await compareAndSwapAggregateHeadV1({ slotRoot: active.draft.root, expectedRevision: active.head.revision, next: { schemaVersion: 1, revision: active.head.revision + 1, draftHash: curated.snapshot.hash, activeSession: { sessionId: session.id, conversationId: response.conversationId, pendingDraftSync: null } } });
+      const head = await compareAndSwapAggregateHeadV1({ slotRoot: active.draft.root, expectedRevision: active.head.revision, next: { schemaVersion: 1, revision: active.head.revision + 1, draftHash: curated.snapshot.hash, activeSession: { sessionId: session.id, conversationId: active.head.activeSession!.conversationId, pendingDraftSync: null } } });
       active.head = head; record.resultDraftHash = curated.snapshot.hash;
       record.curationAttempts.push({ operationId, attempt, disposition: 'committed', baseDraftHash: pending.baseDraftHash, resultDraftHash: curated.snapshot.hash, diagnostics: [] });
       record.terminalStatus = 'committed'; await writeTurnRecordV1(recordPath, record);
@@ -289,7 +291,7 @@ class DayloomCoreImpl implements DayloomCore {
       this.emit({ type: 'operation.finished', sessionId: session.id, turnId: null, operationId, disposition: 'committed' });
       this.sessionPhase = 'ready'; this.changed(); return success();
     }
-    catch(error){record.curationAttempts.push({operationId,attempt,disposition:this.isCancelRequested(session)?'abandoned':'failed',baseDraftHash:pending.baseDraftHash,resultDraftHash:null,diagnostics:[]});await writeTurnRecordV1(recordPath,record).catch(()=>undefined);this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:this.isCancelRequested(session)?'abandoned':'failed',message:messageOf(error)});this.sessionPhase='ready';this.changed();return this.isCancelRequested(session)?this.cancelledResult():failure('DRAFT_SYNC_FAILED',messageOf(error));}
+    catch(error){record.curationAttempts.push({operationId,attempt,disposition:this.isCancelRequested(session)?'cancelled':'failed',baseDraftHash:pending.baseDraftHash,resultDraftHash:null,diagnostics:[]});await writeTurnRecordV1(recordPath,record).catch(()=>undefined);this.emit({type:'operation.finished',sessionId:session.id,turnId:null,operationId,disposition:this.isCancelRequested(session)?'cancelled':'failed',message:messageOf(error)});this.sessionPhase='ready';this.changed();return this.isCancelRequested(session)?this.cancelledResult():failure('DRAFT_SYNC_FAILED',messageOf(error));}
   }); }
   cancel(): Promise<CoreResult> {
     if (this.disposed) return Promise.resolve(failure('DISPOSED', 'Core is disposed.'));

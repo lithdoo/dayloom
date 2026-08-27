@@ -5,6 +5,15 @@ import { exportVisibleTranscriptV1, type VisibleTranscriptV1 } from '../world/bu
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export interface ConversationRevisionV1 { conversationId: string; root: string }
+export interface PreparedConversationRevisionV1 extends ConversationRevisionV1 { commit(): Promise<void>; rollback(): Promise<void> }
+
+export async function prepareConversationRevisionV1(input: { sessionRoot: string; conversationId: string; source: string }): Promise<PreparedConversationRevisionV1> {
+  const revision = await materializeConversationRevisionV1(input); let settled = false;
+  return Object.freeze({ ...revision,
+    async commit() { settled = true; },
+    async rollback() { if (settled) return; settled = true; await rm(revision.root, { recursive: true, force: true }); },
+  });
+}
 
 export async function materializeConversationRevisionV1(input: { sessionRoot: string; conversationId: string; source: string }): Promise<Readonly<ConversationRevisionV1>> {
   requireId(input.conversationId); await validateTree(input.source);
