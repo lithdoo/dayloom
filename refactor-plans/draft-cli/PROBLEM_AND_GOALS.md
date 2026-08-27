@@ -1,222 +1,360 @@
 # Dayloom Draft / CLI 重构：问题与目标
 
-> 状态：讨论起点  
-> 范围：围绕现有 Draft 设计与 Archive 存档机制重新划分系统边界  
-> 非目标：本文件不冻结具体实现，不重新设计 Draft 格式
+> 状态：方向已收敛  
+> 范围：围绕现有 Draft 与 Archive 重新划分系统边界  
+> 非目标：不修改 Draft 格式，不把 Draft 变成 DSL，不继续扩展旧 Core runtime
 
-## 1. 背景
+## 1. 为什么重构
 
-Dayloom 最初希望保持一个简洁、清晰的实现，但随着 Session、Conversation、Draft、Submission、恢复、取消、事件流和 TUI 展示等职责逐步进入 `@dayloom/core`，当前架构已经明显变得更复杂。
-
-现有主流程本身仍然合理：
-
-```text
-Conversation
-  -> Draft
-  -> Submission
-  -> Candidate
-  -> Validation / Repair / Review
-  -> Archive Publish
-```
-
-问题主要不在这条业务主流程，而在于围绕它建立的 runtime ownership 和生命周期协调机制过重。
-
-当前 Core 同时承担了：
+当前 `@dayloom/core` 同时承担：
 
 - Session 生命周期；
 - Conversation 持久化与恢复；
-- Draft 持久化与 authority；
+- Draft authority；
 - Turn / operation 生命周期；
 - Draft 同步与 pending 状态；
-- Submission pipeline；
-- Candidate 与发布；
+- Submission；
+- AI runtime；
+- Archive publication；
 - cancellation / recovery；
-- 面向 TUI 的状态与事件模型。
+- 面向 TUI 的事件与展示状态。
 
-这些职责相互耦合后，引入了 Aggregate Head、Conversation revision、Turn Commit、pendingDraftSync、retryDraftSync、CoreEvent、presentation reducer 等机制。它们解决了真实问题，但也使整体实现偏离了项目最初希望保持的简洁性。
+这些职责耦合后，引入了 Aggregate Head、Conversation revision、Turn Commit、pendingDraftSync、retryDraftSync、CoreEvent、presentation reducer 等机制。
+
+这些机制解决了真实问题，但主要是在解决“Conversation 和 Draft submission 必须被同一个长期 runtime 协调”的复杂度。
+
+这次重构的目标是拆开这两个生命周期。
 
 ## 2. 核心判断
 
-这次重构不准备改变 Draft 的内容模型，也不准备把 Draft 变成领域 DSL、命令语言或可确定编译的机器格式。
-
-Draft 继续保持现有定位：
+Draft 的格式和定位不变：
 
 > Draft 是面向人和 AI 的创作语义文档。
 
-它仍然可以由 Conversation 驱动生成和修改，也仍然可以在提交阶段由 AI 根据当前 Published World 转换成 Candidate。
+Draft 不升级为 mutation DSL，也不承担 Archive authority。
 
-这次真正需要改变的是 Draft 的 ownership 和系统边界：
+真正改变的是 ownership：
 
-> Draft 从 Core 内部隐藏的持久状态，变成系统明确暴露的外部文档接口。
+> Draft 从 Core 内部状态变成显式外部文档接口。
 
-## 3. 目标架构方向
+Conversation 负责产生 / 修改 Draft；CLI 负责把 Draft 应用到 World；Archive 继续是唯一已发布事实权威。
 
-新的主流程目标如下：
-
-```text
-New TUI
-  -> Conversation
-  -> Draft document
-
-Draft document
-  + World directory
-  + command kind
-  -> Dayloom CLI
-  -> Submission pipeline
-  -> Archive Publish
-```
-
-其中：
-
-### 3.1 CLI
-
-新建独立 CLI，接受：
-
-- World / Archive 目录；
-- 操作命令，如 `init`、`plan`、`play`、`revise` 等；
-- 一个 Draft 文档地址。
-
-示意：
+## 3. 新的系统边界
 
 ```text
-dayloom init <world-dir> <draft-path>
-dayloom plan <world-dir> <draft-path>
-dayloom play <world-dir> <draft-path>
-dayloom revise <world-dir> <draft-path>
+New TUI / editor / external AI
+        ↓
+     Conversation
+        ↓
+       Draft
+        ↓
+    Dayloom CLI
+        ↓
+ temporary Workspace
+        ↓
+       Patch
+        ↓
+      Archive
 ```
 
-CLI 的职责是把“一个 Draft 应用到一个当前存档”这件事独立完成。
-
-内部仍然可以保留现有可靠提交链路中的核心部分：
+三个长期核心对象：
 
 ```text
 Draft
-  -> lint / input validation
-  -> read and pin Published World
-  -> Change Plan / assignment
-  -> AI conversion
-  -> Candidate
-  -> programmatic validation
-  -> bounded repair
-  -> advisory review
-  -> diff
-  -> re-check pinned World
-  -> atomic Archive publish
+Patch
+Archive
 ```
 
-CLI 不应承担 Conversation 或交互式 Session 的长期生命周期。
+Workspace 和 AI execution 都是一次 CLI invocation 内的临时实现细节。
 
-### 3.2 New TUI
+## 4. Draft → Archive 的新主流程
 
-现有 TUI 不继续作为新架构基础，重新建立一个更薄的 TUI 项目。
+Draft 驱动 mutation：
 
-新 TUI 的主要职责是：
+```text
+Draft
+  ↓ exact snapshot
+pin current Archive base
+  ↓
+materialize 完整公开 World Workspace
+  ↓
+AI 根据 Draft 直接编辑 Workspace
+  ↓
+Programmatic Validation
+  ↓
+必要时有限次数 Repair
+  ↓
+base / Workspace diff
+  ↓
+Dayloom Patch
+  ↓
+Patch path / mutation policy validation
+  ↓
+re-check pinned Archive base
+  ↓
+atomic Archive publish
+  ↓
+归档 Patch + Draft snapshot
+```
 
-- 读取当前 World 上下文；
-- 与用户进行 AI Conversation；
-- 生成和修改现有格式的 Draft；
-- 将 Draft 作为普通文档保存；
-- 在提交时调用 CLI；
-- 展示 CLI 的结果。
+不再把 Change Plan、Assignment、Candidate lifecycle 作为 v1 必需架构。
 
-TUI 不再拥有 World publication authority，也不需要维护 Core 当前那套完整 Session / Turn / operation 状态机。
+如果未来实际数据证明需要额外 semantic planning / review，再根据具体问题增加，而不是预先冻结复杂协议。
 
-### 3.3 Archive
+## 5. Workspace 模型
 
-Archive 继续作为 Published World 的唯一事实权威。
+Workspace 是普通的、完整的 World 文档工作树：
 
-现有 Archive V2 的关键性质原则上继续保留，包括：
+```text
+temporary workspace/
+  canon/
+  characters/
+  locations/
+  arcs/
+  state/
+  days/
+  ...
+```
 
-- immutable object / tree / commit；
-- 原子 current 切换；
-- 发布前重新验证基线；
-- 失败不部分修改 Published World；
-- 程序校验作为硬发布边界。
+它不是 Archive，也不复制：
 
-## 4. 希望删除的复杂度
+```text
+objects/
+commits/
+trees/
+operations/
+patches/
+current.json
+```
 
-本次重构希望通过拆开 Conversation 生命周期和 Draft application 生命周期，删除或显著弱化当前 Core 为协调二者而产生的机制。
+AI 可以读取完整 World，但只能写 command-specific 允许路径。
 
-重点重新评估以下概念是否还需要存在：
+最终 diff 后程序再次检查 changed paths，防止 AI 越权。
+
+Workspace 成功或失败后都删除，不需要 Session Head、恢复或长期持久化。
+
+## 6. Patch 模型
+
+所有产生新 World commit 的 mutation 都必须先产生 Patch：
+
+```text
+init
+plan
+play
+revise
+settle
+abandon
+```
+
+Patch 记录：
+
+```text
+path
+beforeBlobHash
+afterBlobHash
+```
+
+统一表达：
+
+```text
+修改： A    → B
+新增： null → B
+删除： A    → null
+```
+
+Patch 不保存 textual diff，也不重复保存 blob bytes。
+
+Archive 已有 immutable blobs，因此 Patch 只引用前后 blob hash。
+
+Patch 的职责是：
+
+> 记录这次 mutation 相对 base 改了什么。
+
+它不取代：
+
+- tree：完整版本状态；
+- commit：版本历史节点；
+- operation：领域操作身份和 base / target 关系。
+
+推荐关系：
+
+```text
+current.json
+    ↓
+  commit
+    ├──────────────→ tree → blobs
+    │
+    └→ operation
+          ├→ patch
+          └→ target commit
+```
+
+Patch 不需要再保存 `targetCommitId`，避免和 operation / commit 重复 authority。
+
+## 7. 备份与恢复边界
+
+Patch 保存 `beforeBlobHash / afterBlobHash`，Archive 长期保留仍被 commit / Patch 引用的 immutable blobs。
+
+因此历史 mutation 的精确前后内容可以被追溯。
+
+但是 v1 明确不提供：
+
+```text
+dayloom revert
+公开 revert API
+公开 inverse-patch apply 接口
+```
+
+当前只保证数据层不丢失未来实现恢复工具所需的信息，不在这次重构中继续扩展公开还原语义。
+
+## 8. Archive 保留的能力
+
+Archive 继续作为唯一 Published World authority，保留：
+
+- immutable blobs / trees / commits；
+- append-only history；
+- atomic `current.json` visibility switch；
+- publication lock；
+- pinned base re-check；
+- path / media type / content policy；
+- World validator；
+- 任意失败不产生部分可见 World。
+
+新的 Patch 应作为现有 Archive protocol 的增量扩展，而不是建立第二套版本系统。
+
+## 9. CLI 的职责
+
+CLI 是单次、无长期 Session authority 的执行器。
+
+Draft 驱动命令：
+
+```text
+init
+plan
+play
+revise
+```
+
+确定性命令：
+
+```text
+settle
+abandon
+```
+
+只读命令：
+
+```text
+status
+verify
+```
+
+CLI 负责：
+
+- 读取 / pin Archive；
+- snapshot Draft；
+- materialize Workspace；
+- 运行 AI edit / repair；
+- programmatic validation；
+- 生成 Patch；
+- publication conflict 检查；
+- Archive publish；
+- 归档 Patch / Draft snapshot；
+- 输出稳定 CLI / JSON 结果。
+
+CLI 不负责 Conversation 或交互式 Session 的长期生命周期。
+
+## 10. AI 边界
+
+Dayloom 不自己实现 provider adapter。
+
+外部模型继续由 Promptpile caller config 决定，例如 provider、model、base URL 和 API key 来源。
+
+Dayloom CLI 自己控制：
+
+- prompt；
+- tools；
+- Workspace 读写权限；
+- validator；
+- repair policy；
+- publish policy。
+
+CLI 的 AI 能力应尽量缩到：
+
+```text
+edit workspace
+repair workspace from diagnostics
+```
+
+不迁移旧：
+
+- AiTurnAgent；
+- Turn Coordinator；
+- Conversation compression；
+- response arbitration；
+- Draft curation；
+- Conversation revision；
+- Session recovery；
+- Change Plan authority；
+- Candidate lifecycle。
+
+## 11. New TUI
+
+新 TUI 保持薄层，只负责：
+
+- 读取 World 上下文；
+- Conversation；
+- 生成 / 修改现有格式 Draft；
+- 保存 Draft；
+- 调用 CLI；
+- 展示 CLI 结果和低复杂度进度。
+
+TUI 不拥有 publication authority，也不重新实现 lifecycle rules。
+
+生命周期和当前可用命令应通过 CLI / 共享领域层查询，例如 `dayloom status --json`。
+
+## 12. 希望删除的复杂度
+
+新的边界成立后，重点删除或不迁移：
 
 - Core 常驻 runtime；
 - active Session authority；
 - Aggregate Head；
-- Conversation revision 作为 World 提交流程前置条件；
+- Conversation revision 作为 submission authority；
 - Turn Coordinator；
 - Commit A / Commit B；
 - pendingDraftSync；
 - retryDraftSync；
-- CoreEvent；
+- CoreEvent presentation protocol；
 - TUI presentation reducer；
-- runtime-driver；
-- Core 与 TUI 之间复杂的 capability / lifecycle 同步。
+- runtime-driver 中的 Session synchronization；
+- 为 Conversation + Draft 联合事务服务的 recovery/cancellation 状态机。
 
-这些概念并非一定设计错误，而是在 Draft 成为外部接口后，可能不再需要由同一个 runtime 统一协调。
+进程内 AI child cancellation 等普通执行控制可以保留，但不再发展成长期 Session authority。
 
-## 5. 明确保留的设计原则
+## 13. 成功标准
 
-本次重构不是对现有设计的全面推翻。以下原则应优先保留：
+重构成功后应满足：
 
-1. Published World 是唯一已发布事实权威。
-2. Draft 是不可信的创作提议，而不是已发布事实。
-3. Draft 格式保持现有设计，不为了 CLI 改造成 DSL。
-4. AI 可以理解 Draft、生成 Change Plan、转换 Candidate、进行受限修复，但 AI 不拥有最终发布权。
-5. Candidate 必须经过确定性程序校验。
-6. 发布前必须再次验证所基于的 Published World 没有发生冲突。
-7. 任意失败都不能产生部分 Published World 更新。
-8. Archive publication 的原子性继续作为最终 authority 线性化点。
+1. 不启动 TUI，也可以手工准备现有格式 Draft 并通过 CLI 更新 World。
+2. 外部编辑器、Agent 或人类都可以成为 Draft producer。
+3. TUI 崩溃或 Conversation 丢失不会破坏 Published World 一致性。
+4. CLI 单次启动即可完成一次 mutation，不依赖长期 Session runtime。
+5. AI 永远不直接写 Archive。
+6. Validator 仍然是唯一硬 publication boundary。
+7. 每个 mutation commit 都有对应 Patch，可以明确解释这次修改了哪些文件、从什么 blob 变为什么 blob。
+8. Archive publication 的原子性和冲突保护不弱于当前实现。
+9. Draft 的创作表达能力不因 CLI 化而下降。
+10. 从代码结构上能清晰看出：Conversation 属于客户端，Draft 是输入接缝，Workspace 是临时执行区，Patch 是 mutation 记录，Archive 是唯一事实。
 
-## 6. 这次重构要解决的问题
+## 14. 下一步实现设计
 
-希望最终回答并解决以下问题：
+当前架构方向已经足够收敛，下一阶段不再继续增加新领域概念，重点冻结：
 
-### 6.1 系统边界
-
-- Draft 作为外部接口后，CLI 的最小职责是什么？
-- 哪些现有 Core 模块属于真正的 Submission / World 逻辑，应该迁移或保留？
-- 哪些模块只是为了 Session / Conversation / TUI runtime 协调而存在，可以删除？
-
-### 6.2 Draft ownership
-
-- Draft 由 TUI / 用户 / 外部工具直接持有后，是否还需要 Core-owned Draft store？
-- Draft 的 diagnostics、快照与 audit 应如何保存，才能既简单又可追溯？
-- 是否需要额外 sidecar metadata，而不污染 Draft 本身？
-
-### 6.3 CLI application model
-
-- `init`、`plan`、`play`、`revise` 是否都可以统一为 “World + Draft -> Publication” 模型？
-- `settle`、`abandon` 等无 AI 的确定性操作如何放入同一个 CLI？
-- CLI 是否应完全无状态、单次启动、完成一次操作后退出？
-
-### 6.4 AI submission pipeline
-
-- 现有 Change Plan、assignment、Converter、Candidate、validator、repair、review 哪些应原样保留？
-- 去掉 Session / Head / Turn 前置条件后，Submission V2 应如何重新定义输入和 authority？
-- Draft 与当前 Published World 的冲突检测应该放在哪一层？
-
-### 6.5 New TUI
-
-- TUI 如何只负责 Conversation 与 Draft editing，而不重新长出一套 Core？
-- TUI 如何获取只读 World context？
-- TUI 与 CLI 之间应采用进程调用、JSON 输出还是更薄的 library wrapper？
-
-## 7. 成功标准
-
-如果这次改造成功，Dayloom 应具备以下特征：
-
-- 不启动 TUI，也可以手工准备一个现有格式 Draft，并通过 CLI 推进存档；
-- 不使用 Dayloom 自带 TUI，也可以由其他编辑器、Agent 或人类生成 Draft 后调用 CLI；
-- TUI 崩溃或 Conversation 丢失不会影响 Published World 的一致性；
-- CLI 不依赖一个长期存在的 Session runtime；
-- World publication 的安全性和原子性不弱于当前实现；
-- Draft 的创作表达能力不因机器接口化而下降；
-- 从代码结构上可以清晰看到：Conversation 属于客户端，Draft 是接缝，Submission 属于 CLI，Published World 属于 Archive。
-
-## 8. 当前首要设计问题
-
-下一阶段首先回答：
-
-> 为了实现 `dayloom plan <world-dir> <draft-path>`，从当前 `@dayloom/core` 中最少需要保留哪些模块？哪些 Session / Turn / Aggregate Head 依赖可以彻底移除？
-
-这个问题应作为后续详细改造计划和代码迁移设计的起点。
+1. Patch V1 schema 与 Archive 存放位置。
+2. `operation.patchId` 等 Archive V2 最小协议改动。
+3. 各 command 的 write policy。
+4. Workspace materialize / validate 实现，尤其 `init`。
+5. Draft snapshot 的归档形式。
+6. CLI JSON / exit-code / error contract。
+7. 从当前 `@dayloom/core` 逐模块标记 KEEP / ADAPT / DELETE，并开始迁移。
