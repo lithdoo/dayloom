@@ -7,8 +7,8 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "npm run build -w @dayloom/archive-protocol && npm run build -w @dayloom/core && npm run build -w @dayloom/tui",
-    "test": "npm run test -w @dayloom/archive-protocol && npm run test -w @dayloom/core && npm run test -w @dayloom/tui",
+    "build": "npm run build -w @dayloom/archive-protocol && npm run build -w @dayloom/cli && npm run build -w @dayloom/core && npm run build -w @dayloom/tui",
+    "test": "npm run test -w @dayloom/archive-protocol && npm run test -w @dayloom/cli && npm run test -w @dayloom/core && npm run test -w @dayloom/tui",
     "tui": "node packages/tui/dist/main.js",
     "docs:dev": "vitepress dev doc",
     "docs:check": "node scripts/check-docs.mjs",
