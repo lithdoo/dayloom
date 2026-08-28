@@ -1,4 +1,5 @@
 import {
+  encodeCanonicalJsonV1,
   exactKeysV1,
   parseObjectIdV1,
   recordV1,
@@ -23,5 +24,15 @@ export function parseArchiveManifestV1(value: unknown): Readonly<ArchiveManifest
     worldId: parseObjectIdV1(o.worldId, 'world', 'ArchiveManifestV1.worldId'),
     title: stringV1(o.title, 'ArchiveManifestV1.title'),
     createdAt: timestampV1(o.createdAt, 'ArchiveManifestV1.createdAt'),
+  });
+}
+
+export function encodeArchiveManifestV1(value: ArchiveManifestV1): Uint8Array {
+  const manifest = parseArchiveManifestV1(value);
+  return encodeCanonicalJsonV1({
+    schemaVersion: 1,
+    worldId: manifest.worldId,
+    title: manifest.title,
+    createdAt: manifest.createdAt,
   });
 }
