@@ -1,5 +1,4 @@
 import { mkdir, rm } from 'node:fs/promises';
-import path from 'node:path';
 import type { ValidateFunction } from 'ajv';
 import { runNodeCliV1 } from './process.js';
 
@@ -90,7 +89,7 @@ class ProcessPileReducerV1 {
 
   finish(exitCode: number | null, stderr: string): string {
     if (this.terminal === null) throw new Error('React Process Pile ended before terminal.');
-    if (this.terminal.type === 'process.failed') throw new Error(this.terminal.error?.message ?? stderr || 'React process failed.');
+    if (this.terminal.type === 'process.failed') throw new Error(this.terminal.error?.message ?? (stderr || 'React process failed.'));
     if (exitCode !== 0) throw new Error(stderr || 'React completed but the child exit code was nonzero.');
     if (this.terminal.final?.status !== 'completed' || typeof this.terminal.final.content !== 'string' || this.terminal.final.content.trim() === '') {
       throw new Error('React Final evidence is missing or empty.');
