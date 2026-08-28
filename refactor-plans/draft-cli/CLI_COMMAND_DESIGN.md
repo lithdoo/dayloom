@@ -26,8 +26,6 @@ Archive = Published World 的唯一事实和历史
 
 Workspace、AI edit、repair、publish lock 都只是一次 CLI invocation 的内部机制。
 
-一句话：
-
 > Draft 是输入，Patch 解释变化，Archive 保存事实。
 
 ## 2. 主流程
@@ -113,7 +111,7 @@ CLI 是 process-stateless：一次命令运行结束即退出。
 
 Draft-driven mutation 还必须关联 exact Draft snapshot。
 
-新 Archive 概念布局：
+布局：
 
 ```text
 <world>/
@@ -124,8 +122,8 @@ Draft-driven mutation 还必须关联 exact Draft snapshot。
     <commitId>.json
 
   objects/
-    blobs/sha256/<hash>
-    trees/sha256/<hash>.json
+    blobs/sha256/<64-lowercase-hex>
+    trees/sha256/<64-lowercase-hex>.json
 
   operations/
     <operationId>/
@@ -149,7 +147,94 @@ current → reachable commit
 
 决定。
 
-## 5. v1 公共命令
+## 5. 协议基础格式
+
+所有持久化 SHA-256 字段统一：
+
+```text
+sha256:<64 lowercase hex>
+```
+
+适用于 blob、root tree、Patch、Draft snapshot 和 Draft entry hash。
+
+磁盘 content-addressed 路径只取 digest 部分。
+
+对象 ID：
+
+```text
+world_<32 lowercase hex>
+commit_<32 lowercase hex>
+op_<32 lowercase hex>
+```
+
+均由程序生成；AI 不生成 Archive object ID。
+
+Durable JSON 使用 strict parser：unknown field、unsupported schemaVersion、非法 ID/hash/timestamp 一律拒绝。参与 hash 的 Patch、DraftSnapshot、RootTree 使用 canonical JSON。
+
+## 6. Manifest / Current / Commit / Operation
+
+Manifest：
+
+```ts
+interface ArchiveManifestV1 {
+  schemaVersion: 1;
+  worldId: string;
+  title: string;
+  createdAt: string;
+}
+```
+
+Current：
+
+```ts
+interface CurrentPointerV1 {
+  schemaVersion: 1;
+  revision: number;
+  commitId: string;
+  updatedAt: string;
+}
+```
+
+Commit：
+
+```ts
+interface ArchiveCommitV1 {
+  schemaVersion: 1;
+  id: string;
+  revision: number;
+  parentCommitId: string | null;
+  operationId: string;
+  createdAt: string;
+  rootTreeHash: string;
+  control: WorldControlV1;
+}
+```
+
+Operation：
+
+```ts
+interface ArchiveOperationV1 {
+  schemaVersion: 1;
+  id: string;
+  command: DayloomPatchV1['command'];
+  patchHash: string;
+  createdAt: string;
+}
+```
+
+Manifest immutable；Current 是唯一正常变化的 authority pointer；Operation 是 immutable command record，不是 publication 状态机。
+
+`init` 的 Manifest 完全由程序生成：
+
+```text
+worldId   = CLI 生成
+title     = validated state/world.yaml.title
+createdAt = 正式 init publication timestamp
+```
+
+AI 不生成或编辑 Manifest。
+
+## 7. v1 公共命令
 
 只公开：
 
@@ -187,7 +272,7 @@ publish
 revert
 ```
 
-### 5.1 command availability
+### 7.1 availability
 
 | World 状态 | 可用 mutation |
 | --- | --- |
@@ -199,7 +284,7 @@ revert
 
 `status` 和真正 command guard 使用同一个 availability 实现。
 
-## 6. CLI grammar
+## 8. CLI grammar
 
 ```text
 dayloom init <world>
@@ -239,20 +324,17 @@ dayloom abandon <world>
         [--dry-run]
         [--json]
 
-dayloom status <world>
-        [--json]
-
-dayloom verify <world>
-        [--json]
+dayloom status <world> [--json]
+dayloom verify <world> [--json]
 ```
 
 World 是唯一 positional primary object。
 
-Draft 和 World 提供领域语义，不增加 `--path / --replace / --delete / --event` 等 mutation DSL 参数。
+Draft 和 World 提供领域语义，不增加 mutation DSL 参数。
 
-## 7. Draft 输入
+## 9. Draft snapshot
 
-Draft 保持现有格式不变。
+Draft 格式保持现有格式不变。
 
 支持：
 
@@ -260,44 +342,51 @@ Draft 保持现有格式不变。
 --draft <file>...
 ```
 
-可重复，顺序具有语义。
-
-或：
+可重复，顺序具有语义；或：
 
 ```text
 --draft-dir <dir>
 ```
 
-表示一个完整 Draft root。
+二者互斥。
 
-两者互斥。
+CLI 开始后立即制作 exact Draft snapshot，此后只读 snapshot，不继续读取用户原文件，也不修改/移动/删除用户 Draft。
 
-CLI 启动后立即制作 exact Draft snapshot，此后本次 invocation 只读取 snapshot，不继续读取用户原文件。
+只接受真实 regular file / directory；symlink、socket、FIFO、device 等一律拒绝。
 
-CLI 永远不修改、移动或删除用户提供的 Draft。
-
-Draft-driven publish 成功后，exact Draft snapshot 归档到对应 operation 目录。
-
-## 8. Workspace
-
-Workspace 是 pinned World 的完整公开文档视图：
+多 `--draft` 使用稳定归档位置：
 
 ```text
-Published World
-  ↓ materialize
-Workspace
-  ↓ AI edit
+draft/files/0001/<basename>
+draft/files/0002/<basename>
+...
 ```
 
-不是：
+所以同名文件不会碰撞，参数顺序进入 snapshot identity。
+
+`--draft-dir` 使用：
 
 ```text
-Candidate overlay
-第二套 Archive
-长期 Session workspace
+draft/root/<relative-path>
 ```
+
+并按 canonical relative path 稳定排序。
+
+DraftSnapshot 使用 canonical JSON，hash 统一为：
+
+```text
+draftSnapshotHash = sha256:<64 lowercase hex>
+```
+
+Patch → DraftSnapshot → exact Draft bytes 必须可由 `verify` 完整验证。
+
+## 10. Workspace
+
+Workspace 是 pinned World 的完整公开文档视图，不是 Candidate overlay、第二套 Archive 或长期 Session workspace。
 
 AI 可以读完整 World，但只允许写 command-specific paths。
+
+AI 执行后、validation/diff 前必须扫描 Workspace，拒绝 symlink、special file、路径逃逸和 Archive protocol path。
 
 必须有两层保护：
 
@@ -306,13 +395,97 @@ AI 可以读完整 World，但只允许写 command-specific paths。
 
 第二层是最终 authority。
 
-`init` 没有 base tree，使用空 / 最小 Workspace，由 AI 根据 Init Draft 生成初始 World documents。
+`init` 没有 base tree，使用空 Workspace；AI 只生成创作性 World documents。Manifest、Current、Commit、Operation、Patch、control 等协议对象全部由程序生成。
 
-AI 不生成 manifest、commit、operation、patch、current 或 control。
+## 11. command write policy
 
-## 9. Validation 与 Repair
+新架构不把 `audit/` 当作 World 审计入口；审计由 Operation/Patch/Draft snapshot 表达。
 
-主循环：
+### `init`
+
+允许创建完整初始长期 World：
+
+```text
+profile/dayloom.json
+canon/{premise,rules,style,user-role}.md
+state/{world,calendar,progress,variables}.yaml
+characters/index.yaml
+characters/<id>/{profile.md,state.yaml,relationships.yaml,memory.md,timeline.md}
+locations/index.yaml
+locations/<id>/{profile.md,state.yaml,memory.md,triggers.yaml,timeline.md}
+arcs/index.yaml
+arcs/<id>/{profile.md,state.yaml,timeline.md}
+memory/{short-term.md,long-term.md,facts.yaml,unresolved-threads.yaml,important-events.yaml}
+story-seeds/active.yaml
+custom/**
+```
+
+不允许 `days/**`。
+
+### `plan`
+
+仅当前 target day：
+
+```text
+days/<day>/plan.json
+days/<day>/timeline.md
+days/<day>/dialogue/planning.md
+days/<day>/events/index.yaml
+```
+
+### `play`
+
+仅当前 planned day：
+
+```text
+days/<day>/play.json
+days/<day>/play-index.json
+days/<day>/summary.md
+days/<day>/timeline.md
+days/<day>/events/**
+```
+
+`play` 不直接改长期 state；长期状态由 `settle` 确定性应用。
+
+### `revise`
+
+允许长期 World 资料，但禁止：
+
+```text
+profile/**
+days/**
+state/calendar.yaml
+```
+
+允许 canon、state/world/progress/variables、characters、locations、arcs、memory、story-seeds、custom 的既定 World Profile 路径。
+
+### `settle`
+
+只有 deterministic settlement builder 可写：
+
+```text
+state/calendar.yaml
+state/variables.yaml
+characters/<existing-id>/{state.yaml,timeline.md}
+locations/<existing-id>/{state.yaml,timeline.md}
+arcs/<existing-id>/{state.yaml,timeline.md}
+memory/facts.yaml
+memory/important-events.yaml
+story-seeds/active.yaml
+days/<current-day>/{summary.md,diary.md,settlement.yaml,next-day-seed.yaml}
+```
+
+### `abandon`
+
+只允许删除：
+
+```text
+days/<current-day>/**
+```
+
+精确正则/纯函数及 allowed/denied 测试以 `IMPLEMENTATION_DRAFT.md` 为准。
+
+## 12. Validation 与 Repair
 
 ```text
 AI edit
@@ -328,30 +501,13 @@ validate complete Workspace + target control
      validate again
 ```
 
-规则：
-
-```text
-AI 认为完成 ≠ 可以发布
-Programmatic Validator 通过 = 才能继续
-```
+Programmatic Validator 才是发布硬门槛。
 
 Repair 次数固定有界；diagnostics signature 不变化时提前停止。
 
 v1 不要求 Planner / Change Plan / Candidate / mandatory AI reviewer。
 
-## 10. World control
-
-World 版本由：
-
-```text
-root tree
-+
-commit.control
-```
-
-共同组成。
-
-control：
+## 13. World control
 
 ```ts
 interface WorldControlV1 {
@@ -361,7 +517,7 @@ interface WorldControlV1 {
 }
 ```
 
-AI 无权修改 control；它由 command 确定性计算。
+AI 无权修改 control；command 确定性计算。
 
 | Command | Transition |
 | --- | --- |
@@ -372,17 +528,7 @@ AI 无权修改 control；它由 command 确定性计算。
 | `settle` | `awaiting-settle → idle`，原 day 成为 lastSettledDay |
 | `abandon` | `planned/awaiting-settle → idle`，lastSettledDay 不变 |
 
-## 11. Dayloom Patch
-
-Patch 同时记录：
-
-```text
-文件树变化
-+
-control 变化
-```
-
-核心结构：
+## 14. Dayloom Patch
 
 ```ts
 interface DayloomPatchV1 {
@@ -402,23 +548,15 @@ interface DayloomPatchV1 {
 }
 ```
 
-文件变化：
+Patch 同时记录 file delta + control delta。
+
+Patch 不保存 textual diff、重复 bytes 或 target commit ID。
+
+Canonical Patch hash：
 
 ```text
-修改： A    → B
-新增： null → B
-删除： A    → null
+patchHash = sha256:<64 lowercase hex>
 ```
-
-Patch 不保存 textual diff hunk，不重复保存文件 bytes，不保存 target commit ID。
-
-Patch 使用 canonical JSON，`changes` 按 path 稳定排序：
-
-```text
-patchHash = sha256(canonical Patch bytes)
-```
-
-### 11.1 no-op
 
 合法 mutation 必须满足：
 
@@ -428,11 +566,9 @@ OR
 control.before != control.after
 ```
 
-所以 `settle` 可以没有文件变化，只产生合法 control transition。
+因此 control-only settle 合法。
 
-## 12. Patch / Operation / Commit 关系
-
-关系保持单向：
+## 15. Patch / Operation / Commit 闭环
 
 ```text
 current
@@ -445,26 +581,7 @@ commit
                   └──→ Draft snapshot (optional)
 ```
 
-职责：
-
-```text
-blob      = 文件内容
-tree      = 完整文件集合
-patch     = 相对父版本改了什么
-operation = 这次是什么 command
-commit    = 发布后的完整版本
-current   = 当前可见版本
-```
-
-Operation 是 immutable command record，不是 publication 状态机。
-
-Patch 通过 hash 被 Operation 锚定；Draft snapshot 通过 `draftSnapshotHash` 被 Patch 锚定。
-
-## 13. Patch 闭环验证
-
-`verify` 必须能从 parent + Patch 重新证明每一个 child commit。
-
-非 init：
+`verify` 必须从 parent + Patch 重新证明 child：
 
 ```text
 patch.baseCommitId == parent.id
@@ -473,31 +590,21 @@ patch.control.after == commit.control
 operation.command == patch.command
 hash(patch) == operation.patchHash
 apply(parent.tree, patch.changes) == commit.rootTreeHash
+commit.revision == parent.revision + 1
 ```
 
-同时验证：
+同时验证 path policy、blob hash、Draft snapshot、Manifest/Current relation 和 lifecycle transition。
 
-```text
-path policy
-blob existence/hash
-Draft snapshot hash（如有）
-command control transition
-revision / parent chain
-```
-
-init：
+init 还验证：
 
 ```text
 parent = null
 baseCommitId = null
 control.before = null
-command = init
-apply(empty tree, patch.changes) == root commit tree
+manifest.title == validated state/world.yaml.title
 ```
 
-因此 Patch 不是单纯 audit 文本，而是可程序验证的版本跃迁证明。
-
-## 14. Pinned base 与并发
+## 16. Pinned base 与并发
 
 除 init 外，命令开始时固定：
 
@@ -512,15 +619,11 @@ control
 
 AI 工作期间不持 publish lock。
 
-publish 时进入锁后再次验证 current 仍是 pinned base；不一致：
+publish 时进入锁后再次验证 current 仍是 pinned base；不一致返回 `WORLD_CONFLICT`。
 
-```text
-WORLD_CONFLICT
-```
+不 merge，不 fuzzy apply，不 rebase，不自动重跑 AI。
 
-不自动 merge，不 fuzzy apply，不 rebase，不自动重跑 AI。
-
-## 15. Publication
+## 17. Publication
 
 统一 publisher：
 
@@ -550,64 +653,23 @@ install manifest on init
 atomic current.json switch
 ```
 
-`current.json` 切换前发生故障：Published World 不变。
+`current.json` 永远是最后 visibility step。
 
-非 init 允许留下不可达 immutable orphan artifacts；它们没有 authority，不需要 publication recovery state machine。
+current 切换前失败：Published World 不变；非 init 可留下无 authority 的 immutable orphan artifacts。
 
-current 成功切换后，该 mutation 已发布。之后临时目录 cleanup 失败不能回滚 commit。
+current 成功切换后 mutation 已发布，cleanup 失败不能回滚 commit。
 
-## 16. 归档与备份
+## 18. `--check` / `--dry-run`
 
-长期保留：
+`--check` 仅 Draft-driven command：读 World、check availability、snapshot/lint Draft；不调用 AI、不要求 LLM、不生成 Patch。
 
-```text
-commit / tree / blobs
-operation
-Patch
-Draft snapshot（Draft-driven only）
-```
+`--dry-run` 执行完整 pipeline 到 Patch validation，并最终检查 base 未过时，但不 publish。
 
-Workspace 不归档。
+`init --dry-run` 不生成正式 worldId/Manifest，只返回 validated title + Patch preview。
 
-Archive 不得删除任何仍被 reachable commit / Patch 引用的 blob。
+Draft-driven dry-run 需要 LLM；`settle / abandon --dry-run` 不需要。
 
-Patch 的 before / after blob hashes 因而保留精确历史数据。
-
-v1 明确：
-
-```text
-没有 dayloom revert
-没有公开 revert API
-没有 inverse-patch apply 接口
-```
-
-是否以后提供恢复功能不影响当前 Patch 数据模型。
-
-## 17. `--check` / `--dry-run`
-
-### `--check`
-
-仅 Draft-driven command：
-
-```text
-read World
-check availability
-snapshot Draft
-Draft lint
-basic input validation
-```
-
-不调用 AI，不要求 LLM config，不生成 Patch。
-
-### `--dry-run`
-
-执行完整 mutation pipeline 到 Patch validation，最后再检查 base 未过时，但不 publish。
-
-Draft-driven dry-run 需要 LLM。
-
-`settle / abandon --dry-run` 不需要 LLM。
-
-## 18. 外部 AI 配置
+## 19. 外部 AI 配置
 
 唯一 CLI 配置入口：
 
@@ -615,45 +677,15 @@ Draft-driven dry-run 需要 LLM。
 --llm-config <file>
 ```
 
-fallback：
+fallback：`DAYLOOM_LLM_CONFIG`；缺少时 `LLM_CONFIG_REQUIRED`。
 
-```text
-DAYLOOM_LLM_CONFIG
-```
+Dayloom 不自己实现 provider adapter；provider/model/API 连接交给 Promptpile caller config。
 
-缺少时：
-
-```text
-LLM_CONFIG_REQUIRED
-```
-
-Dayloom 不自己实现 OpenAI / DeepSeek / Anthropic provider adapter；provider/model/API 连接继续交给 Promptpile caller config。
-
-Caller 控制：
-
-```text
-provider
-model
-base_url
-credential source
-temperature/model params
-```
-
-Dayloom 控制：
-
-```text
-prompt
-tools
-Workspace root
-write policy
-repair policy
-validation
-publication
-```
+Dayloom 控制 prompt、tools、Workspace root/write policy、repair、validation、publication。
 
 不增加 `--provider / --model / --api-key / --base-url`。
 
-## 19. 机器输出
+## 20. 机器输出
 
 所有命令支持 `--json`。
 
@@ -680,25 +712,13 @@ publication
 }
 ```
 
-`--json` stdout 只输出一个最终 JSON object。stderr 只用于日志 / warning。
+`--json` stdout 只输出一个最终 JSON object。新 TUI 依赖 `error.code` 和稳定 result 字段，不解析 message 或 stderr。
 
-新 TUI 依赖 `error.code` 和稳定 result 字段，不解析 message 或 stderr。
+## 21. `status` 与 `verify`
 
-## 20. `status` 与 `verify`
+`status` 返回 World status、revision、commitId、phase、day、lastSettledDay、availableCommands。
 
-`status` 返回：
-
-```text
-World status
-revision
-commitId
-phase
-day
-lastSettledDay
-availableCommands
-```
-
-`verify` 从 current commit 沿 parent history 验证完整闭环：
+`verify` 从 current 沿 parent history 验证：
 
 ```text
 manifest/current
@@ -706,18 +726,20 @@ commit/tree/blob
 operation/patch
 Patch tree transition
 Patch control transition
+command write policy
 Draft snapshot exact bytes
 revision/parent chain
 ```
 
-只验证从 current 可达的 Published history；不可达 orphan artifacts 不影响 World validity。
+只验证从 current 可达的 Published history；orphan artifacts 不影响 World validity。
 
-## 21. 完成标准
+## 22. 完成标准
 
-新架构只有在以下两个方向同时成立时才算完成：
+新架构只有在以下方向同时成立时才算完成：
 
 ```text
 Draft
+→ exact snapshot
 → Workspace
 → Validate / Repair
 → Patch
@@ -735,8 +757,18 @@ Commit
 → 重新证明当前 Commit tree/control
 ```
 
+以及 init：
+
+```text
+validated state/world.yaml.title
+→ program-generated Manifest
+→ init Commit/Patch
+→ current
+→ verify
+```
+
 最终不变量：
 
-> 每一次 Published World 变化都能被 Patch 精确解释；每一个 reachable commit 都能从父版本和 Patch 重新证明；AI 永远不拥有 Archive authority。
+> 每一次 Published World 变化都能被 Patch 精确解释；每一个 reachable commit 都能从父版本和 Patch 重新证明；每一份 Draft-driven mutation 都能追溯 exact Draft bytes；AI 永远不拥有 Archive authority。
 
-具体 schema、测试门槛和实施顺序以 `packages/cli/IMPLEMENTATION_DRAFT.md` 为实现依据。
+具体 schema、正则、测试门槛和实施顺序以 `packages/cli/IMPLEMENTATION_DRAFT.md` 为最终实现依据。
