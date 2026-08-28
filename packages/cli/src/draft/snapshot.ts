@@ -42,7 +42,7 @@ export async function captureDraftDirectoryV1(input: string): Promise<CapturedDr
   const visit = async (directory: string, prefix: string): Promise<void> => {
     let entries;
     try { entries = await readdir(directory, { withFileTypes: true }); }
-    catch (error) { throw cliErrorV1('DRAFT_INVALID', `Draft directory is unreadable: ${input}.`, undefined); }
+    catch { throw cliErrorV1('DRAFT_INVALID', `Draft directory is unreadable: ${input}.`); }
     for (const entry of entries) {
       const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
       const target = path.join(directory, entry.name);
@@ -60,7 +60,7 @@ export async function captureDraftDirectoryV1(input: string): Promise<CapturedDr
     }
   };
   await visit(root, '');
-  discovered.sort((a, b) => a.relative.localeCompare(b.relative, 'en'));
+  discovered.sort((a, b) => a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0);
   if (discovered.length === 0) throw cliErrorV1('DRAFT_INVALID', 'Draft directory must contain at least one regular file.');
 
   const files = new Map<string, Uint8Array>();
