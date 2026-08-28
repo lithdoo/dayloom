@@ -930,6 +930,8 @@ custom/**
 
 新增/删除 entity 时 index 和实体目录必须由 full World validator 保证一致。
 
+Workspace AI tools 只给 `revise` 暴露受同一 command/path policy 约束的 `delete_file`；删除文件后可向上清理空的 entity/custom 子目录，但不得删除顶层 World document root。`init`、`plan`、`play` 不开放删除工具，也不开放 move、delete-directory 或任意 edit 工具。
+
 ### 11.6 `settle`
 
 `settle` 不使用 AI，只有 deterministic settlement builder 能产生 changes。
@@ -1129,7 +1131,7 @@ validate Workspace + target control
 Repair 必须：
 
 - 固定最大次数；
-- diagnostics signature 相同时提前停止；
+- diagnostics signature 与 Workspace hash 都相同时提前停止；若 diagnostics 相同但 Workspace 仍在变化，则允许在固定最大次数内渐进修复；
 - 始终编辑同一个 invocation-local Workspace；
 - 不能扩大 write scope；
 - 不能修改 Draft snapshot。
@@ -1920,7 +1922,7 @@ plan
 17. file delta + control delta 同时为空时拒绝 publish。
 18. full World validator 是发布硬门槛。
 19. repair 最大轮数严格有界。
-20. diagnostics 不变时 repair 提前停止。
+20. diagnostics 与 Workspace hash 都不变时 repair 提前停止；Workspace 持续变化时允许有界渐进修复。
 21. publish lock 内 base 改变返回 `WORLD_CONFLICT`。
 22. current 永远是最后 visibility step。
 23. current 切换前故障不改变 Published World。

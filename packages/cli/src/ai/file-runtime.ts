@@ -30,6 +30,7 @@ export const DRAFT_FILE_TOOLS_V1 = Object.freeze([
 export const WORKSPACE_FILE_TOOLS_V1 = Object.freeze([
   ...DRAFT_FILE_TOOLS_V1,
   'create_directory',
+  'delete_file',
   'write_file',
 ] as const);
 const settings = Object.freeze({ startupMs: 15_000, probeMs: 3_000, probeDelayMs: 200, closeMs: 2_000, initMs: 10_000, listMs: 10_000, callMs: 20_000, execMs: 30_000, ports: 5 });
@@ -44,9 +45,13 @@ export async function startFileRuntimeV1(input: {
   targetDay: string | null;
 }): Promise<FileRuntimeV1> {
   await mkdir(input.runtimeRoot, { recursive: true });
-  const expectedTools = Object.freeze([
+  const gatewayTools = Object.freeze([
     ...DRAFT_FILE_TOOLS_V1.map((tool) => `mcp__draft__${tool}`),
-    ...WORKSPACE_FILE_TOOLS_V1.map((tool) => `mcp__workspace__${tool}`),
+    ...WORKSPACE_FILE_TOOLS_V1.filter((tool) => tool !== 'delete_file').map((tool) => `mcp__workspace__${tool}`),
+  ]);
+  const expectedTools = Object.freeze([
+    ...gatewayTools,
+    ...(input.command === 'revise' ? ['mcp__workspace__delete_file'] : []),
   ]);
   let lastError: unknown;
 
@@ -79,11 +84,11 @@ export async function startFileRuntimeV1(input: {
         failure_policy: 'fail_fast',
         retry_max_attempts: 2,
         retry_base_delay_ms: 250,
-        retry_safe_tools: expectedTools.filter((name) => !name.endsWith('__write_file')),
+        retry_safe_tools: gatewayTools.filter((name) => !name.endsWith('__write_file')),
       },
       servers: {
         draft: server(input.draftRoot, false, DRAFT_FILE_TOOLS_V1),
-        workspace: server(input.workspaceRoot, true, WORKSPACE_FILE_TOOLS_V1),
+        workspace: server(input.workspaceRoot, true, WORKSPACE_FILE_TOOLS_V1.filter((tool) => tool !== 'delete_file')),
       },
     };
     const hookConfig = {
@@ -124,7 +129,21 @@ export async function startFileRuntimeV1(input: {
           const probe = await runNodeCliV1(input.promptpileMcpBin, ['export-tools', '--base-url', baseUrl, '--token', token, '-o', candidateTools], { timeoutMs: Math.min(settings.probeMs, remaining) });
           if (probe.code === 0) {
             const names = toolNamesV1(TOML.parse(await readFile(candidateTools, 'utf8')));
-            if (!sameSetV1(names, expectedTools)) throw new Error(`Promptpile MCP exported the wrong tool set: ${names.join(', ')}.`);
+            if (!sameSetV1(names, gatewayTools)) throw new Error(`Promptpile MCP exported the wrong tool set: ${names.join(', ')}.`);
+            const document = TOML.parse(await readFile(candidateTools, 'utf8')) as TOML.JsonMap;
+            const tools = document.tools as TOML.JsonMap[];
+            if (input.command === 'revise') {
+              tools.push({
+                name: 'mcp__workspace__delete_file',
+                description: 'Delete one file during revise. Empty parent directories below a World top-level directory are pruned automatically.',
+                parameters: {
+                  type: 'object',
+                  required: ['path'],
+                  properties: { path: { type: 'string', description: 'Workspace-relative path of the file to delete.' } },
+                },
+              });
+            }
+            await writeFile(candidateTools, TOML.stringify(document), { encoding: 'utf8', mode: 0o600 });
             await rename(candidateTools, toolsFile);
             state = 'ready';
             break;

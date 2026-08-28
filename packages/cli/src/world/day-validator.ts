@@ -4,6 +4,7 @@ import YAML from 'yaml';
 import type { WorldControlV1 } from '@dayloom/archive-protocol';
 import type { ScannedWorkspaceV1 } from '../workspace/files.js';
 import { parseDomainPatchV1, type DomainPatchV1 } from './domain-patch.js';
+import { parseStableEntityIdV1 } from './entity-id.js';
 
 export interface SettlementEventV1 {
   id: string;
@@ -19,6 +20,12 @@ export interface SettlementEventV1 {
 interface DaySourceV1 {
   paths: readonly string[];
   read(documentPath: string): Promise<string>;
+}
+
+interface EntityIndexesV1 {
+  characters: ReadonlySet<string>;
+  locations: ReadonlySet<string>;
+  arcs: ReadonlySet<string>;
 }
 
 export async function validatePlanArtifactsV1(root: string, day: string): Promise<void> {
@@ -57,6 +64,7 @@ export async function readSettlementEventsV1(root: string, day: string): Promise
 }
 
 async function readSettlementEventsFromSourceV1(source: DaySourceV1, day: string): Promise<readonly SettlementEventV1[]> {
+  const entityIndexes = await readEntityIndexesV1(source);
   const index = await readYamlObjectV1(source, `days/${day}/events/index.yaml`);
   exactV1(index, ['schemaVersion', 'ids'], 'event index');
   if (index.schemaVersion !== 1 || !Array.isArray(index.ids) || index.ids.length === 0) throw new Error('Event index is invalid.');
@@ -83,8 +91,8 @@ async function readSettlementEventsFromSourceV1(source: DaySourceV1, day: string
     exactV1(event, ['schemaVersion', 'id', 'beatId', 'title', 'locationId', 'participantIds', 'status'], `event ${id}`);
     if (event.schemaVersion !== 1 || event.id !== id || event.status !== 'resolved' || !nonemptyV1(event.title)) throw new Error(`Event ${id} is invalid.`);
     if (!(event.beatId === null || nonemptyV1(event.beatId))) throw new Error(`Event ${id} beatId is invalid.`);
-    if (!(event.locationId === null || nonemptyV1(event.locationId))) throw new Error(`Event ${id} locationId is invalid.`);
-    const participantIds = stringArrayV1(event.participantIds, `Event ${id} participantIds`);
+    const locationId = event.locationId === null ? null : parseStableEntityIdV1(event.locationId, `Event ${id} locationId`);
+    const participantIds = stableEntityIdArrayV1(event.participantIds, `Event ${id} participantIds`);
 
     const result = await readYamlObjectV1(source, `${base}/result.yaml`);
     exactV1(result, ['schemaVersion', 'summary', 'learnedFacts', 'timeAdvanced', 'completedBeatIds', 'skippedBeatIds', 'endDay'], `event result ${id}`);
@@ -101,33 +109,60 @@ async function readSettlementEventsFromSourceV1(source: DaySourceV1, day: string
     const parsedEvent: SettlementEventV1 = {
       id,
       title: event.title,
-      locationId: event.locationId as string | null,
+      locationId,
       participantIds,
       summary: result.summary,
       learnedFacts: stringArrayV1(result.learnedFacts, `Event ${id} learnedFacts`),
       timeAdvanced: result.timeAdvanced as string | null,
       patches: statePatch.changes.map(parseDomainPatchV1),
     };
-    await validateEventReferencesV1(source, parsedEvent);
+    await validateEventReferencesV1(source, parsedEvent, entityIndexes);
     events.push(parsedEvent);
   }
   return Object.freeze(events);
 }
 
-async function validateEventReferencesV1(source: DaySourceV1, event: SettlementEventV1): Promise<void> {
-  for (const characterId of event.participantIds) await source.read(`characters/${characterId}/timeline.md`);
-  if (event.locationId !== null) await source.read(`locations/${event.locationId}/timeline.md`);
+async function validateEventReferencesV1(source: DaySourceV1, event: SettlementEventV1, indexes: EntityIndexesV1): Promise<void> {
+  for (const characterId of event.participantIds) {
+    if (!indexes.characters.has(characterId)) throw new Error(`Event ${event.id} references unknown character ${characterId}.`);
+    await source.read(`characters/${characterId}/timeline.md`);
+  }
+  if (event.locationId !== null) {
+    if (!indexes.locations.has(event.locationId)) throw new Error(`Event ${event.id} references unknown location ${event.locationId}.`);
+    await source.read(`locations/${event.locationId}/timeline.md`);
+  }
   for (const patch of event.patches) {
     if (patch.op === 'set-character-status' || patch.op === 'move-character') {
+      if (!indexes.characters.has(patch.characterId)) throw new Error(`Event ${event.id} patch references unknown character ${patch.characterId}.`);
       await source.read(`characters/${patch.characterId}/state.yaml`);
-      if (patch.op === 'move-character' && patch.locationId !== null) await source.read(`locations/${patch.locationId}/state.yaml`);
+      if (patch.op === 'move-character') {
+        for (const locationId of [patch.expectedLocationId, patch.locationId]) if (locationId !== null) {
+          if (!indexes.locations.has(locationId)) throw new Error(`Event ${event.id} patch references unknown location ${locationId}.`);
+          await source.read(`locations/${locationId}/state.yaml`);
+        }
+      }
     } else if (patch.op === 'set-location-status') {
+      if (!indexes.locations.has(patch.locationId)) throw new Error(`Event ${event.id} patch references unknown location ${patch.locationId}.`);
       await source.read(`locations/${patch.locationId}/state.yaml`);
     } else if (patch.op === 'set-arc-stage') {
+      if (!indexes.arcs.has(patch.arcId)) throw new Error(`Event ${event.id} patch references unknown arc ${patch.arcId}.`);
       await source.read(`arcs/${patch.arcId}/state.yaml`);
       await source.read(`arcs/${patch.arcId}/timeline.md`);
     }
   }
+}
+
+async function readEntityIndexesV1(source: DaySourceV1): Promise<EntityIndexesV1> {
+  const read = async (root: 'characters' | 'locations' | 'arcs'): Promise<ReadonlySet<string>> => {
+    const documentPath = `${root}/index.yaml`;
+    const value = await readYamlObjectV1(source, documentPath);
+    exactV1(value, ['schemaVersion', 'ids'], `${root} index`);
+    if (value.schemaVersion !== 1 || !Array.isArray(value.ids)) throw new Error(`${root} index is invalid.`);
+    const ids = value.ids.map((id, index) => parseStableEntityIdV1(id, `${documentPath}.ids[${index}]`));
+    if (new Set(ids).size !== ids.length) throw new Error(`${root} index contains duplicate IDs.`);
+    return new Set(ids);
+  };
+  return { characters: await read('characters'), locations: await read('locations'), arcs: await read('arcs') };
 }
 
 function assertEventDirectoryClosureV1(source: DaySourceV1, day: string, ids: readonly string[]): void {
@@ -179,6 +214,13 @@ async function rootSourceV1(root: string): Promise<DaySourceV1> {
 function stringArrayV1(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || value.some((item) => !nonemptyV1(item))) throw new Error(`${label} must be an array of non-empty strings.`);
   return value as string[];
+}
+
+function stableEntityIdArrayV1(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array of stable entity identifiers.`);
+  const ids = value.map((item, index) => parseStableEntityIdV1(item, `${label}[${index}]`));
+  if (new Set(ids).size !== ids.length) throw new Error(`${label} contains duplicate values.`);
+  return ids;
 }
 
 function exactV1(value: Record<string, unknown>, keys: readonly string[], label: string): void {

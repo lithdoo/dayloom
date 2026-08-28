@@ -2,6 +2,7 @@ import YAML from 'yaml';
 import type { ArchiveMediaTypeV1 } from '@dayloom/archive-protocol';
 import type { ScannedWorkspaceV1 } from '../workspace/files.js';
 import { decodeWorldTextV1 } from './profile.js';
+import { parseStableEntityIdV1 } from './entity-id.js';
 
 export interface ValidatedWorldProfileV1 {
   title: string;
@@ -96,7 +97,7 @@ function readIndexV1(read: WorkspaceReaderV1, documentPath: string, schema: stri
   const ids = stringArrayV1(value.ids, `${schema}.ids`);
   const seen = new Set<string>();
   for (const id of ids) {
-    stableEntityIdV1(id, `${schema}.ids`);
+    parseStableEntityIdV1(id, `${schema}.ids`);
     if (seen.has(id)) throw new Error(`${schema}.ids contains a duplicate: ${id}.`);
     seen.add(id);
   }
@@ -118,7 +119,7 @@ function validateCharacterV1(read: WorkspaceReaderV1, id: string, characters: Re
   schemaV1(state.schemaVersion, stateSchema);
   stringV1(state.status, `${stateSchema}.status`);
   stringArrayV1(state.tags, `${stateSchema}.tags`);
-  const locationId = state.locationId === null ? null : stableEntityIdV1(state.locationId, `${stateSchema}.locationId`);
+  const locationId = state.locationId === null ? null : parseStableEntityIdV1(state.locationId, `${stateSchema}.locationId`);
   if (locationId !== null && !locations.has(locationId)) throw new Error(`${stateSchema} references an unknown location.`);
 
   const relationSchema = `CharacterRelationshipsV1(${id})`;
@@ -130,7 +131,7 @@ function validateCharacterV1(read: WorkspaceReaderV1, id: string, characters: Re
   relationDoc.relationships.forEach((raw, index) => {
     if (!recordV1(raw)) throw new Error(`${relationSchema}.relationships[${index}] is invalid.`);
     exactV1(raw, ['characterId', 'relation', 'status'], `${relationSchema}.relationships[${index}]`);
-    const target = stableEntityIdV1(raw.characterId, `${relationSchema}.relationships[${index}].characterId`);
+    const target = parseStableEntityIdV1(raw.characterId, `${relationSchema}.relationships[${index}].characterId`);
     if (!characters.has(target) || target === id || targets.has(target)) throw new Error(`${relationSchema} contains an invalid character reference.`);
     targets.add(target);
     stringV1(raw.relation, `${relationSchema}.relationships[${index}].relation`);
@@ -156,7 +157,7 @@ function validateLocationV1(read: WorkspaceReaderV1, id: string): void {
   triggers.triggers.forEach((raw, index) => {
     if (!recordV1(raw)) throw new Error(`${triggerSchema}.triggers[${index}] is invalid.`);
     exactV1(raw, ['id', 'condition', 'effect'], `${triggerSchema}.triggers[${index}]`);
-    const triggerId = stableEntityIdV1(raw.id, `${triggerSchema}.triggers[${index}].id`);
+    const triggerId = parseStableEntityIdV1(raw.id, `${triggerSchema}.triggers[${index}].id`);
     if (ids.has(triggerId)) throw new Error(`${triggerSchema} contains duplicate trigger id ${triggerId}.`);
     ids.add(triggerId);
     stringV1(raw.condition, `${triggerSchema}.triggers[${index}].condition`);
@@ -217,11 +218,6 @@ function stringArrayV1(value: unknown, schema: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim() === '')) throw new Error(`${schema} must be an array of non-empty strings.`);
   if (new Set(value).size !== value.length) throw new Error(`${schema} contains duplicate values.`);
   return value as string[];
-}
-
-function stableEntityIdV1(value: unknown, schema: string): string {
-  if (typeof value !== 'string' || !/^[a-z][a-z0-9-]*$/.test(value)) throw new Error(`${schema} must be a stable entity identifier.`);
-  return value;
 }
 
 const recordV1 = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);

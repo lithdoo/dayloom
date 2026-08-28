@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   readCallerLlmConfigV1,
   resolveLlmConfigPathV1,
@@ -106,13 +108,16 @@ test('filesystem runtime exposes tree, search, ranged read, guarded directory cr
     'search_files_content',
     'read_file_lines',
   ]);
-  assert.deepEqual(WORKSPACE_FILE_TOOLS_V1, [...DRAFT_FILE_TOOLS_V1, 'create_directory', 'write_file']);
+  assert.deepEqual(WORKSPACE_FILE_TOOLS_V1, [...DRAFT_FILE_TOOLS_V1, 'create_directory', 'delete_file', 'write_file']);
 
   const root = await tempRoot();
   const runtimeRoot = path.join(root, 'runtime');
   const draftRoot = path.join(root, 'draft');
   const workspaceRoot = path.join(root, 'workspace');
   await Promise.all([mkdir(draftRoot), mkdir(workspaceRoot)]);
+  const entityRoot = path.join(workspaceRoot, 'characters', 'alice');
+  await mkdir(entityRoot, { recursive: true });
+  await writeFile(path.join(entityRoot, 'profile.md'), '# Alice\n', 'utf8');
   const boundaries = await resolvePromptpileBoundariesV1();
   let runtime;
   try {
@@ -131,7 +136,30 @@ test('filesystem runtime exposes tree, search, ranged read, guarded directory cr
       ...DRAFT_FILE_TOOLS_V1.map((tool) => `mcp__draft__${tool}`),
       ...WORKSPACE_FILE_TOOLS_V1.map((tool) => `mcp__workspace__${tool}`),
     ].sort());
-    assert.equal(names.some((name) => /edit_file|move_file|delete/.test(name)), false);
+    assert.equal(names.some((name) => /edit_file|move_file|delete_directory/.test(name)), false);
+
+    const outputRoot = path.join(root, 'output');
+    await mkdir(outputRoot);
+    const callsPath = path.join(outputRoot, '[1]assistant.calls.jsonl');
+    await writeFile(callsPath, `${JSON.stringify({
+      id: 'delete-1',
+      type: 'function',
+      function: { name: 'mcp__workspace__delete_file', arguments: JSON.stringify({ path: 'characters/alice/profile.md' }) },
+    })}\n`, 'utf8');
+    const hook = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/ai/file-hook.js', import.meta.url)), path.join(runtimeRoot, 'hook.json')], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PROMPTPILE_HAS_TOOL_CALLS: '1',
+        PROMPTPILE_ASSISTANT_CALL_FILE: callsPath,
+        PROMPTPILE_OUTPUT_DIRECTORY: outputRoot,
+      },
+    });
+    assert.equal(hook.status, 0, hook.stderr);
+    await assert.rejects(() => readFile(path.join(entityRoot, 'profile.md')));
+    await assert.rejects(() => stat(entityRoot));
+    const result = JSON.parse(await readFile(path.join(outputRoot, '[1]assistant.result.jsonl'), 'utf8'));
+    assert.match(result.content, /DAYLOOM_DELETE_FILE_OK/);
   } finally {
     await runtime?.close();
     await rm(root, { recursive: true, force: true });
@@ -149,6 +177,7 @@ test('workspace mutation guard permits scoped nesting and rejects program-owned 
   const revise = { workspaceRoot: root, command: 'revise', targetDay: null };
   assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'custom/story'), revise));
   assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'custom/story/foo.md'), revise));
+  assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__delete_file', 'characters/alice/profile.md'), revise));
   assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'profile/dayloom.json'), revise), /cannot mutate/);
   assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', '../outside.md'), revise), /outside/);
   assert.throws(() => assertWorkspaceMutationPolicyV1(
@@ -159,10 +188,41 @@ test('workspace mutation guard permits scoped nesting and rejects program-owned 
     call('mcp__workspace__write_file', 'profile/dayloom.json'),
     { workspaceRoot: root, command: 'init', targetDay: null },
   ), /cannot mutate/);
+  assert.throws(() => assertWorkspaceMutationPolicyV1(
+    call('mcp__workspace__delete_file', 'characters/alice/profile.md'),
+    { workspaceRoot: root, command: 'init', targetDay: null },
+  ), /cannot mutate/);
   const play = { workspaceRoot: root, command: 'play', targetDay: 'day2' };
   assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'days/day2/events/event2'), play));
   assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'days/day2/events/event2/event.yaml'), play));
   assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'days/day2/events/bonus'), play), /cannot mutate/);
+});
+
+test('delete_file is not exposed outside revise', async () => {
+  const root = await tempRoot();
+  const runtimeRoot = path.join(root, 'runtime');
+  const draftRoot = path.join(root, 'draft');
+  const workspaceRoot = path.join(root, 'workspace');
+  await Promise.all([mkdir(draftRoot), mkdir(workspaceRoot)]);
+  const boundaries = await resolvePromptpileBoundariesV1();
+  let runtime;
+  try {
+    runtime = await startFileRuntimeV1({
+      runtimeRoot,
+      promptpileMcpBin: boundaries.promptpileMcpBin,
+      filesystemMcp: boundaries.filesystemMcp,
+      draftRoot,
+      workspaceRoot,
+      command: 'init',
+      targetDay: null,
+    });
+    assert.equal(runtime.binding.toolNames.includes('mcp__workspace__delete_file'), false);
+    const exported = TOML.parse(await readFile(runtime.binding.toolsFile, 'utf8'));
+    assert.equal(exported.tools.some((tool) => tool.name === 'mcp__workspace__delete_file'), false);
+  } finally {
+    await runtime?.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('three invalid React check decisions remain a hard failure', async () => {

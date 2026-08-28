@@ -27,6 +27,12 @@ export interface WorkspaceMutationPolicyV1 {
   targetDay: string | null;
 }
 
+export interface WorkspaceMutationTargetV1 {
+  absolute: string;
+  canonical: string;
+  kind: 'create_directory' | 'delete_file' | 'write_file';
+}
+
 const CALL_SUFFIX = '.calls.jsonl';
 const RESULT_SUFFIX = '.result.jsonl';
 const TRUNCATION = '\n[DAYLOOM_TOOL_RESULT_TRUNCATED]\nResult exceeded the Dayloom tool-result limit. Narrow the request.';
@@ -59,25 +65,33 @@ export function readPromptpileToolCallsV1(callsPath: string): ValidatedToolCallV
   return calls;
 }
 
+export function workspaceMutationTargetV1(call: ValidatedToolCallV1, policy: WorkspaceMutationPolicyV1): WorkspaceMutationTargetV1 | null {
+  const kind = call.name === 'mcp__workspace__create_directory' ? 'create_directory'
+    : call.name === 'mcp__workspace__delete_file' ? 'delete_file'
+      : call.name === 'mcp__workspace__write_file' ? 'write_file'
+        : null;
+  if (kind === null) return null;
+  const input: unknown = JSON.parse(call.arguments);
+  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as { path?: unknown }).path !== 'string') {
+    throw new Error('Workspace mutation ToolCall arguments are invalid.');
+  }
+  const requested = (input as { path: string }).path;
+  const absolute = path.resolve(policy.workspaceRoot, requested);
+  const relative = path.relative(policy.workspaceRoot, absolute);
+  if (relative === '' || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+    throw new Error('Workspace mutation path is outside the workspace boundary.');
+  }
+  const canonical = relative.split(path.sep).join('/');
+  const allowed = kind === 'create_directory'
+    ? isAiWorkspaceDirectoryAllowedV1(policy.command, policy.targetDay, canonical)
+    : isAiWorkspaceWritePathAllowedV1(policy.command, policy.targetDay, canonical) && (kind !== 'delete_file' || policy.command === 'revise');
+  if (!allowed) throw new Error(`${policy.command} cannot mutate ${canonical}.`);
+  return Object.freeze({ absolute, canonical, kind });
+}
+
 export function assertWorkspaceMutationPolicyV1(calls: readonly ValidatedToolCallV1[], policy: WorkspaceMutationPolicyV1): void {
   for (const call of calls) {
-    const directory = call.name === 'mcp__workspace__create_directory';
-    if (!directory && call.name !== 'mcp__workspace__write_file') continue;
-    const input: unknown = JSON.parse(call.arguments);
-    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as { path?: unknown }).path !== 'string') {
-      throw new Error('Workspace mutation ToolCall arguments are invalid.');
-    }
-    const requested = (input as { path: string }).path;
-    const absolute = path.resolve(policy.workspaceRoot, requested);
-    const relative = path.relative(policy.workspaceRoot, absolute);
-    if (relative === '' || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
-      throw new Error('Workspace mutation path is outside the workspace boundary.');
-    }
-    const canonical = relative.split(path.sep).join('/');
-    const allowed = directory
-      ? isAiWorkspaceDirectoryAllowedV1(policy.command, policy.targetDay, canonical)
-      : isAiWorkspaceWritePathAllowedV1(policy.command, policy.targetDay, canonical);
-    if (!allowed) throw new Error(`${policy.command} cannot mutate ${canonical}.`);
+    workspaceMutationTargetV1(call, policy);
   }
 }
 
@@ -127,6 +141,15 @@ function writeRowsAtomicV1(target: string, rows: readonly Record<string, unknown
 
 export function writeSyntheticToolResultsV1(calls: readonly ValidatedToolCallV1[], resultPath: string, content: string, policy: ToolArtifactPolicyV1): void {
   writeRowsAtomicV1(resultPath, calls.map((call) => boundedRowV1({ tool_call_id: call.id, name: call.name, content }, policy.maxToolResultLineBytes)));
+}
+
+export function writeToolResultsV1(calls: readonly ValidatedToolCallV1[], resultPath: string, contents: readonly string[], policy: ToolArtifactPolicyV1): void {
+  if (contents.length !== calls.length) throw new Error('ToolResult content vector is incomplete.');
+  writeRowsAtomicV1(resultPath, calls.map((call, index) => boundedRowV1({
+    tool_call_id: call.id,
+    name: call.name,
+    content: contents[index]!,
+  }, policy.maxToolResultLineBytes)));
 }
 
 export function sanitizeToolResultsV1(calls: readonly ValidatedToolCallV1[], resultPath: string, policy: ToolArtifactPolicyV1): void {

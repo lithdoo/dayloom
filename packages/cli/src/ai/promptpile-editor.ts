@@ -117,6 +117,7 @@ Hard rules:
 - Use search_files for path/name discovery and search_files_content for content discovery before reading files one by one.
 - Use read_file_lines for focused reads of search results; use directory_tree when structural context is needed.
 - Use mcp__workspace__create_directory when an allowed entity, custom, or event parent directory does not exist.
+- Only revise may use mcp__workspace__delete_file. When deleting an entity, delete every file in its entity directory and remove its ID and references from the indexes/documents in the same pass.
 - Use mcp__workspace__write_file for World changes.
 - Preserve existing information unless the Draft asks to change it.
 - Do not change command lifecycle/control; the program owns target control.
@@ -166,7 +167,7 @@ For each events/<eventId>/ create non-empty scene.md, dialogue.md, user-action.m
 - state-patch.yaml fields: schemaVersion: 1 and changes: []; use an empty changes array unless a supported deterministic state change is clearly required
 
 play-index.json and events/index.yaml must list exactly the event directories you create.`;
-  return `REVISE scope: edit long-term canon/state/entity/memory/story-seed/custom World documents. Do not edit profile/**, days/**, or state/calendar.yaml.`;
+  return `REVISE scope: add, modify, or delete long-term canon/state/entity/memory/story-seed/custom World documents. Do not edit profile/**, days/**, or state/calendar.yaml. Entity deletion must remove every file under the entity ID and update its index plus all references so the complete World remains closed.`;
 }
 
 function observePromptV1(): string {

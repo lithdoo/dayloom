@@ -23,8 +23,20 @@ import {
   scanWorkspaceV1,
 } from '../dist/index.js';
 import { validWorldFiles } from './support/valid-world.mjs';
+import { parseDomainPatchV1 } from '../dist/world/domain-patch.js';
 
 const encoder = new TextEncoder();
+
+test('DomainPatch entity references require stable IDs', () => {
+  assert.throws(
+    () => parseDomainPatchV1({ op: 'set-character-status', characterId: '../alice', expected: 'idle', value: 'ready' }),
+    /stable entity identifier/,
+  );
+  assert.throws(
+    () => parseDomainPatchV1({ op: 'move-character', characterId: 'alice', expectedLocationId: null, locationId: 'town\\square' }),
+    /stable entity identifier/,
+  );
+});
 
 function draftSnapshot(name, text) {
   const bytes = encoder.encode(text);
@@ -222,5 +234,37 @@ test('publisher independently rejects an invalid awaiting-settle day', async () 
     assert.equal((await readPublishedHeadV1(root)).commit.id, planned.commit.id);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('play rejects path-like and unknown stable entity references before publication', async () => {
+  for (const [participantId, expected] of [['../alice', /stable entity identifier/], ['alice', /unknown character alice/]]) {
+    const root = await initSettlementWorld();
+    try {
+      await publishDraftWorkspaceMutation(root, 'plan', {
+        'days/day1/plan.json': '{"version":1,"intent":"validate references"}\n',
+        'days/day1/timeline.md': '# Timeline\n',
+        'days/day1/dialogue/planning.md': '# Planning\n',
+        'days/day1/events/index.yaml': 'schemaVersion: 1\nids: []\n',
+      }, 'plan.md');
+      const planned = await readPublishedHeadV1(root);
+      await assert.rejects(
+        () => publishDraftWorkspaceMutation(root, 'play', {
+          'days/day1/play.json': '{"version":1}\n',
+          'days/day1/play-index.json': '{"version":1,"eventIds":["event1"]}\n',
+          'days/day1/events/index.yaml': 'schemaVersion: 1\nids:\n  - event1\n',
+          'days/day1/events/event1/scene.md': '# Scene\n',
+          'days/day1/events/event1/dialogue.md': '# Dialogue\n',
+          'days/day1/events/event1/user-action.md': 'Continue.\n',
+          'days/day1/events/event1/event.yaml': `schemaVersion: 1\nid: event1\nbeatId: null\ntitle: Invalid Reference\nlocationId: null\nparticipantIds:\n  - ${participantId}\nstatus: resolved\n`,
+          'days/day1/events/event1/result.yaml': 'schemaVersion: 1\nsummary: Nothing publishes.\nlearnedFacts: []\ntimeAdvanced: null\ncompletedBeatIds: []\nskippedBeatIds: []\nendDay: true\n',
+          'days/day1/events/event1/state-patch.yaml': 'schemaVersion: 1\nchanges: []\n',
+        }, 'play.md'),
+        (error) => error?.code === 'VALIDATION_FAILED' && expected.test(error.message),
+      );
+      assert.equal((await readPublishedHeadV1(root)).commit.id, planned.commit.id);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });

@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCliV1 } from './process.js';
@@ -9,7 +9,9 @@ import {
   readCompleteToolResultsV1,
   readPromptpileToolCallsV1,
   sanitizeToolResultsV1,
+  workspaceMutationTargetV1,
   writeSyntheticToolResultsV1,
+  writeToolResultsV1,
   type ToolArtifactPolicyV1,
 } from './tool-artifacts.js';
 
@@ -71,6 +73,29 @@ export async function runFileHookV1(configPath: string): Promise<void> {
   }
   catch { writeSyntheticToolResultsV1(calls, resultPath, TOOL_ERROR, config); return; }
 
+  const deleteCalls = calls.filter((call) => call.name === 'mcp__workspace__delete_file');
+  if (deleteCalls.length > 0) {
+    if (deleteCalls.length !== calls.length) {
+      writeSyntheticToolResultsV1(calls, resultPath, `${TOOL_ERROR}\nSubmit delete_file calls in a separate tool batch.`, config);
+      return;
+    }
+    const contents = calls.map((call) => {
+      try {
+        const target = workspaceMutationTargetV1(call, config);
+        if (!target || target.kind !== 'delete_file') throw new Error('Invalid delete target.');
+        const entry = lstatSync(target.absolute);
+        if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('delete_file only accepts a regular file.');
+        unlinkSync(target.absolute);
+        pruneEmptyParentsV1(path.dirname(target.absolute), config.workspaceRoot);
+        return `[DAYLOOM_DELETE_FILE_OK]\nDeleted ${target.canonical}.`;
+      } catch (error) {
+        return `${TOOL_ERROR}\n${error instanceof Error ? error.message : 'delete_file failed.'}`;
+      }
+    });
+    writeToolResultsV1(calls, resultPath, contents, config);
+    return;
+  }
+
   let complete = false;
   try {
     const result = await runNodeCliV1(config.promptpileMcpBin, [
@@ -88,6 +113,16 @@ export async function runFileHookV1(configPath: string): Promise<void> {
     }
   } catch { /* converted to explicit tool-result evidence below */ }
   if (!complete) writeSyntheticToolResultsV1(calls, resultPath, TOOL_ERROR, config);
+}
+
+function pruneEmptyParentsV1(start: string, workspaceRoot: string): void {
+  const root = path.resolve(workspaceRoot);
+  let current = path.resolve(start);
+  while (path.dirname(current) !== root) {
+    try { rmdirSync(current); }
+    catch { return; }
+    current = path.dirname(current);
+  }
 }
 
 const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
