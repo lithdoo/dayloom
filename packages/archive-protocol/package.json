@@ -1,26 +1,25 @@
 {
   "name": "@dayloom/archive-protocol",
   "version": "1.0.0-beta.1",
-  "description": "Pure executable definition of the Dayloom Archive V2 protocol.",
+  "description": "Pure deterministic protocol for the Dayloom Draft/Patch/Archive model.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "type": "commonjs",
+  "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" },
-    "./path": { "types": "./dist/path.d.ts", "require": "./dist/path.js", "default": "./dist/path.js" },
-    "./tree": { "types": "./dist/tree.d.ts", "require": "./dist/tree.js", "default": "./dist/tree.js" },
-    "./staging": { "types": "./dist/staging.d.ts", "require": "./dist/staging.js", "default": "./dist/staging.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "files": ["dist", "README.md", "package.json"],
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
     "build": "npm run clean && tsc",
-    "guard": "node scripts/check-architecture.mjs",
-    "test": "npm run build && npm run guard && node --test test/protocol.test.js && npm run test:pack",
-    "test:pack": "node scripts/test-pack.mjs",
+    "test": "npm run build && node --test test/v1.test.js",
     "prepack": "npm run build"
   },
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=20" },
   "license": "ISC",
   "dependencies": { "yaml": "^2.8.1" },
   "devDependencies": { "@types/node": "^25.5.2", "typescript": "~5.9.3" }
