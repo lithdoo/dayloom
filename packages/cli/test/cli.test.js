@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -26,7 +26,18 @@ import {
   hashRootTreeV1,
   parseDraftSnapshotV1,
 } from '@dayloom/archive-protocol';
-import { availableMutationCommandsV1, executeCliV1, parseArgvV1, runVerifyV1 } from '../dist/index.js';
+import {
+  availableMutationCommandsV1,
+  buildPatchFromTargetTreeV1,
+  changedAfterFilesV1,
+  executeCliV1,
+  materializeWorkspaceV1,
+  parseArgvV1,
+  publishV1,
+  readPublishedHeadV1,
+  runVerifyV1,
+  scanWorkspaceV1,
+} from '../dist/index.js';
 
 const timestamp = '2026-08-28T00:00:00.000Z';
 const encoder = new TextEncoder();
@@ -105,7 +116,7 @@ async function makePublishedWorld() {
   await writeArchiveFile(root, formatDraftSnapshotPathV1(operation.id), encodeDraftSnapshotCanonicalV1(snapshot));
   await writeArchiveFile(root, `${formatDraftRootV1(operation.id)}/files/0001/init.md`, draftBytes);
 
-  return { root, descriptorHash, worldHash };
+  return { root, worldHash };
 }
 
 test('argv grammar and availability are strict', () => {
@@ -139,6 +150,50 @@ test('status and verify close over a new Archive history', async () => {
       commitsVerified: 1,
     });
   } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('Workspace diff publishes a second commit that verifies from its Patch', async () => {
+  const fixture = await makePublishedWorld();
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-workspace-v1-'));
+  try {
+    const base = await readPublishedHeadV1(fixture.root);
+    await materializeWorkspaceV1({ worldRoot: fixture.root, tree: base.tree, workspaceRoot });
+    await mkdir(path.join(workspaceRoot, 'custom'), { recursive: true });
+    await writeFile(path.join(workspaceRoot, 'custom', 'note.md'), '# Note\n');
+    const workspace = await scanWorkspaceV1(workspaceRoot);
+
+    const draftBytes = encoder.encode('# Revise Draft\n');
+    const snapshot = parseDraftSnapshotV1({
+      schemaVersion: 1,
+      mode: 'files',
+      entries: [{ order: 1, path: 'files/0001/revise.md', bytes: draftBytes.byteLength, sha256: hashBytesV1(draftBytes) }],
+    });
+    const patch = buildPatchFromTargetTreeV1({
+      command: 'revise',
+      baseCommitId: base.commit.id,
+      baseTree: base.tree,
+      targetTree: workspace.tree,
+      draftSnapshotHash: hashDraftSnapshotV1(snapshot),
+      beforeControl: base.commit.control,
+      afterControl: base.commit.control,
+    });
+    const result = await publishV1({
+      worldRoot: fixture.root,
+      base,
+      patch,
+      targetTree: workspace.tree,
+      afterFiles: changedAfterFilesV1(patch, workspace),
+      draftSnapshot: { snapshot, files: new Map([['files/0001/revise.md', draftBytes]]) },
+    });
+    assert.equal(result.revision, 2);
+    assert.equal(result.changedPaths, 1);
+    const verified = await runVerifyV1(fixture.root);
+    assert.equal(verified.revision, 2);
+    assert.equal(verified.commitsVerified, 2);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
