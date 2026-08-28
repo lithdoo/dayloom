@@ -7,6 +7,7 @@ import { runDraftCheckV1 } from '../commands/check.js';
 import { runSettleV1 } from '../commands/settle.js';
 import { runStatusV1 } from '../commands/status.js';
 import { runVerifyV1 } from '../commands/verify.js';
+import { runDraftMutationWithEditorV1, type DraftWorkspaceEditorV1 } from '../draft/mutate.js';
 import { classifyWorldV1 } from '../world/read.js';
 
 export interface ExecutedCliV1 {
@@ -14,7 +15,11 @@ export interface ExecutedCliV1 {
   result: unknown;
 }
 
-export async function executeCliV1(argv: readonly string[]): Promise<ExecutedCliV1> {
+export interface CliDependenciesV1 {
+  draftEditor?: DraftWorkspaceEditorV1;
+}
+
+export async function executeCliV1(argv: readonly string[], dependencies: CliDependenciesV1 = {}): Promise<ExecutedCliV1> {
   const invocation = parseArgvV1(argv);
   const worldRoot = path.resolve(invocation.world);
   if (invocation.command === 'status') return { invocation, result: await runStatusV1(worldRoot) };
@@ -40,6 +45,21 @@ export async function executeCliV1(argv: readonly string[]): Promise<ExecutedCli
   if (classified.status === 'published') {
     if (invocation.command === 'abandon') return { invocation, result: await runAbandonV1(worldRoot, invocation, classified.head) };
     if (invocation.command === 'settle') return { invocation, result: await runSettleV1(worldRoot, invocation, classified.head) };
+  }
+
+  if (
+    dependencies.draftEditor &&
+    (invocation.command === 'init' || invocation.command === 'plan' || invocation.command === 'play' || invocation.command === 'revise')
+  ) {
+    return {
+      invocation,
+      result: await runDraftMutationWithEditorV1({
+        worldRoot,
+        invocation,
+        head: classified.status === 'published' ? classified.head : null,
+        editor: dependencies.draftEditor,
+      }),
+    };
   }
 
   throw cliErrorV1('NOT_AVAILABLE', `${invocation.command} execution has not been landed yet.`);
