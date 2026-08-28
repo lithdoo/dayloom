@@ -1,4 +1,5 @@
 import {
+  encodeCanonicalJsonV1,
   exactKeysV1,
   integerV1,
   parseHashV1,
@@ -34,5 +35,23 @@ export function parseArchiveCommitV1(value: unknown): Readonly<ArchiveCommitV1> 
     createdAt: timestampV1(o.createdAt, 'ArchiveCommitV1.createdAt'),
     rootTreeHash: parseHashV1(o.rootTreeHash, 'ArchiveCommitV1.rootTreeHash'),
     control: parseWorldControlV1(o.control, 'ArchiveCommitV1.control'),
+  });
+}
+
+export function encodeArchiveCommitV1(value: ArchiveCommitV1): Uint8Array {
+  const commit = parseArchiveCommitV1(value);
+  return encodeCanonicalJsonV1({
+    schemaVersion: 1,
+    id: commit.id,
+    revision: commit.revision,
+    parentCommitId: commit.parentCommitId,
+    operationId: commit.operationId,
+    createdAt: commit.createdAt,
+    rootTreeHash: commit.rootTreeHash,
+    control: {
+      phase: commit.control.phase,
+      day: commit.control.day,
+      lastSettledDay: commit.control.lastSettledDay,
+    },
   });
 }
