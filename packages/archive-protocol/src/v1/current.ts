@@ -1,4 +1,5 @@
 import {
+  encodeCanonicalJsonV1,
   exactKeysV1,
   integerV1,
   parseObjectIdV1,
@@ -23,5 +24,15 @@ export function parseCurrentPointerV1(value: unknown): Readonly<CurrentPointerV1
     revision: integerV1(o.revision, 'CurrentPointerV1.revision', 1),
     commitId: parseObjectIdV1(o.commitId, 'commit', 'CurrentPointerV1.commitId'),
     updatedAt: timestampV1(o.updatedAt, 'CurrentPointerV1.updatedAt'),
+  });
+}
+
+export function encodeCurrentPointerV1(value: CurrentPointerV1): Uint8Array {
+  const current = parseCurrentPointerV1(value);
+  return encodeCanonicalJsonV1({
+    schemaVersion: 1,
+    revision: current.revision,
+    commitId: current.commitId,
+    updatedAt: current.updatedAt,
   });
 }
