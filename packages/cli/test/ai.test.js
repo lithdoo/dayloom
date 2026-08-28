@@ -66,6 +66,20 @@ test('caller cannot override Dayloom-owned React or filesystem execution fields'
   }
 });
 
+test('malformed caller TOML is rejected before any AI process starts', async () => {
+  const root = await tempRoot();
+  try {
+    const config = path.join(root, 'broken.toml');
+    await writeFile(config, '[promptpile\nllm_api = "broken"\n', 'utf8');
+    await assert.rejects(
+      () => readCallerLlmConfigV1(config),
+      (error) => error?.code === 'INVALID_ARGUMENT' && /TOML is invalid/.test(error.message),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Promptpile adapter resolves only packaged binaries', async () => {
   const boundaries = await resolvePromptpileBoundariesV1();
   assert.ok(path.isAbsolute(boundaries.promptpileBin));
