@@ -8,7 +8,8 @@ import { cliErrorV1 } from '../cli/errors.js';
 import { buildPatchFromTargetTreeV1, changedAfterFilesV1 } from '../patch/build.js';
 import { materializeWorkspaceV1, scanWorkspaceV1 } from '../workspace/files.js';
 import { parseDomainPatchV1, type DomainPatchV1 } from '../world/domain-patch.js';
-import { publishV1 } from '../world/publish.js';
+import { assertPinnedWorldUnchangedV1, publishV1, validatePreparedPublicationV1 } from '../world/publish.js';
+import { validateWorldProfileWorkspaceV1 } from '../world/domain-validator.js';
 import type { PublishedHeadV1 } from '../world/read.js';
 import { assertRequestedBaseV1 } from './base.js';
 
@@ -44,6 +45,8 @@ export async function runSettleV1(
     }
 
     const workspace = await scanWorkspaceV1(workspaceRoot);
+    try { validateWorldProfileWorkspaceV1(workspace); }
+    catch (error) { throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : 'Settlement target World is invalid.'); }
     const patch = buildPatchFromTargetTreeV1({
       command: 'settle',
       baseCommitId: head.commit.id,
@@ -54,24 +57,28 @@ export async function runSettleV1(
       afterControl: buildTargetControlV1('settle', head.commit.control),
     });
 
+    const publication = {
+      worldRoot,
+      base: head,
+      patch,
+      targetTree: workspace.tree,
+      afterFiles: changedAfterFilesV1(patch, workspace),
+    };
+    validatePreparedPublicationV1(publication);
     if (invocation.dryRun) {
+      await assertPinnedWorldUnchangedV1(worldRoot, head);
       return {
         mode: 'dry-run',
         baseCommitId: head.commit.id,
         patchHash: hashDayloomPatchV1(patch),
+        patch,
         changedPaths: patch.changes.length,
         controlChanged: true,
         eventsSettled: events.length,
       };
     }
 
-    return await publishV1({
-      worldRoot,
-      base: head,
-      patch,
-      targetTree: workspace.tree,
-      afterFiles: changedAfterFilesV1(patch, workspace),
-    });
+    return await publishV1(publication);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

@@ -5,7 +5,12 @@ import {
 } from '@dayloom/archive-protocol';
 import type { ParsedInvocationV1 } from '../cli/argv.js';
 import { buildPatchFromTargetTreeV1 } from '../patch/build.js';
-import { publishV1 } from '../world/publish.js';
+import {
+  assertPinnedWorldUnchangedV1,
+  publishV1,
+  validateArchivedTargetWorldV1,
+  validatePreparedPublicationV1,
+} from '../world/publish.js';
 import type { PublishedHeadV1 } from '../world/read.js';
 import { assertRequestedBaseV1 } from './base.js';
 
@@ -30,22 +35,27 @@ export async function runAbandonV1(
     beforeControl: head.commit.control,
     afterControl: buildTargetControlV1('abandon', head.commit.control),
   });
-
-  if (invocation.dryRun) {
-    return {
-      mode: 'dry-run',
-      baseCommitId: head.commit.id,
-      patchHash: hashDayloomPatchV1(patch),
-      changedPaths: patch.changes.length,
-      controlChanged: true,
-    };
-  }
-
-  return publishV1({
+  const publication = {
     worldRoot,
     base: head,
     patch,
     targetTree,
     afterFiles: new Map(),
-  });
+  };
+  validatePreparedPublicationV1(publication);
+
+  if (invocation.dryRun) {
+    await validateArchivedTargetWorldV1(worldRoot, targetTree);
+    await assertPinnedWorldUnchangedV1(worldRoot, head);
+    return {
+      mode: 'dry-run',
+      baseCommitId: head.commit.id,
+      patchHash: hashDayloomPatchV1(patch),
+      patch,
+      changedPaths: patch.changes.length,
+      controlChanged: true,
+    };
+  }
+
+  return publishV1(publication);
 }

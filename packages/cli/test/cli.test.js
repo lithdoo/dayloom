@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   createDayloomPatchV1,
   createRootTreeV1,
@@ -13,6 +14,7 @@ import {
   encodeDayloomPatchCanonicalV1,
   encodeDraftSnapshotCanonicalV1,
   encodeRootTreeCanonicalV1,
+  expectedMediaTypeV1,
   formatBlobPathV1,
   formatCommitPathV1,
   formatDraftRootV1,
@@ -38,6 +40,7 @@ import {
   runVerifyV1,
   scanWorkspaceV1,
 } from '../dist/index.js';
+import { validWorldFiles } from './support/valid-world.mjs';
 
 const timestamp = '2026-08-28T00:00:00.000Z';
 const encoder = new TextEncoder();
@@ -50,16 +53,16 @@ async function writeArchiveFile(root, relative, bytes) {
 
 async function makePublishedWorld() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dayloom-cli-v1-'));
-  const descriptorBytes = encoder.encode('{"schemaVersion":1,"profile":"dayloom","profileVersion":1}\n');
-  const worldBytes = encoder.encode('schemaVersion: 1\ntitle: Test World\nstatus: active\n');
+  const files = validWorldFiles('Test World');
   const draftBytes = encoder.encode('# Init Draft\n');
-  const descriptorHash = hashBytesV1(descriptorBytes);
-  const worldHash = hashBytesV1(worldBytes);
+  const worldHash = hashBytesV1(files.get('state/world.yaml'));
 
-  const tree = createRootTreeV1([
-    { path: 'profile/dayloom.json', blobHash: descriptorHash, mediaType: 'application/json', bytes: descriptorBytes.byteLength },
-    { path: 'state/world.yaml', blobHash: worldHash, mediaType: 'application/yaml', bytes: worldBytes.byteLength },
-  ]);
+  const tree = createRootTreeV1([...files].map(([documentPath, bytes]) => ({
+    path: documentPath,
+    blobHash: hashBytesV1(bytes),
+    mediaType: expectedMediaTypeV1(documentPath),
+    bytes: bytes.byteLength,
+  })));
   const snapshot = parseDraftSnapshotV1({
     schemaVersion: 1,
     mode: 'files',
@@ -70,10 +73,7 @@ async function makePublishedWorld() {
     command: 'init',
     draftSnapshotHash: hashDraftSnapshotV1(snapshot),
     control: { before: null, after: { phase: 'idle', day: null, lastSettledDay: null } },
-    changes: [
-      { path: 'profile/dayloom.json', beforeBlobHash: null, afterBlobHash: descriptorHash },
-      { path: 'state/world.yaml', beforeBlobHash: null, afterBlobHash: worldHash },
-    ],
+    changes: tree.entries.map((entry) => ({ path: entry.path, beforeBlobHash: null, afterBlobHash: entry.blobHash })),
   });
   const operation = {
     schemaVersion: 1,
@@ -107,8 +107,7 @@ async function makePublishedWorld() {
 
   await writeArchiveFile(root, 'manifest.json', encodeArchiveManifestV1(manifest));
   await writeArchiveFile(root, 'current.json', encodeCurrentPointerV1(current));
-  await writeArchiveFile(root, formatBlobPathV1(descriptorHash), descriptorBytes);
-  await writeArchiveFile(root, formatBlobPathV1(worldHash), worldBytes);
+  for (const bytes of files.values()) await writeArchiveFile(root, formatBlobPathV1(hashBytesV1(bytes)), bytes);
   await writeArchiveFile(root, formatTreePathV1(commit.rootTreeHash), encodeRootTreeCanonicalV1(tree));
   await writeArchiveFile(root, formatCommitPathV1(commit.id), encodeArchiveCommitV1(commit));
   await writeArchiveFile(root, formatOperationPathV1(operation.id), encodeArchiveOperationV1(operation));
@@ -216,6 +215,29 @@ test('status reports incomplete Archive as invalid rather than guessing', async 
     const executed = await executeCliV1(['status', root, '--json']);
     assert.equal(executed.result.status, 'invalid');
     assert.deepEqual(executed.result.availableCommands, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('packaged bin wires the production Draft editor boundary', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dayloom-bin-v1-'));
+  try {
+    const draft = path.join(root, 'init.md');
+    await writeFile(draft, '# Bin wiring\n');
+    const child = spawnSync(process.execPath, [
+      path.resolve('dist/main.js'),
+      'init', path.join(root, 'world'),
+      '--draft', draft,
+      '--llm-config', path.join(root, 'missing.toml'),
+      '--json',
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, DAYLOOM_LLM_CONFIG: '' },
+    });
+    assert.equal(child.status, 2);
+    assert.equal(JSON.parse(child.stdout).error.code, 'LLM_CONFIG_REQUIRED');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

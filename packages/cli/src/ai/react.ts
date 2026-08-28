@@ -10,6 +10,13 @@ interface ProcessEventV1 {
   error?: { code: string; message: string };
 }
 
+export class ReactProcessErrorV1 extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'ReactProcessErrorV1';
+  }
+}
+
 export async function appendPromptpileUserV1(promptpileBin: string, directory: string, content: string): Promise<void> {
   await mkdir(directory, { recursive: true });
   const result = await runNodeCliV1(promptpileBin, ['conversation', 'append-user', '-d', directory, '--quiet'], { stdin: content, timeoutMs: 30_000 });
@@ -89,7 +96,12 @@ class ProcessPileReducerV1 {
 
   finish(exitCode: number | null, stderr: string): string {
     if (this.terminal === null) throw new Error('React Process Pile ended before terminal.');
-    if (this.terminal.type === 'process.failed') throw new Error(this.terminal.error?.message ?? (stderr || 'React process failed.'));
+    if (this.terminal.type === 'process.failed') {
+      throw new ReactProcessErrorV1(
+        this.terminal.error?.code ?? 'react_process_failed',
+        this.terminal.error?.message ?? (stderr || 'React process failed.'),
+      );
+    }
     if (exitCode !== 0) throw new Error(stderr || 'React completed but the child exit code was nonzero.');
     if (this.terminal.final?.status !== 'completed' || typeof this.terminal.final.content !== 'string' || this.terminal.final.content.trim() === '') {
       throw new Error('React Final evidence is missing or empty.');

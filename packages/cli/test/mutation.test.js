@@ -14,6 +14,7 @@ import {
   encodeDayloomPatchCanonicalV1,
   encodeDraftSnapshotCanonicalV1,
   encodeRootTreeCanonicalV1,
+  expectedMediaTypeV1,
   formatBlobPathV1,
   formatCommitPathV1,
   formatDraftRootV1,
@@ -37,6 +38,7 @@ import {
   runVerifyV1,
   scanWorkspaceV1,
 } from '../dist/index.js';
+import { validWorldFiles } from './support/valid-world.mjs';
 
 const encoder = new TextEncoder();
 const timestamp = '2026-08-28T00:00:00.000Z';
@@ -49,15 +51,14 @@ async function put(root, relative, bytes) {
 
 async function makeIdleWorld() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dayloom-mutation-v1-'));
-  const descriptorBytes = encoder.encode('{"schemaVersion":1,"profile":"dayloom","profileVersion":1}\n');
-  const worldBytes = encoder.encode('schemaVersion: 1\ntitle: Mutation World\nstatus: active\n');
+  const files = validWorldFiles('Mutation World');
   const draftBytes = encoder.encode('# Init\n');
-  const descriptorHash = hashBytesV1(descriptorBytes);
-  const worldHash = hashBytesV1(worldBytes);
-  const tree = createRootTreeV1([
-    { path: 'profile/dayloom.json', blobHash: descriptorHash, mediaType: 'application/json', bytes: descriptorBytes.byteLength },
-    { path: 'state/world.yaml', blobHash: worldHash, mediaType: 'application/yaml', bytes: worldBytes.byteLength },
-  ]);
+  const tree = createRootTreeV1([...files].map(([documentPath, bytes]) => ({
+    path: documentPath,
+    blobHash: hashBytesV1(bytes),
+    mediaType: expectedMediaTypeV1(documentPath),
+    bytes: bytes.byteLength,
+  })));
   const snapshot = parseDraftSnapshotV1({
     schemaVersion: 1,
     mode: 'files',
@@ -68,10 +69,7 @@ async function makeIdleWorld() {
     command: 'init',
     draftSnapshotHash: hashDraftSnapshotV1(snapshot),
     control: { before: null, after: { phase: 'idle', day: null, lastSettledDay: null } },
-    changes: [
-      { path: 'profile/dayloom.json', beforeBlobHash: null, afterBlobHash: descriptorHash },
-      { path: 'state/world.yaml', beforeBlobHash: null, afterBlobHash: worldHash },
-    ],
+    changes: tree.entries.map((entry) => ({ path: entry.path, beforeBlobHash: null, afterBlobHash: entry.blobHash })),
   });
   const operation = { schemaVersion: 1, id: 'op_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', command: 'init', patchHash: hashDayloomPatchV1(patch), createdAt: timestamp };
   const commit = {
@@ -88,8 +86,7 @@ async function makeIdleWorld() {
   const current = { schemaVersion: 1, revision: 1, commitId: commit.id, updatedAt: timestamp };
   await put(root, 'manifest.json', encodeArchiveManifestV1(manifest));
   await put(root, 'current.json', encodeCurrentPointerV1(current));
-  await put(root, formatBlobPathV1(descriptorHash), descriptorBytes);
-  await put(root, formatBlobPathV1(worldHash), worldBytes);
+  for (const bytes of files.values()) await put(root, formatBlobPathV1(hashBytesV1(bytes)), bytes);
   await put(root, formatTreePathV1(commit.rootTreeHash), encodeRootTreeCanonicalV1(tree));
   await put(root, formatCommitPathV1(commit.id), encodeArchiveCommitV1(commit));
   await put(root, formatOperationPathV1(operation.id), encodeArchiveOperationV1(operation));
@@ -147,6 +144,7 @@ test('abandon dry-run is non-mutating and publish removes only current-day docum
     const dryRun = await executeCliV1(['abandon', root, '--base', plan.commitId, '--dry-run', '--json']);
     assert.equal(dryRun.result.mode, 'dry-run');
     assert.equal(dryRun.result.changedPaths, 1);
+    assert.equal(dryRun.result.patch.command, 'abandon');
     assert.equal((await readPublishedHeadV1(root)).commit.id, plan.commitId);
 
     const published = await executeCliV1(['abandon', root, '--base', plan.commitId, '--json']);
@@ -158,6 +156,24 @@ test('abandon dry-run is non-mutating and publish removes only current-day docum
     assert.equal(head.commit.control.lastSettledDay, null);
     assert.equal(head.tree.entries.some((entry) => entry.path.startsWith('days/day1/')), false);
     assert.equal((await runVerifyV1(root)).commitsVerified, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('publisher refuses abandon when the visible base graph has a missing unchanged blob', async () => {
+  const root = await makeIdleWorld();
+  try {
+    const plan = await publishPlan(root);
+    const before = await readPublishedHeadV1(root);
+    const premise = before.tree.entries.find((entry) => entry.path === 'canon/premise.md');
+    assert.ok(premise);
+    await rm(path.join(root, ...formatBlobPathV1(premise.blobHash).split('/')));
+    await assert.rejects(
+      () => executeCliV1(['abandon', root, '--base', plan.commitId]),
+      (error) => error?.code === 'WORLD_INVALID',
+    );
+    assert.equal((await readPublishedHeadV1(root)).commit.id, before.commit.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

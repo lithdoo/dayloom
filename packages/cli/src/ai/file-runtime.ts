@@ -20,8 +20,17 @@ export interface FileRuntimeV1 {
   close(): Promise<void>;
 }
 
-const DRAFT_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'read_file_lines'] as const);
-const WORKSPACE_TOOLS = Object.freeze(['list_directory', 'directory_tree', 'read_file_lines', 'write_file'] as const);
+export const DRAFT_FILE_TOOLS_V1 = Object.freeze([
+  'list_directory',
+  'directory_tree',
+  'search_files',
+  'search_files_content',
+  'read_file_lines',
+] as const);
+export const WORKSPACE_FILE_TOOLS_V1 = Object.freeze([
+  ...DRAFT_FILE_TOOLS_V1,
+  'write_file',
+] as const);
 const settings = Object.freeze({ startupMs: 15_000, probeMs: 3_000, probeDelayMs: 200, closeMs: 2_000, initMs: 10_000, listMs: 10_000, callMs: 20_000, execMs: 30_000, ports: 5 });
 
 export async function startFileRuntimeV1(input: {
@@ -33,8 +42,8 @@ export async function startFileRuntimeV1(input: {
 }): Promise<FileRuntimeV1> {
   await mkdir(input.runtimeRoot, { recursive: true });
   const expectedTools = Object.freeze([
-    ...DRAFT_TOOLS.map((tool) => `mcp__draft__${tool}`),
-    ...WORKSPACE_TOOLS.map((tool) => `mcp__workspace__${tool}`),
+    ...DRAFT_FILE_TOOLS_V1.map((tool) => `mcp__draft__${tool}`),
+    ...WORKSPACE_FILE_TOOLS_V1.map((tool) => `mcp__workspace__${tool}`),
   ]);
   let lastError: unknown;
 
@@ -70,8 +79,8 @@ export async function startFileRuntimeV1(input: {
         retry_safe_tools: expectedTools.filter((name) => !name.endsWith('__write_file')),
       },
       servers: {
-        draft: server(input.draftRoot, false, DRAFT_TOOLS),
-        workspace: server(input.workspaceRoot, true, WORKSPACE_TOOLS),
+        draft: server(input.draftRoot, false, DRAFT_FILE_TOOLS_V1),
+        workspace: server(input.workspaceRoot, true, WORKSPACE_FILE_TOOLS_V1),
       },
     };
     const hookConfig = {

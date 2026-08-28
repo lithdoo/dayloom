@@ -37,8 +37,11 @@ import {
 } from '@dayloom/archive-protocol';
 import { cliErrorV1 } from '../cli/errors.js';
 import { classifyWorldV1, readPublishedHeadV1, resolveArchivePathV1, type PublishedHeadV1 } from './read.js';
-import { validateHeadIdentityDocumentsV1 } from './profile.js';
+import { validateHeadIdentityDocumentsV1, validateWorldDocumentSyntaxV1 } from './profile.js';
 import { assertPatchWritePolicyV1 } from './write-policy.js';
+import { validateWorldProfileWorkspaceV1 } from './domain-validator.js';
+import { verifyPublishedArchiveV1 } from './verify.js';
+import type { ScannedWorkspaceV1, WorkspaceFileV1 } from '../workspace/files.js';
 
 export interface PublishFileV1 {
   mediaType: ArchiveMediaTypeV1;
@@ -117,7 +120,7 @@ async function assertExactFileV1(target: string, expected: Uint8Array): Promise<
   if (!Buffer.from(actual).equals(Buffer.from(expected))) throw cliErrorV1('WORLD_INVALID', `Installed Archive object does not match expected bytes: ${target}.`);
 }
 
-function validatePublishInputV1(input: PublishInputV1): void {
+export function validatePreparedPublicationV1(input: PublishInputV1): void {
   try {
     assertPatchWritePolicyV1(input.patch);
     verifyTreeTransitionV1(input.base?.tree ?? createRootTreeV1([]), input.targetTree, input.patch.changes);
@@ -152,19 +155,19 @@ function validatePublishInputV1(input: PublishInputV1): void {
   }
 }
 
-async function recheckBaseV1(input: PublishInputV1): Promise<void> {
-  if (input.base === null) {
-    const classified = await classifyWorldV1(input.worldRoot);
+export async function assertPinnedWorldUnchangedV1(worldRoot: string, base: PublishedHeadV1 | null): Promise<void> {
+  if (base === null) {
+    const classified = await classifyWorldV1(worldRoot);
     if (classified.status !== 'uninitialized') throw cliErrorV1(classified.status === 'invalid' ? 'WORLD_INVALID' : 'WORLD_CONFLICT', 'World is no longer uninitialized.');
     return;
   }
   let current: PublishedHeadV1;
-  try { current = await readPublishedHeadV1(input.worldRoot); }
+  try { current = await readPublishedHeadV1(worldRoot); }
   catch (error) { throw cliErrorV1('WORLD_INVALID', error instanceof Error ? error.message : 'Visible World is invalid.'); }
   if (
-    current.current.revision !== input.base.current.revision ||
-    current.commit.id !== input.base.commit.id ||
-    current.commit.rootTreeHash !== input.base.commit.rootTreeHash
+    current.current.revision !== base.current.revision ||
+    current.commit.id !== base.commit.id ||
+    current.commit.rootTreeHash !== base.commit.rootTreeHash
   ) throw cliErrorV1('WORLD_CONFLICT', 'Published World changed during the operation.');
 }
 
@@ -185,8 +188,30 @@ async function validateTargetIdentityV1(input: {
   });
 }
 
+export async function validateArchivedTargetWorldV1(worldRoot: string, tree: RootTreeV1): Promise<void> {
+  const files = new Map<string, WorkspaceFileV1>();
+  for (const entry of tree.entries) {
+    const bytes = await readFile(resolveArchivePathV1(worldRoot, formatBlobPathV1(entry.blobHash)));
+    if (bytes.byteLength !== entry.bytes || hashBytesV1(bytes) !== entry.blobHash) {
+      throw cliErrorV1('WORLD_INVALID', `Target blob is invalid: ${entry.path}.`);
+    }
+    validateWorldDocumentSyntaxV1(entry.path, entry.mediaType, bytes);
+    files.set(entry.path, {
+      path: entry.path,
+      mediaType: entry.mediaType,
+      bytes,
+      blobHash: entry.blobHash,
+    });
+  }
+  const workspace: ScannedWorkspaceV1 = Object.freeze({ files, tree });
+  try { validateWorldProfileWorkspaceV1(workspace); }
+  catch (error) {
+    throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : 'Target World profile is invalid.');
+  }
+}
+
 export async function publishV1(input: PublishInputV1): Promise<PublishResultV1> {
-  validatePublishInputV1(input);
+  validatePreparedPublicationV1(input);
   await mkdir(input.worldRoot, { recursive: true });
 
   const timestamp = new Date().toISOString();
@@ -230,7 +255,8 @@ export async function publishV1(input: PublishInputV1): Promise<PublishResultV1>
   let visible = false;
   let manifestInstalled = false;
   try {
-    await recheckBaseV1(input);
+    await assertPinnedWorldUnchangedV1(input.worldRoot, input.base);
+    if (input.base !== null) await verifyPublishedArchiveV1(input.worldRoot);
     for (const [documentPath, file] of input.afterFiles) {
       await installImmutableV1(resolveArchivePathV1(input.worldRoot, formatBlobPathV1(hashBytesV1(file.bytes))), file.bytes);
       const change = input.patch.changes.find((candidate) => candidate.path === documentPath);
@@ -255,7 +281,14 @@ export async function publishV1(input: PublishInputV1): Promise<PublishResultV1>
     await assertExactFileV1(resolveArchivePathV1(input.worldRoot, formatCommitPathV1(commitId)), commitBytes);
     if (input.draftSnapshot) {
       await assertExactFileV1(resolveArchivePathV1(input.worldRoot, formatDraftSnapshotPathV1(operationId)), encodeDraftSnapshotCanonicalV1(input.draftSnapshot.snapshot));
+      for (const entry of input.draftSnapshot.snapshot.entries) {
+        await assertExactFileV1(
+          resolveArchivePathV1(input.worldRoot, `${formatDraftRootV1(operationId)}/${entry.path}`),
+          input.draftSnapshot.files.get(entry.path)!,
+        );
+      }
     }
+    await validateArchivedTargetWorldV1(input.worldRoot, input.targetTree);
     await validateTargetIdentityV1({ worldRoot: input.worldRoot, manifest, tree: input.targetTree });
 
     if (input.base === null) {

@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
+import type { Ajv2020 as Ajv2020Type } from 'ajv/dist/2020.js';
+import type { ValidateFunction } from 'ajv';
 
 export interface CommandBoundaryV1 {
   command: string;
@@ -42,6 +43,7 @@ export async function resolvePromptpileBoundariesV1(): Promise<PromptpileBoundar
   const mcp = await packageRootV1('promptpile-mcp');
   const filesystem = await packageRootV1('@rustmcp/rust-mcp-filesystem');
   const processSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'process-pile-v1.schema.json'), 'utf8'));
+  const Ajv2020 = localRequire('ajv/dist/2020.js') as typeof Ajv2020Type;
   const ajv = new Ajv2020({ strict: true, strictRequired: false });
   return Object.freeze({
     promptpileBin: binV1(promptpile.metadata, 'promptpile', promptpile.root),

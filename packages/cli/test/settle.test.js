@@ -22,6 +22,7 @@ import {
   runVerifyV1,
   scanWorkspaceV1,
 } from '../dist/index.js';
+import { validWorldFiles } from './support/valid-world.mjs';
 
 const encoder = new TextEncoder();
 
@@ -46,15 +47,10 @@ function filesToTree(files) {
 
 async function initSettlementWorld() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dayloom-settle-world-'));
-  const files = new Map([
-    ['profile/dayloom.json', encoder.encode('{"schemaVersion":1,"profile":"dayloom","profileVersion":1}\n')],
-    ['state/world.yaml', encoder.encode('schemaVersion: 1\ntitle: Settlement World\nstatus: active\n')],
-    ['state/calendar.yaml', encoder.encode('schemaVersion: 1\ncurrentDay: null\nelapsed: 0h\n')],
-    ['state/variables.yaml', encoder.encode('schemaVersion: 1\nvariables:\n  mood: calm\n')],
-    ['memory/facts.yaml', encoder.encode('schemaVersion: 1\nfacts: []\n')],
-    ['memory/important-events.yaml', encoder.encode('schemaVersion: 1\nevents: []\n')],
-    ['story-seeds/active.yaml', encoder.encode('schemaVersion: 1\nseeds: []\n')],
-  ]);
+  const files = validWorldFiles('Settlement World', {
+    'state/calendar.yaml': 'schemaVersion: 1\ncurrentDay: null\nelapsed: 0h\n',
+    'state/variables.yaml': 'schemaVersion: 1\nvariables:\n  mood: calm\n',
+  });
   const tree = filesToTree(files);
   const draft = draftSnapshot('init.md', '# Init\n');
   const patch = buildPatchFromTargetTreeV1({
@@ -149,6 +145,7 @@ test('settle applies structured event patches and publishes a new verified versi
     const dryRun = await executeCliV1(['settle', root, '--base', play.commitId, '--dry-run', '--json']);
     assert.equal(dryRun.result.mode, 'dry-run');
     assert.equal(dryRun.result.eventsSettled, 1);
+    assert.equal(dryRun.result.patch.command, 'settle');
     assert.equal((await readPublishedHeadV1(root)).commit.id, play.commitId);
     assert.equal((await readWorkspaceYaml(root, 'state/variables.yaml')).variables.mood, 'calm');
 

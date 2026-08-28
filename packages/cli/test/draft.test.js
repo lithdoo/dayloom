@@ -89,3 +89,24 @@ test('init --check snapshots Draft without requiring an LLM or writing Archive a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('Draft lint rejects empty and invalid UTF-8 input during --check', async () => {
+  const root = await tempDir('dayloom-check-invalid-draft-');
+  try {
+    const world = path.join(root, 'world');
+    const empty = path.join(root, 'empty.md');
+    const invalid = path.join(root, 'invalid.md');
+    await writeFile(empty, '   \n', 'utf8');
+    await writeFile(invalid, new Uint8Array([0xff, 0xfe]));
+    await assert.rejects(
+      () => executeCliV1(['init', world, '--draft', empty, '--check']),
+      (error) => error?.code === 'DRAFT_INVALID' && /meaningful text/.test(error.message),
+    );
+    await assert.rejects(
+      () => executeCliV1(['init', world, '--draft', invalid, '--check']),
+      (error) => error?.code === 'DRAFT_INVALID' && /UTF-8/.test(error.message),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -10,6 +10,7 @@ export * from './commands/settle.js';
 export * from './commands/status.js';
 export * from './commands/verify.js';
 export * from './draft/snapshot.js';
+export * from './draft/lint.js';
 export * from './draft/mutate.js';
 export * from './ai/config.js';
 export * from './ai/binaries.js';

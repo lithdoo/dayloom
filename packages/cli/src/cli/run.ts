@@ -62,5 +62,5 @@ export async function executeCliV1(argv: readonly string[], dependencies: CliDep
     };
   }
 
-  throw cliErrorV1('NOT_AVAILABLE', `${invocation.command} execution has not been landed yet.`);
+  throw cliErrorV1('INTERNAL_ERROR', `${invocation.command} requires a configured Draft workspace editor.`);
 }

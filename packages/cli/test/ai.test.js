@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -8,6 +8,12 @@ import {
   resolveLlmConfigPathV1,
   resolvePromptpileBoundariesV1,
 } from '../dist/index.js';
+import {
+  DRAFT_FILE_TOOLS_V1,
+  WORKSPACE_FILE_TOOLS_V1,
+  startFileRuntimeV1,
+} from '../dist/ai/file-runtime.js';
+import * as TOML from '@iarna/toml';
 
 async function tempRoot() {
   return mkdtemp(path.join(os.tmpdir(), 'dayloom-ai-boundary-'));
@@ -87,4 +93,42 @@ test('Promptpile adapter resolves only packaged binaries', async () => {
   assert.ok(path.isAbsolute(boundaries.promptpileMcpBin));
   assert.ok(path.isAbsolute(boundaries.filesystemMcp.command));
   assert.equal(typeof boundaries.validateProcessPile, 'function');
+});
+
+test('filesystem runtime exposes tree, search, ranged read, and only workspace write', async () => {
+  assert.deepEqual(DRAFT_FILE_TOOLS_V1, [
+    'list_directory',
+    'directory_tree',
+    'search_files',
+    'search_files_content',
+    'read_file_lines',
+  ]);
+  assert.deepEqual(WORKSPACE_FILE_TOOLS_V1, [...DRAFT_FILE_TOOLS_V1, 'write_file']);
+
+  const root = await tempRoot();
+  const runtimeRoot = path.join(root, 'runtime');
+  const draftRoot = path.join(root, 'draft');
+  const workspaceRoot = path.join(root, 'workspace');
+  await Promise.all([mkdir(draftRoot), mkdir(workspaceRoot)]);
+  const boundaries = await resolvePromptpileBoundariesV1();
+  let runtime;
+  try {
+    runtime = await startFileRuntimeV1({
+      runtimeRoot,
+      promptpileMcpBin: boundaries.promptpileMcpBin,
+      filesystemMcp: boundaries.filesystemMcp,
+      draftRoot,
+      workspaceRoot,
+    });
+    const exported = TOML.parse(await readFile(runtime.binding.toolsFile, 'utf8'));
+    const names = exported.tools.map((tool) => tool.name).sort();
+    assert.deepEqual(names, [
+      ...DRAFT_FILE_TOOLS_V1.map((tool) => `mcp__draft__${tool}`),
+      ...WORKSPACE_FILE_TOOLS_V1.map((tool) => `mcp__workspace__${tool}`),
+    ].sort());
+    assert.equal(names.some((name) => /create_directory|edit_file|move_file|delete/.test(name)), false);
+  } finally {
+    await runtime?.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
