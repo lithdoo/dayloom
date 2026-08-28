@@ -3,6 +3,7 @@ import { parseArgvV1, type ParsedInvocationV1 } from './argv.js';
 import { availableMutationCommandsV1, type PublicMutationCommandV1 } from './availability.js';
 import { cliErrorV1 } from './errors.js';
 import { runAbandonV1 } from '../commands/abandon.js';
+import { runDraftCheckV1 } from '../commands/check.js';
 import { runSettleV1 } from '../commands/settle.js';
 import { runStatusV1 } from '../commands/status.js';
 import { runVerifyV1 } from '../commands/verify.js';
@@ -27,6 +28,13 @@ export async function executeCliV1(argv: readonly string[]): Promise<ExecutedCli
   const available = availableMutationCommandsV1(availability);
   if (!available.includes(invocation.command as PublicMutationCommandV1)) {
     throw cliErrorV1('NOT_AVAILABLE', `${invocation.command} is not available for the current World state.`, { availableCommands: available });
+  }
+
+  if (invocation.check) {
+    return {
+      invocation,
+      result: await runDraftCheckV1(invocation, classified.status === 'published' ? classified.head : null),
+    };
   }
 
   if (classified.status === 'published') {
