@@ -1,4 +1,5 @@
 import {
+  encodeCanonicalJsonV1,
   exactKeysV1,
   parseHashV1,
   parseObjectIdV1,
@@ -26,5 +27,16 @@ export function parseArchiveOperationV1(value: unknown): Readonly<ArchiveOperati
     command: parseDayloomCommandV1(o.command, 'ArchiveOperationV1.command'),
     patchHash: parseHashV1(o.patchHash, 'ArchiveOperationV1.patchHash'),
     createdAt: timestampV1(o.createdAt, 'ArchiveOperationV1.createdAt'),
+  });
+}
+
+export function encodeArchiveOperationV1(value: ArchiveOperationV1): Uint8Array {
+  const operation = parseArchiveOperationV1(value);
+  return encodeCanonicalJsonV1({
+    schemaVersion: 1,
+    id: operation.id,
+    command: operation.command,
+    patchHash: operation.patchHash,
+    createdAt: operation.createdAt,
   });
 }
