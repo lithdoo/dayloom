@@ -10,6 +10,7 @@ export * from './commands/settle.js';
 export * from './commands/status.js';
 export * from './commands/verify.js';
 export * from './draft/snapshot.js';
+export * from './draft/mutate.js';
 export * from './workspace/files.js';
 export * from './patch/build.js';
 export * from './world/domain-patch.js';
