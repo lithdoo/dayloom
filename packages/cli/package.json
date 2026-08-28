@@ -17,7 +17,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/cli.test.js test/mutation.test.js test/settle.test.js test/draft.test.js test/draft-mutation.test.js",
+    "test": "npm run build && node --test test/cli.test.js test/mutation.test.js test/settle.test.js test/draft.test.js test/draft-mutation.test.js test/ai.test.js",
     "prepack": "npm run build"
   },
   "files": [
@@ -26,6 +26,13 @@
   ],
   "dependencies": {
     "@dayloom/archive-protocol": "1.0.0-beta.1",
+    "@iarna/toml": "^2.2.5",
+    "@rustmcp/rust-mcp-filesystem": "0.4.3",
+    "ajv": "^8.17.1",
+    "promptpile": "0.1.0-beta.2",
+    "promptpile-mcp": "0.1.0-beta.3",
+    "promptpile-protocol": "0.1.0-beta.2",
+    "promptpile-react": "0.1.0-beta.5",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
