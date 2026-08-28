@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -13,6 +13,7 @@ import { CliErrorV1, cliErrorV1 } from '../cli/errors.js';
 import { buildPatchFromTargetTreeV1, changedAfterFilesV1 } from '../patch/build.js';
 import { materializeWorkspaceV1, scanWorkspaceV1 } from '../workspace/files.js';
 import { validateWorldProfileWorkspaceV1 } from '../world/domain-validator.js';
+import { readSettlementEventsV1, validatePlanArtifactsV1 } from '../world/day-validator.js';
 import { assertPinnedWorldUnchangedV1, publishV1, validatePreparedPublicationV1 } from '../world/publish.js';
 import type { PublishedHeadV1 } from '../world/read.js';
 import { assertRequestedBaseV1 } from '../commands/base.js';
@@ -227,17 +228,11 @@ async function validateCommandTargetV1(command: DraftDrivenCommandV1, workspaceR
   if (command === 'init') return;
   if (command === 'plan') {
     if (control.day === null) throw new Error('plan target day is missing.');
-    await requiredFileV1(workspaceRoot, `days/${control.day}/plan.json`);
+    await validatePlanArtifactsV1(workspaceRoot, control.day);
     return;
   }
   if (command === 'play') {
     if (control.day === null) throw new Error('play day is missing.');
-    await requiredFileV1(workspaceRoot, `days/${control.day}/play-index.json`);
-    await requiredFileV1(workspaceRoot, `days/${control.day}/events/index.yaml`);
+    await readSettlementEventsV1(workspaceRoot, control.day);
   }
-}
-
-async function requiredFileV1(root: string, documentPath: string): Promise<void> {
-  try { await readFile(path.join(root, ...documentPath.split('/'))); }
-  catch { throw new Error(`Required World document is missing: ${documentPath}.`); }
 }

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { runNodeCliV1 } from './process.js';
 import {
   assertToolCallPolicyV1,
+  assertWorkspaceMutationPolicyV1,
   pairedResultPathV1,
   readCompleteToolResultsV1,
   readPromptpileToolCallsV1,
@@ -18,6 +19,9 @@ export interface FileHookConfigV1 extends ToolArtifactPolicyV1 {
   baseUrl: string;
   token: string;
   execRequestTimeoutMs: number;
+  workspaceRoot: string;
+  command: 'init' | 'plan' | 'play' | 'revise';
+  targetDay: string | null;
 }
 
 const TOOL_ERROR = '[DAYLOOM_WORKSPACE_TOOL_ERROR]\nTool execution failed. Treat the requested read or write as unresolved.';
@@ -31,6 +35,10 @@ export function readFileHookConfigV1(configPath: string): FileHookConfigV1 {
     typeof config.promptpileMcpBin !== 'string' || !path.isAbsolute(config.promptpileMcpBin) ||
     typeof config.baseUrl !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]*$/.test(config.baseUrl) ||
     typeof config.token !== 'string' || !/^[0-9a-f]{64}$/.test(config.token) ||
+    typeof config.workspaceRoot !== 'string' || !path.isAbsolute(config.workspaceRoot) ||
+    !['init', 'plan', 'play', 'revise'].includes(config.command) ||
+    !(config.targetDay === null || /^day[1-9][0-9]*$/.test(config.targetDay)) ||
+    ((config.command === 'plan' || config.command === 'play') !== (config.targetDay !== null)) ||
     !Number.isSafeInteger(config.execRequestTimeoutMs) || config.execRequestTimeoutMs <= 0 ||
     !Number.isSafeInteger(config.maxToolCallsPerThought) || config.maxToolCallsPerThought <= 0 ||
     !Number.isSafeInteger(config.maxToolResultLineBytes) || config.maxToolResultLineBytes <= 0 ||
@@ -57,7 +65,10 @@ export async function runFileHookV1(configPath: string): Promise<void> {
   const callsPath = callsPathV1();
   const calls = readPromptpileToolCallsV1(callsPath);
   const resultPath = pairedResultPathV1(callsPath);
-  try { assertToolCallPolicyV1(calls, config); }
+  try {
+    assertToolCallPolicyV1(calls, config);
+    assertWorkspaceMutationPolicyV1(calls, config);
+  }
   catch { writeSyntheticToolResultsV1(calls, resultPath, TOOL_ERROR, config); return; }
 
   let complete = false;

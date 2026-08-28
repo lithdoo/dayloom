@@ -34,12 +34,14 @@ import {
   type DayloomPatchV1,
   type DraftSnapshotV1,
   type RootTreeV1,
+  type WorldControlV1,
 } from '@dayloom/archive-protocol';
 import { cliErrorV1 } from '../cli/errors.js';
 import { classifyWorldV1, readPublishedHeadV1, resolveArchivePathV1, type PublishedHeadV1 } from './read.js';
 import { validateHeadIdentityDocumentsV1, validateWorldDocumentSyntaxV1 } from './profile.js';
 import { assertPatchWritePolicyV1 } from './write-policy.js';
 import { validateWorldProfileWorkspaceV1 } from './domain-validator.js';
+import { validateActiveDayWorkspaceV1 } from './day-validator.js';
 import { verifyPublishedArchiveV1 } from './verify.js';
 import type { ScannedWorkspaceV1, WorkspaceFileV1 } from '../workspace/files.js';
 
@@ -188,7 +190,7 @@ async function validateTargetIdentityV1(input: {
   });
 }
 
-export async function validateArchivedTargetWorldV1(worldRoot: string, tree: RootTreeV1): Promise<void> {
+export async function validateArchivedTargetWorldV1(worldRoot: string, tree: RootTreeV1, control?: Readonly<WorldControlV1>): Promise<void> {
   const files = new Map<string, WorkspaceFileV1>();
   for (const entry of tree.entries) {
     const bytes = await readFile(resolveArchivePathV1(worldRoot, formatBlobPathV1(entry.blobHash)));
@@ -204,7 +206,10 @@ export async function validateArchivedTargetWorldV1(worldRoot: string, tree: Roo
     });
   }
   const workspace: ScannedWorkspaceV1 = Object.freeze({ files, tree });
-  try { validateWorldProfileWorkspaceV1(workspace); }
+  try {
+    validateWorldProfileWorkspaceV1(workspace);
+    if (control) await validateActiveDayWorkspaceV1(workspace, control);
+  }
   catch (error) {
     throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : 'Target World profile is invalid.');
   }
@@ -288,7 +293,7 @@ export async function publishV1(input: PublishInputV1): Promise<PublishResultV1>
         );
       }
     }
-    await validateArchivedTargetWorldV1(input.worldRoot, input.targetTree);
+    await validateArchivedTargetWorldV1(input.worldRoot, input.targetTree, input.patch.control.after);
     await validateTargetIdentityV1({ worldRoot: input.worldRoot, manifest, tree: input.targetTree });
 
     if (input.base === null) {

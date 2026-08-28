@@ -1,6 +1,8 @@
 import type { DayloomPatchChangeV1, DayloomPatchV1 } from '@dayloom/archive-protocol';
 
 const ENTITY = '[a-z][a-z0-9-]*';
+const ENTITY_RE = /^[a-z][a-z0-9-]*$/;
+const EVENT_RE = /^event[1-9][0-9]*$/;
 
 function exactOrEntity(path: string, patterns: readonly RegExp[], exact: readonly string[]): boolean {
   return exact.includes(path) || patterns.some((pattern) => pattern.test(path));
@@ -36,6 +38,45 @@ function reviseAllowed(path: string): boolean {
     'memory/short-term.md', 'memory/long-term.md', 'memory/facts.yaml',
     'memory/unresolved-threads.yaml', 'memory/important-events.yaml', 'story-seeds/active.yaml',
   ]);
+}
+
+export type AiDraftCommandV1 = 'init' | 'plan' | 'play' | 'revise';
+
+export function isAiWorkspaceWritePathAllowedV1(command: AiDraftCommandV1, day: string | null, documentPath: string): boolean {
+  if (command === 'init') return documentPath !== 'profile/dayloom.json' && initAllowed(documentPath);
+  if (command === 'revise') return reviseAllowed(documentPath);
+  if (day === null) return false;
+  if (command === 'plan') return new Set([
+    `days/${day}/plan.json`,
+    `days/${day}/timeline.md`,
+    `days/${day}/dialogue/planning.md`,
+    `days/${day}/events/index.yaml`,
+  ]).has(documentPath);
+  return documentPath === `days/${day}/play.json` ||
+    documentPath === `days/${day}/play-index.json` ||
+    documentPath === `days/${day}/summary.md` ||
+    documentPath === `days/${day}/timeline.md` ||
+    new RegExp(`^days/${day}/events/event[1-9][0-9]*/(?:event|result|state-patch)\\.yaml$`).test(documentPath) ||
+    new RegExp(`^days/${day}/events/event[1-9][0-9]*/(?:scene|dialogue|user-action)\\.md$`).test(documentPath) ||
+    documentPath === `days/${day}/events/index.yaml`;
+}
+
+export function isAiWorkspaceDirectoryAllowedV1(command: AiDraftCommandV1, day: string | null, directoryPath: string): boolean {
+  const parts = directoryPath === '' ? [] : directoryPath.split('/');
+  if (command === 'plan') return day !== null && [
+    `days/${day}`,
+    `days/${day}/dialogue`,
+    `days/${day}/events`,
+  ].includes(directoryPath);
+  if (command === 'play') return day !== null && (
+    directoryPath === `days/${day}` ||
+    directoryPath === `days/${day}/events` ||
+    parts.length === 4 && parts[0] === 'days' && parts[1] === day && parts[2] === 'events' && EVENT_RE.test(parts[3]!)
+  );
+  if (parts[0] === 'custom') return true;
+  if (parts.length === 2 && ['characters', 'locations', 'arcs'].includes(parts[0]!) && ENTITY_RE.test(parts[1]!)) return true;
+  const roots = ['canon', 'characters', 'locations', 'arcs', 'state', 'memory', 'story-seeds', 'custom'];
+  return parts.length === 1 && roots.includes(parts[0]!);
 }
 
 function settleAllowed(path: string, day: string): boolean {

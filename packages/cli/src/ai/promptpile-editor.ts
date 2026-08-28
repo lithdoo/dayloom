@@ -30,6 +30,8 @@ export async function editWorkspaceWithPromptpileV1(input: DraftWorkspaceEditorI
       filesystemMcp: boundaries.filesystemMcp,
       draftRoot,
       workspaceRoot: input.workspaceRoot,
+      command: input.command,
+      targetDay: input.targetControl.day,
     });
     try {
       await mkdir(reactRoot, { recursive: true });
@@ -56,29 +58,36 @@ export async function editWorkspaceWithPromptpileV1(input: DraftWorkspaceEditorI
       });
       const task = taskPromptV1(input);
       await appendPromptpileUserV1(boundaries.promptpileBin, conversation, task);
-      for (let reactAttempt = 0; reactAttempt < 3; reactAttempt += 1) {
-        try {
-          await runPromptpileReactV1({
+      await runReactWithDecisionRetriesV1(async (reactAttempt) => {
+        await runPromptpileReactV1({
             reactBin: boundaries.reactBin,
             validateProcessPile: boundaries.validateProcessPile,
             config: reactConfig,
             context,
             conversation,
-            workRoot: path.join(operationRoot, `react-work-${reactAttempt + 1}`),
+            workRoot: path.join(operationRoot, `react-work-${reactAttempt}`),
             maxSteps: 10,
             timeoutMs: 5 * 60_000,
-          });
-          break;
-        } catch (error) {
-          if (!(error instanceof ReactProcessErrorV1) || error.code !== 'check_decision_invalid') throw error;
-        }
-      }
+        });
+      });
       runtime.assertHealthy();
     } finally {
       await runtime.close();
     }
   } finally {
     await rm(operationRoot, { recursive: true, force: true });
+  }
+}
+
+export async function runReactWithDecisionRetriesV1(run: (attempt: number) => Promise<void>): Promise<void> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await run(attempt);
+      return;
+    } catch (error) {
+      if (!(error instanceof ReactProcessErrorV1) || error.code !== 'check_decision_invalid' || attempt === maxAttempts) throw error;
+    }
   }
 }
 
@@ -107,6 +116,7 @@ Hard rules:
 - Never try to write the Draft root.
 - Use search_files for path/name discovery and search_files_content for content discovery before reading files one by one.
 - Use read_file_lines for focused reads of search results; use directory_tree when structural context is needed.
+- Use mcp__workspace__create_directory when an allowed entity, custom, or event parent directory does not exist.
 - Use mcp__workspace__write_file for World changes.
 - Preserve existing information unless the Draft asks to change it.
 - Do not change command lifecycle/control; the program owns target control.
@@ -140,11 +150,11 @@ The program has already seeded the following neutral structural YAML documents. 
 - memory/important-events.yaml: schemaVersion: 1, events: []
 - story-seeds/active.yaml: schemaVersion: 1, seeds: []
 
-For a minimal initial World, keep the seeded empty indexes and collections. All required parent directories are program-created. Create state/world.yaml and every required Markdown document from the Draft with mcp__workspace__write_file. Do not stop until all required paths exist.`;
-  if (input.command === 'plan') return `PLAN scope: only edit days/${day}/plan.json, days/${day}/timeline.md, days/${day}/dialogue/planning.md, and days/${day}/events/index.yaml. The program has already created all allowed parent directories. Do not spend a tool round rediscovering the World: start by writing plan.json from the submitted Draft. plan.json must be a JSON object with version: 1 and a non-empty intent. Then write any additional allowed documents. Initialize events/index.yaml with schemaVersion: 1 and ids: [] unless the Draft explicitly provides planned event identities.`;
+For a minimal initial World, keep the seeded empty indexes and collections. The standard parent directories are program-created; create allowed entity or custom subdirectories when the Draft needs them. Create state/world.yaml and every required Markdown document from the Draft with mcp__workspace__write_file. Do not stop until all required paths exist.`;
+  if (input.command === 'plan') return `PLAN scope: create exactly days/${day}/plan.json, days/${day}/timeline.md, days/${day}/dialogue/planning.md, and days/${day}/events/index.yaml. The program has already created all allowed parent directories. Do not spend a tool round rediscovering the World: start by writing plan.json from the submitted Draft. plan.json must be exactly a JSON object with version: 1 and a non-empty intent. timeline.md and dialogue/planning.md must be non-empty. events/index.yaml must be exactly schemaVersion: 1 and ids: [].`;
   if (input.command === 'play') return `PLAY scope: only edit days/${day}/play.json, days/${day}/play-index.json, days/${day}/summary.md, days/${day}/timeline.md, and days/${day}/events/**. Long-term state is settled later by deterministic event patches.
 
-The program has already created the day, events, and event1 parent directories. Do not spend a tool round rediscovering the existing plan: the submitted Draft content and required protocol are already in this prompt. Start by writing play-index.json and events/index.yaml. Continue immediately with the event1 files below.
+The program has already created the day, events, and event1 parent directories. Create event2..eventN directories when needed. Do not spend a tool round rediscovering the existing plan. Start by writing play-index.json and events/index.yaml. Continue immediately with the event files below.
 
 Create a settlement-ready event set. Required indexes:
 - play-index.json: {"version":1,"eventIds":["event1", ...]}
@@ -152,7 +162,7 @@ Create a settlement-ready event set. Required indexes:
 
 For each events/<eventId>/ create non-empty scene.md, dialogue.md, user-action.md and these exact YAML shapes:
 - event.yaml fields: schemaVersion: 1, id, beatId (string or null), title, locationId (stable id or null), participantIds (array), status: resolved
-- result.yaml fields: schemaVersion: 1, summary, learnedFacts (array), timeAdvanced (string or null), completedBeatIds (array), skippedBeatIds (array), endDay (boolean)
+- result.yaml fields: schemaVersion: 1, summary, learnedFacts (array of non-empty strings), timeAdvanced (string or null), completedBeatIds (array of non-empty strings), skippedBeatIds (array of non-empty strings), endDay (boolean); never use objects inside these three arrays
 - state-patch.yaml fields: schemaVersion: 1 and changes: []; use an empty changes array unless a supported deterministic state change is clearly required
 
 play-index.json and events/index.yaml must list exactly the event directories you create.`;
@@ -179,18 +189,18 @@ function finalPromptV1(): string {
 
 function taskPromptV1(input: DraftWorkspaceEditorInputV1 | DraftWorkspaceRepairInputV1): string {
   const repair = 'diagnostics' in input ? `\nRepair diagnostics: ${JSON.stringify(input.diagnostics)}` : '';
-  const draftText = draftExcerptV1(input);
+  const draftPreview = draftPreviewV1(input);
   return `Apply the submitted Draft to the Dayloom workspace.
 Command: ${input.command}
 Base commit: ${input.baseCommitId ?? '<none>'}
 Target control: ${JSON.stringify(input.targetControl)}
 Draft snapshot hash: ${input.draft.hash}
 Draft files: ${input.draft.snapshot.entries.map((entry) => entry.path).join(', ')}${repair}
-Submitted Draft content:${draftText}`;
+Draft preview (authoritative content remains in the read-only Draft MCP):${draftPreview}`;
 }
 
-function draftExcerptV1(input: DraftWorkspaceEditorInputV1): string {
-  let remaining = 64_000;
+function draftPreviewV1(input: DraftWorkspaceEditorInputV1): string {
+  let remaining = 2_048;
   let result = '';
   let truncated = false;
   for (const [documentPath, bytes] of input.draft.files) {
@@ -201,6 +211,6 @@ function draftExcerptV1(input: DraftWorkspaceEditorInputV1): string {
     remaining -= excerpt.length;
     if (excerpt.length !== text.length) truncated = true;
   }
-  if (truncated) result += '\n[Draft excerpt truncated; use Draft tools for the remainder.]';
+  if (truncated) result += '\n[Draft preview truncated; use search_files_content and read_file_lines for the authoritative content.]';
   return result;
 }

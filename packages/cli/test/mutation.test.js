@@ -102,8 +102,16 @@ async function publishPlan(root) {
     const base = await readPublishedHeadV1(root);
     await materializeWorkspaceV1({ worldRoot: root, tree: base.tree, workspaceRoot });
     const planPath = path.join(workspaceRoot, 'days', 'day1', 'plan.json');
-    await mkdir(path.dirname(planPath), { recursive: true });
-    await writeFile(planPath, '{"version":1,"intent":"test"}\n');
+    await Promise.all([
+      mkdir(path.join(workspaceRoot, 'days', 'day1', 'dialogue'), { recursive: true }),
+      mkdir(path.join(workspaceRoot, 'days', 'day1', 'events'), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(planPath, '{"version":1,"intent":"test"}\n'),
+      writeFile(path.join(workspaceRoot, 'days', 'day1', 'timeline.md'), '# Timeline\n'),
+      writeFile(path.join(workspaceRoot, 'days', 'day1', 'dialogue', 'planning.md'), '# Planning\n'),
+      writeFile(path.join(workspaceRoot, 'days', 'day1', 'events', 'index.yaml'), 'schemaVersion: 1\nids: []\n'),
+    ]);
     const workspace = await scanWorkspaceV1(workspaceRoot);
     const draftBytes = encoder.encode('# Plan\n');
     const snapshot = parseDraftSnapshotV1({
@@ -143,7 +151,7 @@ test('abandon dry-run is non-mutating and publish removes only current-day docum
 
     const dryRun = await executeCliV1(['abandon', root, '--base', plan.commitId, '--dry-run', '--json']);
     assert.equal(dryRun.result.mode, 'dry-run');
-    assert.equal(dryRun.result.changedPaths, 1);
+    assert.equal(dryRun.result.changedPaths, 4);
     assert.equal(dryRun.result.patch.command, 'abandon');
     assert.equal((await readPublishedHeadV1(root)).commit.id, plan.commitId);
 

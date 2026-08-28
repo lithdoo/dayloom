@@ -13,6 +13,9 @@ import {
   WORKSPACE_FILE_TOOLS_V1,
   startFileRuntimeV1,
 } from '../dist/ai/file-runtime.js';
+import { ReactProcessErrorV1 } from '../dist/ai/react.js';
+import { runReactWithDecisionRetriesV1 } from '../dist/ai/promptpile-editor.js';
+import { assertWorkspaceMutationPolicyV1 } from '../dist/ai/tool-artifacts.js';
 import * as TOML from '@iarna/toml';
 
 async function tempRoot() {
@@ -95,7 +98,7 @@ test('Promptpile adapter resolves only packaged binaries', async () => {
   assert.equal(typeof boundaries.validateProcessPile, 'function');
 });
 
-test('filesystem runtime exposes tree, search, ranged read, and only workspace write', async () => {
+test('filesystem runtime exposes tree, search, ranged read, guarded directory creation, and write', async () => {
   assert.deepEqual(DRAFT_FILE_TOOLS_V1, [
     'list_directory',
     'directory_tree',
@@ -103,7 +106,7 @@ test('filesystem runtime exposes tree, search, ranged read, and only workspace w
     'search_files_content',
     'read_file_lines',
   ]);
-  assert.deepEqual(WORKSPACE_FILE_TOOLS_V1, [...DRAFT_FILE_TOOLS_V1, 'write_file']);
+  assert.deepEqual(WORKSPACE_FILE_TOOLS_V1, [...DRAFT_FILE_TOOLS_V1, 'create_directory', 'write_file']);
 
   const root = await tempRoot();
   const runtimeRoot = path.join(root, 'runtime');
@@ -119,6 +122,8 @@ test('filesystem runtime exposes tree, search, ranged read, and only workspace w
       filesystemMcp: boundaries.filesystemMcp,
       draftRoot,
       workspaceRoot,
+      command: 'revise',
+      targetDay: null,
     });
     const exported = TOML.parse(await readFile(runtime.binding.toolsFile, 'utf8'));
     const names = exported.tools.map((tool) => tool.name).sort();
@@ -126,9 +131,46 @@ test('filesystem runtime exposes tree, search, ranged read, and only workspace w
       ...DRAFT_FILE_TOOLS_V1.map((tool) => `mcp__draft__${tool}`),
       ...WORKSPACE_FILE_TOOLS_V1.map((tool) => `mcp__workspace__${tool}`),
     ].sort());
-    assert.equal(names.some((name) => /create_directory|edit_file|move_file|delete/.test(name)), false);
+    assert.equal(names.some((name) => /edit_file|move_file|delete/.test(name)), false);
   } finally {
     await runtime?.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('workspace mutation guard permits scoped nesting and rejects program-owned or cross-command paths', () => {
+  const root = path.resolve('workspace-guard-test');
+  const call = (name, requestedPath) => [{
+    id: 'call-1',
+    name,
+    arguments: JSON.stringify({ path: requestedPath, content: 'x' }),
+    raw: {},
+  }];
+  const revise = { workspaceRoot: root, command: 'revise', targetDay: null };
+  assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'custom/story'), revise));
+  assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'custom/story/foo.md'), revise));
+  assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'profile/dayloom.json'), revise), /cannot mutate/);
+  assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', '../outside.md'), revise), /outside/);
+  assert.throws(() => assertWorkspaceMutationPolicyV1(
+    call('mcp__workspace__write_file', 'days/day1/play-index.json'),
+    { workspaceRoot: root, command: 'plan', targetDay: 'day1' },
+  ), /cannot mutate/);
+  assert.throws(() => assertWorkspaceMutationPolicyV1(
+    call('mcp__workspace__write_file', 'profile/dayloom.json'),
+    { workspaceRoot: root, command: 'init', targetDay: null },
+  ), /cannot mutate/);
+  const play = { workspaceRoot: root, command: 'play', targetDay: 'day2' };
+  assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'days/day2/events/event2'), play));
+  assert.doesNotThrow(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__write_file', 'days/day2/events/event2/event.yaml'), play));
+  assert.throws(() => assertWorkspaceMutationPolicyV1(call('mcp__workspace__create_directory', 'days/day2/events/bonus'), play), /cannot mutate/);
+});
+
+test('three invalid React check decisions remain a hard failure', async () => {
+  let attempts = 0;
+  const terminal = new ReactProcessErrorV1('check_decision_invalid', 'invalid decision');
+  await assert.rejects(
+    () => runReactWithDecisionRetriesV1(async () => { attempts += 1; throw terminal; }),
+    (error) => error === terminal,
+  );
+  assert.equal(attempts, 3);
 });

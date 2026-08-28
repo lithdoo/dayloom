@@ -124,6 +124,9 @@ test('settle applies structured event patches and publishes a new verified versi
   try {
     await publishDraftWorkspaceMutation(root, 'plan', {
       'days/day1/plan.json': '{"version":1,"intent":"test settlement"}\n',
+      'days/day1/timeline.md': '# Timeline\n',
+      'days/day1/dialogue/planning.md': '# Planning\n',
+      'days/day1/events/index.yaml': 'schemaVersion: 1\nids: []\n',
     }, 'plan.md');
 
     const play = await publishDraftWorkspaceMutation(root, 'play', {
@@ -172,6 +175,9 @@ test('settle refuses a state patch whose expected value is stale', async () => {
   try {
     await publishDraftWorkspaceMutation(root, 'plan', {
       'days/day1/plan.json': '{"version":1,"intent":"test stale precondition"}\n',
+      'days/day1/timeline.md': '# Timeline\n',
+      'days/day1/dialogue/planning.md': '# Planning\n',
+      'days/day1/events/index.yaml': 'schemaVersion: 1\nids: []\n',
     }, 'plan.md');
     await publishDraftWorkspaceMutation(root, 'play', {
       'days/day1/play.json': '{"version":1}\n',
@@ -191,6 +197,29 @@ test('settle refuses a state patch whose expected value is stale', async () => {
       (error) => error?.code === 'VALIDATION_FAILED' && /precondition failed/.test(error.message),
     );
     assert.equal((await readPublishedHeadV1(root)).commit.id, before.commit.id);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('publisher independently rejects an invalid awaiting-settle day', async () => {
+  const root = await initSettlementWorld();
+  try {
+    await publishDraftWorkspaceMutation(root, 'plan', {
+      'days/day1/plan.json': '{"version":1,"intent":"test publisher gate"}\n',
+      'days/day1/timeline.md': '# Timeline\n',
+      'days/day1/dialogue/planning.md': '# Planning\n',
+      'days/day1/events/index.yaml': 'schemaVersion: 1\nids: []\n',
+    }, 'plan.md');
+    const planned = await readPublishedHeadV1(root);
+    await assert.rejects(
+      () => publishDraftWorkspaceMutation(root, 'play', {
+        'days/day1/play-index.json': '{}\n',
+        'days/day1/events/index.yaml': 'hello: world\n',
+      }, 'play.md'),
+      (error) => error?.code === 'VALIDATION_FAILED',
+    );
+    assert.equal((await readPublishedHeadV1(root)).commit.id, planned.commit.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

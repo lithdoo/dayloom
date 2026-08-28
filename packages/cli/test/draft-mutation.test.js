@@ -204,7 +204,12 @@ test('plan target control and required day document are program-owned constraint
       assert.equal(input.targetControl.day, 'day1');
       const target = path.join(input.workspaceRoot, 'days', 'day1', 'plan.json');
       // The command boundary owns protocol directories; an editor only needs write_file semantics.
-      await writeFile(target, '{"version":1,"intent":"day one"}\n', 'utf8');
+      await Promise.all([
+        writeFile(target, '{"version":1,"intent":"day one"}\n', 'utf8'),
+        writeFile(path.join(input.workspaceRoot, 'days', 'day1', 'timeline.md'), '# Day one timeline\n', 'utf8'),
+        writeFile(path.join(input.workspaceRoot, 'days', 'day1', 'dialogue', 'planning.md'), '# Planning\n', 'utf8'),
+        writeFile(path.join(input.workspaceRoot, 'days', 'day1', 'events', 'index.yaml'), 'schemaVersion: 1\nids: []\n', 'utf8'),
+      ]);
     });
     const result = await executeCliV1(['plan', world, '--draft', draft, '--json'], { draftEditor: editor });
     assert.equal(result.result.revision, 2);
@@ -212,6 +217,38 @@ test('plan target control and required day document are program-owned constraint
     assert.equal(head.commit.control.phase, 'planned');
     assert.equal(head.commit.control.day, 'day1');
     assert.ok(head.tree.entries.some((entry) => entry.path === 'days/day1/plan.json'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('play cannot publish parseable but structurally invalid day artifacts', async () => {
+  const root = await tempRoot();
+  try {
+    const { world } = await initializeWorld(root);
+    const planDraft = path.join(root, 'plan.md');
+    await writeFile(planDraft, '# Plan\n', 'utf8');
+    await executeCliV1(['plan', world, '--draft', planDraft], { draftEditor: editorFrom(async (input) => {
+      const dayRoot = path.join(input.workspaceRoot, 'days', 'day1');
+      await Promise.all([
+        writeFile(path.join(dayRoot, 'plan.json'), '{"version":1,"intent":"test"}\n'),
+        writeFile(path.join(dayRoot, 'timeline.md'), '# Timeline\n'),
+        writeFile(path.join(dayRoot, 'dialogue', 'planning.md'), '# Planning\n'),
+        writeFile(path.join(dayRoot, 'events', 'index.yaml'), 'schemaVersion: 1\nids: []\n'),
+      ]);
+    }) });
+    const before = await readPublishedHeadV1(world);
+    const playDraft = path.join(root, 'play.md');
+    await writeFile(playDraft, '# Play\n', 'utf8');
+    await assert.rejects(
+      () => executeCliV1(['play', world, '--draft', playDraft], { draftEditor: editorFrom(async (input) => {
+        const dayRoot = path.join(input.workspaceRoot, 'days', 'day1');
+        await writeFile(path.join(dayRoot, 'play-index.json'), '{}\n');
+        await writeFile(path.join(dayRoot, 'events', 'index.yaml'), 'hello: world\n');
+      }) }),
+      (error) => error?.code === 'VALIDATION_FAILED',
+    );
+    assert.equal((await readPublishedHeadV1(world)).commit.id, before.commit.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -2,6 +2,11 @@ import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, write
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parseToolCallV1, parseToolResultLineV1 } from 'promptpile-protocol';
+import {
+  isAiWorkspaceDirectoryAllowedV1,
+  isAiWorkspaceWritePathAllowedV1,
+  type AiDraftCommandV1,
+} from '../world/write-policy.js';
 
 export interface ToolArtifactPolicyV1 {
   allowedToolNames: readonly string[];
@@ -12,7 +17,14 @@ export interface ToolArtifactPolicyV1 {
 export interface ValidatedToolCallV1 {
   id: string;
   name: string;
+  arguments: string;
   raw: Readonly<Record<string, unknown>>;
+}
+
+export interface WorkspaceMutationPolicyV1 {
+  workspaceRoot: string;
+  command: AiDraftCommandV1;
+  targetDay: string | null;
 }
 
 const CALL_SUFFIX = '.calls.jsonl';
@@ -41,10 +53,32 @@ export function readPromptpileToolCallsV1(callsPath: string): ValidatedToolCallV
   const calls = recordsV1(callsPath).map((raw) => {
     const parsed = parseToolCallV1(raw);
     if (!parsed || parsed.id === '' || parsed.type !== 'function' || parsed.function.name === '') throw new Error('ToolCall artifact violates Promptpile ToolCall V1.');
-    return Object.freeze({ id: parsed.id, name: parsed.function.name, raw: Object.freeze({ ...raw }) });
+    return Object.freeze({ id: parsed.id, name: parsed.function.name, arguments: parsed.function.arguments, raw: Object.freeze({ ...raw }) });
   });
   if (new Set(calls.map((call) => call.id)).size !== calls.length) throw new Error('ToolCall artifact contains duplicate ids.');
   return calls;
+}
+
+export function assertWorkspaceMutationPolicyV1(calls: readonly ValidatedToolCallV1[], policy: WorkspaceMutationPolicyV1): void {
+  for (const call of calls) {
+    const directory = call.name === 'mcp__workspace__create_directory';
+    if (!directory && call.name !== 'mcp__workspace__write_file') continue;
+    const input: unknown = JSON.parse(call.arguments);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as { path?: unknown }).path !== 'string') {
+      throw new Error('Workspace mutation ToolCall arguments are invalid.');
+    }
+    const requested = (input as { path: string }).path;
+    const absolute = path.resolve(policy.workspaceRoot, requested);
+    const relative = path.relative(policy.workspaceRoot, absolute);
+    if (relative === '' || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+      throw new Error('Workspace mutation path is outside the workspace boundary.');
+    }
+    const canonical = relative.split(path.sep).join('/');
+    const allowed = directory
+      ? isAiWorkspaceDirectoryAllowedV1(policy.command, policy.targetDay, canonical)
+      : isAiWorkspaceWritePathAllowedV1(policy.command, policy.targetDay, canonical);
+    if (!allowed) throw new Error(`${policy.command} cannot mutate ${canonical}.`);
+  }
 }
 
 export function assertToolCallPolicyV1(calls: readonly ValidatedToolCallV1[], policy: ToolArtifactPolicyV1): void {

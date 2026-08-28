@@ -29,6 +29,7 @@ export const DRAFT_FILE_TOOLS_V1 = Object.freeze([
 ] as const);
 export const WORKSPACE_FILE_TOOLS_V1 = Object.freeze([
   ...DRAFT_FILE_TOOLS_V1,
+  'create_directory',
   'write_file',
 ] as const);
 const settings = Object.freeze({ startupMs: 15_000, probeMs: 3_000, probeDelayMs: 200, closeMs: 2_000, initMs: 10_000, listMs: 10_000, callMs: 20_000, execMs: 30_000, ports: 5 });
@@ -39,6 +40,8 @@ export async function startFileRuntimeV1(input: {
   filesystemMcp: CommandBoundaryV1;
   draftRoot: string;
   workspaceRoot: string;
+  command: 'init' | 'plan' | 'play' | 'revise';
+  targetDay: string | null;
 }): Promise<FileRuntimeV1> {
   await mkdir(input.runtimeRoot, { recursive: true });
   const expectedTools = Object.freeze([
@@ -89,6 +92,9 @@ export async function startFileRuntimeV1(input: {
       baseUrl,
       token,
       execRequestTimeoutMs: settings.execMs,
+      workspaceRoot: path.resolve(input.workspaceRoot),
+      command: input.command,
+      targetDay: input.targetDay,
       maxToolCallsPerThought: 8,
       maxToolResultLineBytes: 256 * 1024,
       allowedToolNames: expectedTools,
