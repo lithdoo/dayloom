@@ -1,7 +1,7 @@
 {
   "name": "@dayloom/cli",
   "version": "1.0.0-beta.1",
-  "description": "Command-line interface for applying Dayloom Drafts to Archive worlds.",
+  "description": "Draft-driven command-line boundary for Dayloom worlds.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,13 +17,17 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build",
+    "test": "npm run build && node --test test/*.test.js",
     "prepack": "npm run build"
   },
   "files": [
     "dist",
     "package.json"
   ],
+  "dependencies": {
+    "@dayloom/archive-protocol": "1.0.0-beta.1",
+    "yaml": "^2.8.1"
+  },
   "devDependencies": {
     "@types/node": "^25.5.2",
     "typescript": "~5.9.3"
