@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import YAML from 'yaml';
 import {
   buildTargetControlV1,
   hashDayloomPatchV1,
@@ -12,6 +11,7 @@ import type { ParsedInvocationV1 } from '../cli/argv.js';
 import { CliErrorV1, cliErrorV1 } from '../cli/errors.js';
 import { buildPatchFromTargetTreeV1, changedAfterFilesV1 } from '../patch/build.js';
 import { materializeWorkspaceV1, scanWorkspaceV1 } from '../workspace/files.js';
+import { validateWorldProfileWorkspaceV1 } from '../world/domain-validator.js';
 import { publishV1 } from '../world/publish.js';
 import type { PublishedHeadV1 } from '../world/read.js';
 import { assertRequestedBaseV1 } from '../commands/base.js';
@@ -70,7 +70,14 @@ export async function runDraftMutationWithEditorV1(input: {
 
     if (command === 'init') await installProfileDescriptorV1(workspaceRoot);
     const workspace = await scanWorkspaceV1(workspaceRoot);
-    await validateCommandTargetV1(command, workspaceRoot, targetControl);
+    let profile;
+    try {
+      profile = validateWorldProfileWorkspaceV1(workspace);
+      await validateCommandTargetV1(command, workspaceRoot, targetControl);
+    } catch (error) {
+      if (error instanceof CliErrorV1) throw error;
+      throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : `${command} target World is invalid.`);
+    }
 
     const patch = buildPatchFromTargetTreeV1({
       command,
@@ -82,7 +89,7 @@ export async function runDraftMutationWithEditorV1(input: {
       afterControl: targetControl,
     });
 
-    const initialTitle = command === 'init' ? await readInitialTitleV1(workspaceRoot) : undefined;
+    const initialTitle = command === 'init' ? profile.title : undefined;
     if (input.invocation.dryRun) {
       return {
         mode: 'dry-run',
@@ -116,37 +123,16 @@ async function installProfileDescriptorV1(workspaceRoot: string): Promise<void> 
 }
 
 async function validateCommandTargetV1(command: DraftDrivenCommandV1, workspaceRoot: string, control: WorldControlV1): Promise<void> {
-  try {
-    if (command === 'init') {
-      await requiredFileV1(workspaceRoot, 'state/world.yaml');
-      await requiredFileV1(workspaceRoot, 'profile/dayloom.json');
-      return;
-    }
-    if (command === 'plan') {
-      if (control.day === null) throw new Error('plan target day is missing.');
-      await requiredFileV1(workspaceRoot, `days/${control.day}/plan.json`);
-      return;
-    }
-    if (command === 'play') {
-      if (control.day === null) throw new Error('play day is missing.');
-      await requiredFileV1(workspaceRoot, `days/${control.day}/play-index.json`);
-      await requiredFileV1(workspaceRoot, `days/${control.day}/events/index.yaml`);
-    }
-  } catch (error) {
-    throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : `${command} target World is invalid.`);
+  if (command === 'init') return;
+  if (command === 'plan') {
+    if (control.day === null) throw new Error('plan target day is missing.');
+    await requiredFileV1(workspaceRoot, `days/${control.day}/plan.json`);
+    return;
   }
-}
-
-async function readInitialTitleV1(workspaceRoot: string): Promise<string> {
-  try {
-    const text = await readFile(path.join(workspaceRoot, 'state', 'world.yaml'), 'utf8');
-    const value = YAML.parse(text);
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('state/world.yaml must be an object.');
-    const title = (value as Record<string, unknown>).title;
-    if (typeof title !== 'string' || title.trim() === '') throw new Error('state/world.yaml.title must be non-empty.');
-    return title.trim();
-  } catch (error) {
-    throw cliErrorV1('VALIDATION_FAILED', error instanceof Error ? error.message : 'Initial World title is invalid.');
+  if (command === 'play') {
+    if (control.day === null) throw new Error('play day is missing.');
+    await requiredFileV1(workspaceRoot, `days/${control.day}/play-index.json`);
+    await requiredFileV1(workspaceRoot, `days/${control.day}/events/index.yaml`);
   }
 }
 
