@@ -114,17 +114,20 @@ test('strict durable parser rejects unknown fields', () => {
 
 test('tampered tree transition is rejected', () => {
   const baseHash = hashBytesV1(new TextEncoder().encode('before'));
-  const afterHash = hashBytesV1(new TextEncoder().encode('after'));
+  const expectedAfterHash = hashBytesV1(new TextEncoder().encode('after'));
+  const tamperedHash = hashBytesV1(new TextEncoder().encode('tampered'));
   const baseTree = createRootTreeV1([{ path: 'custom/a.txt', blobHash: baseHash, mediaType: 'text/plain', bytes: 6 }]);
-  const targetTree = createRootTreeV1([{ path: 'custom/a.txt', blobHash: afterHash, mediaType: 'text/plain', bytes: 5 }]);
+  const targetTree = createRootTreeV1([{ path: 'custom/a.txt', blobHash: tamperedHash, mediaType: 'text/plain', bytes: 8 }]);
   const before = { phase: 'idle', day: null, lastSettledDay: null };
   const patch = createDayloomPatchV1({
     baseCommitId: 'commit_44444444444444444444444444444444',
     command: 'revise',
     draftSnapshotHash: `sha256:${'2'.repeat(64)}`,
     control: { before, after: before },
-    changes: [{ path: 'custom/a.txt', beforeBlobHash: baseHash, afterBlobHash: baseHash }],
+    changes: [{ path: 'custom/a.txt', beforeBlobHash: baseHash, afterBlobHash: expectedAfterHash }],
   });
-  void targetTree;
-  assert.throws(() => patch);
+  const parent = commit('commit_44444444444444444444444444444444', 2, 'commit_11111111111111111111111111111111', 'op_44444444444444444444444444444444', baseTree, before);
+  const op = operation('op_55555555555555555555555555555555', 'revise', patch);
+  const child = commit('commit_55555555555555555555555555555555', 3, parent.id, op.id, targetTree, before);
+  assert.throws(() => verifyCommitTransitionV1({ parent, baseTree, operation: op, patch, commit: child, targetTree }));
 });
