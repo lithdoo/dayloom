@@ -9,6 +9,7 @@ import { buildPatchFromTargetTreeV1, changedAfterFilesV1 } from '../patch/build.
 import { materializeWorkspaceV1, scanWorkspaceV1 } from '../workspace/files.js';
 import type { DomainPatchV1 } from '../world/domain-patch.js';
 import { readSettlementEventsV1, type SettlementEventV1 } from '../world/day-validator.js';
+import { settlementPatchTargetV1 } from '../world/settlement-applicability.js';
 import { assertPinnedWorldUnchangedV1, publishV1, validatePreparedPublicationV1 } from '../world/publish.js';
 import { validateWorldProfileWorkspaceV1 } from '../world/domain-validator.js';
 import type { PublishedHeadV1 } from '../world/read.js';
@@ -91,7 +92,7 @@ async function applySettlementV1(root: string, day: string, events: readonly Set
   const applied: DomainPatchV1[] = [];
   for (const event of events) {
     for (const patch of event.patches) {
-      const target = patchTargetV1(patch);
+      const target = settlementPatchTargetV1(patch);
       if (writes.has(target)) throw new Error(`Settlement contains conflicting writes to ${target}.`);
       writes.add(target);
       await applyDomainPatchV1(patch, object, changed);
@@ -164,7 +165,7 @@ async function applyDomainPatchV1(
     const documentPath = 'state/variables.yaml';
     const doc = await object(documentPath);
     if (!recordV1(doc.variables)) throw new Error('state/variables.yaml.variables must be an object.');
-    expectV1(doc.variables[patch.key] ?? null, patch.expected, patch.op);
+    expectV1(Object.hasOwn(doc.variables, patch.key) ? doc.variables[patch.key] : null, patch.expected, patch.op);
     doc.variables[patch.key] = patch.value;
     changed.add(documentPath);
     return;
@@ -212,14 +213,6 @@ async function appendTimelinesV1(root: string, events: readonly SettlementEventV
     const prefix = current.trim() === '' ? '' : `${current.trimEnd()}\n`;
     await writeTextV1(root, documentPath, `${prefix}${lines.join('\n')}\n`);
   }
-}
-
-function patchTargetV1(patch: DomainPatchV1): string {
-  if (patch.op === 'set-world-variable') return `world-variable:${patch.key}`;
-  if (patch.op === 'set-character-status') return `character:${patch.characterId}:status`;
-  if (patch.op === 'move-character') return `character:${patch.characterId}:location`;
-  if (patch.op === 'set-location-status') return `location:${patch.locationId}:status`;
-  return `arc:${patch.arcId}:stage`;
 }
 
 async function readYamlObjectV1(root: string, documentPath: string): Promise<Record<string, unknown>> {

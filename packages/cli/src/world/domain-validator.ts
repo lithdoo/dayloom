@@ -3,6 +3,7 @@ import type { ArchiveMediaTypeV1 } from '@dayloom/archive-protocol';
 import type { ScannedWorkspaceV1 } from '../workspace/files.js';
 import { decodeWorldTextV1 } from './profile.js';
 import { parseStableEntityIdV1 } from './entity-id.js';
+import { parseWorldVariableKeyV1 } from './variable-key.js';
 
 export interface ValidatedWorldProfileV1 {
   title: string;
@@ -54,7 +55,7 @@ export function validateWorldProfileWorkspaceV1(workspace: ScannedWorkspaceV1): 
   schemaV1(variables.schemaVersion, 'VariablesStateV1');
   if (!recordV1(variables.variables)) throw new Error('VariablesStateV1.variables must be an object.');
   for (const [key, value] of Object.entries(variables.variables)) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(key)) throw new Error(`VariablesStateV1 variable key is invalid: ${key}.`);
+    parseWorldVariableKeyV1(key, `VariablesStateV1 variable key ${key}`);
     if (value !== null && !['string', 'number', 'boolean'].includes(typeof value)) throw new Error(`VariablesStateV1 variable value is invalid: ${key}.`);
     if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`VariablesStateV1 variable value is invalid: ${key}.`);
   }

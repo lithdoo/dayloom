@@ -24,10 +24,11 @@ import {
 } from '../dist/index.js';
 import { validWorldFiles } from './support/valid-world.mjs';
 import { parseDomainPatchV1 } from '../dist/world/domain-patch.js';
+import { validateSettlementApplicabilityV1 } from '../dist/world/settlement-applicability.js';
 
 const encoder = new TextEncoder();
 
-test('DomainPatch entity references require stable IDs', () => {
+test('DomainPatch references and variable keys use canonical identifiers', () => {
   assert.throws(
     () => parseDomainPatchV1({ op: 'set-character-status', characterId: '../alice', expected: 'idle', value: 'ready' }),
     /stable entity identifier/,
@@ -36,6 +37,33 @@ test('DomainPatch entity references require stable IDs', () => {
     () => parseDomainPatchV1({ op: 'move-character', characterId: 'alice', expectedLocationId: null, locationId: 'town\\square' }),
     /stable entity identifier/,
   );
+  assert.throws(
+    () => parseDomainPatchV1({ op: 'set-world-variable', key: 'bad key!', expected: null, value: 'x' }),
+    /valid World variable key/,
+  );
+});
+
+test('settlement applicability simulates every DomainPatch target without mutating current World', () => {
+  const current = {
+    variables: Object.freeze({ mood: 'calm' }),
+    characters: new Map([['alice', Object.freeze({ status: 'idle', locationId: null })]]),
+    locations: new Map([['station', Object.freeze({ status: 'open' })]]),
+    arcs: new Map([['mystery', Object.freeze({ stage: 'seeded' })]]),
+  };
+  const events = [{
+    id: 'event1',
+    patches: [
+      { op: 'set-world-variable', key: 'mood', expected: 'calm', value: 'focused' },
+      { op: 'set-character-status', characterId: 'alice', expected: 'idle', value: 'alert' },
+      { op: 'move-character', characterId: 'alice', expectedLocationId: null, locationId: 'station' },
+      { op: 'set-location-status', locationId: 'station', expected: 'open', value: 'closed' },
+      { op: 'set-arc-stage', arcId: 'mystery', expected: 'seeded', value: 'active' },
+    ],
+  }];
+  assert.doesNotThrow(() => validateSettlementApplicabilityV1(events, current));
+  assert.equal(current.variables.mood, 'calm');
+  assert.equal(current.characters.get('alice').status, 'idle');
+  assert.equal(current.characters.get('alice').locationId, null);
 });
 
 function draftSnapshot(name, text) {
@@ -182,7 +210,7 @@ test('settle applies structured event patches and publishes a new verified versi
   }
 });
 
-test('settle refuses a state patch whose expected value is stale', async () => {
+test('play refuses stale preconditions and conflicting settlement writes', async () => {
   const root = await initSettlementWorld();
   try {
     await publishDraftWorkspaceMutation(root, 'plan', {
@@ -191,7 +219,7 @@ test('settle refuses a state patch whose expected value is stale', async () => {
       'days/day1/dialogue/planning.md': '# Planning\n',
       'days/day1/events/index.yaml': 'schemaVersion: 1\nids: []\n',
     }, 'plan.md');
-    await publishDraftWorkspaceMutation(root, 'play', {
+    const playFiles = (changes) => ({
       'days/day1/play.json': '{"version":1}\n',
       'days/day1/play-index.json': '{"version":1,"eventIds":["event1"]}\n',
       'days/day1/events/index.yaml': 'schemaVersion: 1\nids:\n  - event1\n',
@@ -200,15 +228,21 @@ test('settle refuses a state patch whose expected value is stale', async () => {
       'days/day1/events/event1/user-action.md': 'Continue.\n',
       'days/day1/events/event1/event.yaml': 'schemaVersion: 1\nid: event1\nbeatId: null\ntitle: Turning Point\nlocationId: null\nparticipantIds: []\nstatus: resolved\n',
       'days/day1/events/event1/result.yaml': 'schemaVersion: 1\nsummary: The situation changed.\nlearnedFacts: []\ntimeAdvanced: null\ncompletedBeatIds: []\nskippedBeatIds: []\nendDay: true\n',
-      'days/day1/events/event1/state-patch.yaml': 'schemaVersion: 1\nchanges:\n  - op: set-world-variable\n    key: mood\n    expected: wrong\n    value: focused\n',
-    }, 'play.md');
+      'days/day1/events/event1/state-patch.yaml': `schemaVersion: 1\nchanges:\n${changes}`,
+    });
 
-    const before = await readPublishedHeadV1(root);
+    const planned = await readPublishedHeadV1(root);
     await assert.rejects(
-      () => executeCliV1(['settle', root, '--json']),
+      () => publishDraftWorkspaceMutation(root, 'play', playFiles('  - op: set-world-variable\n    key: mood\n    expected: wrong\n    value: focused\n'), 'stale-play.md'),
       (error) => error?.code === 'VALIDATION_FAILED' && /precondition failed/.test(error.message),
     );
-    assert.equal((await readPublishedHeadV1(root)).commit.id, before.commit.id);
+    assert.equal((await readPublishedHeadV1(root)).commit.id, planned.commit.id);
+
+    await assert.rejects(
+      () => publishDraftWorkspaceMutation(root, 'play', playFiles('  - op: set-world-variable\n    key: mood\n    expected: calm\n    value: focused\n  - op: set-world-variable\n    key: mood\n    expected: focused\n    value: alert\n'), 'conflicting-play.md'),
+      (error) => error?.code === 'VALIDATION_FAILED' && /conflicting writes to world-variable:mood/.test(error.message),
+    );
+    assert.equal((await readPublishedHeadV1(root)).commit.id, planned.commit.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

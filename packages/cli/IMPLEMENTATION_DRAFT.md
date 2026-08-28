@@ -883,6 +883,8 @@ days/<day>/events/**
 
 `play` 不直接修改长期 character/location/arc/state。长期状态变化在 `settle` 中由结构化 event patch 确定性应用。
 
+`play` 发布前必须以当前长期 World 状态验证全部 settlement patch 的 applicability：variable key 合法、expected 与当前值一致、同一 settlement target 不得重复/冲突写入，并且所有 patch 能按 event 顺序确定性应用。`settle` 必须复用同一校验作为执行前保险，因此 Published `awaiting-settle` World 必须天然可 settle。
+
 ### 11.5 `revise`
 
 `revise` 只允许长期 World 资料，不允许 `days/**`、`profile/**` 或 `state/calendar.yaml`。
@@ -1297,6 +1299,7 @@ mutation = published
 
 ```text
 read + pin World
+→ validate settlement applicability
 → deterministic settlement changes
 → deterministic control transition
 → Patch
@@ -1933,6 +1936,7 @@ plan
 28. `status` 的 availableCommands 与实际 command guard 完全一致。
 29. `--json` stdout 始终只有一个 JSON object。
 30. `@dayloom/cli` 不依赖 `@dayloom/core`。
+31. `play` 不得发布 precondition stale、settlement target 冲突或 variable key 非法的 `awaiting-settle` World。
 
 ## 27. 实现纪律
 

@@ -5,6 +5,10 @@ import type { WorldControlV1 } from '@dayloom/archive-protocol';
 import type { ScannedWorkspaceV1 } from '../workspace/files.js';
 import { parseDomainPatchV1, type DomainPatchV1 } from './domain-patch.js';
 import { parseStableEntityIdV1 } from './entity-id.js';
+import {
+  validateSettlementApplicabilityV1,
+  type SettlementWorldStateV1,
+} from './settlement-applicability.js';
 
 export interface SettlementEventV1 {
   id: string;
@@ -119,6 +123,7 @@ async function readSettlementEventsFromSourceV1(source: DaySourceV1, day: string
     await validateEventReferencesV1(source, parsedEvent, entityIndexes);
     events.push(parsedEvent);
   }
+  validateSettlementApplicabilityV1(events, await readSettlementWorldStateV1(source, entityIndexes));
   return Object.freeze(events);
 }
 
@@ -163,6 +168,37 @@ async function readEntityIndexesV1(source: DaySourceV1): Promise<EntityIndexesV1
     return new Set(ids);
   };
   return { characters: await read('characters'), locations: await read('locations'), arcs: await read('arcs') };
+}
+
+async function readSettlementWorldStateV1(source: DaySourceV1, indexes: EntityIndexesV1): Promise<SettlementWorldStateV1> {
+  const variablesDocument = await readYamlObjectV1(source, 'state/variables.yaml');
+  if (!recordV1(variablesDocument.variables)) throw new Error('state/variables.yaml.variables must be an object.');
+  const variables = Object.fromEntries(Object.entries(variablesDocument.variables).map(([key, value]) => {
+    if (!scalarV1(value)) throw new Error(`World variable ${key} is not scalar.`);
+    return [key, value];
+  }));
+
+  const characters = new Map<string, Readonly<{ status: string; locationId: string | null }>>();
+  for (const id of indexes.characters) {
+    const state = await readYamlObjectV1(source, `characters/${id}/state.yaml`);
+    if (!nonemptyV1(state.status) || !(state.locationId === null || typeof state.locationId === 'string')) throw new Error(`Character ${id} state is invalid.`);
+    characters.set(id, Object.freeze({ status: state.status, locationId: state.locationId }));
+  }
+
+  const locations = new Map<string, Readonly<{ status: string }>>();
+  for (const id of indexes.locations) {
+    const state = await readYamlObjectV1(source, `locations/${id}/state.yaml`);
+    if (!nonemptyV1(state.status)) throw new Error(`Location ${id} state is invalid.`);
+    locations.set(id, Object.freeze({ status: state.status }));
+  }
+
+  const arcs = new Map<string, Readonly<{ stage: string }>>();
+  for (const id of indexes.arcs) {
+    const state = await readYamlObjectV1(source, `arcs/${id}/state.yaml`);
+    if (!nonemptyV1(state.stage)) throw new Error(`Arc ${id} state is invalid.`);
+    arcs.set(id, Object.freeze({ stage: state.stage }));
+  }
+  return Object.freeze({ variables: Object.freeze(variables), characters, locations, arcs });
 }
 
 function assertEventDirectoryClosureV1(source: DaySourceV1, day: string, ids: readonly string[]): void {
@@ -229,3 +265,4 @@ function exactV1(value: Record<string, unknown>, keys: readonly string[], label:
 
 const recordV1 = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const nonemptyV1 = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+const scalarV1 = (value: unknown): value is string | number | boolean | null => value === null || ['string', 'number', 'boolean'].includes(typeof value) && !(typeof value === 'number' && !Number.isFinite(value));

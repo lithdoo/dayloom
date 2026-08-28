@@ -1,4 +1,5 @@
 import { parseStableEntityIdV1 } from './entity-id.js';
+import { parseWorldVariableKeyV1 } from './variable-key.js';
 
 export type ScalarV1 = string | number | boolean | null;
 
@@ -11,8 +12,8 @@ export type DomainPatchV1 =
 
 export function parseDomainPatchV1(value: unknown): DomainPatchV1 {
   if (!record(value) || typeof value.op !== 'string') throw new Error('DomainPatchV1 is invalid.');
-  if (value.op === 'set-world-variable' && exact(value, ['op', 'key', 'expected', 'value']) && nonempty(value.key) && scalar(value.expected) && scalar(value.value)) {
-    return { op: value.op, key: value.key, expected: value.expected, value: value.value };
+  if (value.op === 'set-world-variable' && exact(value, ['op', 'key', 'expected', 'value']) && scalar(value.expected) && scalar(value.value)) {
+    return { op: value.op, key: parseWorldVariableKeyV1(value.key, 'DomainPatchV1.key'), expected: value.expected, value: value.value };
   }
   if (value.op === 'set-character-status' && exact(value, ['op', 'characterId', 'expected', 'value']) && nonempty(value.expected) && nonempty(value.value)) {
     return { op: value.op, characterId: parseStableEntityIdV1(value.characterId, 'DomainPatchV1.characterId'), expected: value.expected, value: value.value };

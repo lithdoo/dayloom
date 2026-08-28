@@ -166,6 +166,8 @@ For each events/<eventId>/ create non-empty scene.md, dialogue.md, user-action.m
 - result.yaml fields: schemaVersion: 1, summary, learnedFacts (array of non-empty strings), timeAdvanced (string or null), completedBeatIds (array of non-empty strings), skippedBeatIds (array of non-empty strings), endDay (boolean); never use objects inside these three arrays
 - state-patch.yaml fields: schemaVersion: 1 and changes: []; use an empty changes array unless a supported deterministic state change is clearly required
 
+Every state patch expected value must exactly match the current long-term World. Use each world-variable/character-status/character-location/location-status/arc-stage target at most once across the whole day, and use only World variable keys matching [A-Za-z][A-Za-z0-9_-]*.
+
 play-index.json and events/index.yaml must list exactly the event directories you create.`;
   return `REVISE scope: add, modify, or delete long-term canon/state/entity/memory/story-seed/custom World documents. Do not edit profile/**, days/**, or state/calendar.yaml. Entity deletion must remove every file under the entity ID and update its index plus all references so the complete World remains closed.`;
 }
