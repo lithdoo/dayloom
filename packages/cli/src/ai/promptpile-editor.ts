@@ -170,17 +170,17 @@ play-index.json and events/index.yaml must list exactly the event directories yo
 }
 
 function observePromptV1(): string {
-  return `Summarize only what happened in the latest tool round using exactly these fields:
+  return `Do not call or request tools. Summarize only what happened in the latest tool round using exactly these fields:
 [EVIDENCE]
 Successful reads/writes that matter; <none> if none.
 [REMAINING]
 Concrete workspace work still needed; <none> only if the Draft is applied and at least one workspace write has succeeded.
-[NEXT_TOOL_ACTION]
-One specific namespaced tool action that is necessary next; if no workspace write has succeeded, name the required mcp__workspace__write_file action instead of <none>.`;
+[SHOULD_CONTINUE]
+Exactly true if [REMAINING] is not <none> or no workspace write has succeeded; otherwise exactly false. Do not name a tool in this field.`;
 }
 
 function checkPromptV1(): string {
-  return `Use only the latest Observe. Call react_check_decision exactly once. If [NEXT_TOOL_ACTION] names one concrete necessary tool action, or [EVIDENCE] shows no successful workspace write, use {"decision":true}; otherwise use {"decision":false}. Do not continue just to explain or polish prose.`;
+  return `Use only [SHOULD_CONTINUE] from the latest Observe. Call the only available tool, react_check_decision, exactly once with {"decision":true} when that field is true, or {"decision":false} when it is false. Produce no prose and never call or repeat a tool name mentioned in [EVIDENCE] or [REMAINING].`;
 }
 
 function finalPromptV1(): string {
