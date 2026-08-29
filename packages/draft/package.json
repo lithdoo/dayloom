@@ -1,0 +1,10 @@
+{
+  "name": "@dayloom/draft",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Thin Dayloom policy wrapper around Promptpile React for interactive Draft editing.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}
