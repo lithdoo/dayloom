@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveAuthorityV1 } from '../dist/authority.js';
@@ -35,7 +35,7 @@ test('missing Draft file is allowed when its parent exists', async () => {
     });
     assert.equal(resolved.draft.mode, 'files');
     assert.equal(resolved.draft.files[0].exists, false);
-    assert.equal(resolved.draft.files[0].canonical, path.resolve(draft));
+    assert.equal(resolved.draft.files[0].canonical, path.join(await realpath(paths.drafts), 'new.md'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
