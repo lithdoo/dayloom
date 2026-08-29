@@ -48,7 +48,7 @@ export async function resolveAuthorityV1(input: {
   const conversation = await resolveConversationV1(path.resolve(cwd, input.conversation));
   const llmConfig = await resolveLlmConfigFileV1(path.resolve(cwd, input.llmConfig));
 
-  assertDisjointV1(world, draft, conversation);
+  assertDisjointV1(world, draft, conversation, llmConfig);
 
   return Object.freeze({ world, draft, conversation, llmConfig });
 }
@@ -187,6 +187,7 @@ function assertDisjointV1(
   world: WorldAuthorityV1,
   draft: DraftAuthorityV1,
   conversation: ConversationAuthorityV1,
+  llmConfig: string,
 ): void {
   const worldRoot = world.canonical;
   if (draft.mode === 'files') {
@@ -197,6 +198,9 @@ function assertDisjointV1(
       if (overlapsV1(conversation.canonical, file.canonical)) {
         throw draftErrorV1('AUTHORITY_INVALID', 'Conversation and Draft authority overlap.');
       }
+      if (file.canonical === llmConfig) {
+        throw draftErrorV1('AUTHORITY_INVALID', 'Draft authority must not include the LLM config.');
+      }
     }
   } else {
     if (overlapsV1(worldRoot, draft.root)) {
@@ -204,6 +208,9 @@ function assertDisjointV1(
     }
     if (overlapsV1(conversation.canonical, draft.root)) {
       throw draftErrorV1('AUTHORITY_INVALID', 'Conversation and Draft authority overlap.');
+    }
+    if (isPathInsideV1(draft.root, llmConfig) || draft.root === llmConfig) {
+      throw draftErrorV1('AUTHORITY_INVALID', 'Draft authority must not include the LLM config.');
     }
   }
   if (overlapsV1(worldRoot, conversation.canonical)) {

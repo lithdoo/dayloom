@@ -62,15 +62,9 @@ async function runDraftInvocationV1(
     conversation: invocation.conversation,
     llmConfig: invocation.llmConfig,
   });
-  const caller = await readLlmConfigV1(authority.llmConfig);
   const boundaries = await (dependencies.resolveBoundaries?.() ?? resolvePromptpileBoundariesV1());
   const reactBin = dependencies.reactBin ?? boundaries.reactBin;
-
-  await appendConversationUserV1({
-    promptpileBin: boundaries.promptpileBin,
-    directory: authority.conversation.canonical,
-    message: invocation.message,
-  });
+  const caller = await readLlmConfigV1(authority.llmConfig);
 
   const operationRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-draft-'));
   let startedReact = false;
@@ -89,6 +83,11 @@ async function runDraftInvocationV1(
     });
     try {
       await writeReactSidecarsV1(reactRoot, resolved.command, authority, runtime.binding.toolsFile, runtime.binding.afterHookPath, caller);
+      await appendConversationUserV1({
+        promptpileBin: boundaries.promptpileBin,
+        directory: authority.conversation.canonical,
+        message: invocation.message,
+      });
       startedReact = true;
       const exitCode = await runPromptpileReactV1({
         reactBin,

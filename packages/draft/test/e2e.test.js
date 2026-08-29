@@ -7,6 +7,7 @@ import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { executeCliV1 } from '@dayloom/cli';
 import { executeDraftV1 } from '../dist/run.js';
+import { resolvePromptpileBoundariesV1 } from '../dist/binaries.js';
 import { makePublishedWorld } from './support/world.mjs';
 
 const fakeReact = fileURLToPath(new URL('./support/fake-react.mjs', import.meta.url));
@@ -255,6 +256,56 @@ test('invalid World, unavailable command, and World/Draft overlap fail before Re
       ]),
       (error) => error.code === 'AUTHORITY_INVALID',
     );
+
+    const nested = path.join(root, 'workspace');
+    await mkdir(nested);
+    const nestedConfig = path.join(nested, 'promptpile.toml');
+    await writeFile(nestedConfig, await readFile(invalidConfig, 'utf8'), 'utf8');
+    const stamp = path.join(root, 'react-started-llm');
+    await assert.rejects(
+      () => runDraft(root, [
+        '--world', overlapWorld,
+        '--draft-dir', nested,
+        '--conversation', path.join(root, 'c3'),
+        '--llm-config', nestedConfig,
+        '--message', 'x',
+      ], { stamp }),
+      (error) => error.code === 'AUTHORITY_INVALID' && /LLM config/.test(error.message),
+    );
+    await assert.rejects(() => readFile(stamp));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('MCP setup failure does not append Conversation', async () => {
+  const root = await tempDir();
+  try {
+    const world = path.join(root, 'world');
+    await mkdir(world);
+    const conversation = path.join(root, 'conversation');
+    const failingMcp = path.join(root, 'fail-mcp.mjs');
+    await writeFile(failingMcp, 'process.exit(1);\n', 'utf8');
+    const real = await resolvePromptpileBoundariesV1();
+    const config = await llmConfig(root);
+    await assert.rejects(
+      () => executeDraftV1([
+        '--world', world,
+        '--draft', path.join(root, 'd.md'),
+        '--conversation', conversation,
+        '--llm-config', config,
+        '--message', 'hello',
+      ], {
+        cwd: root,
+        reactBin: fakeReact,
+        resolveBoundaries: async () => ({
+          ...real,
+          promptpileMcpBin: failingMcp,
+        }),
+      }),
+      (error) => error.code === 'MCP_FAILED',
+    );
+    await assert.rejects(() => readdir(conversation));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

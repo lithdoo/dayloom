@@ -42,11 +42,11 @@ dayloom-draft [command] [options]
         ↓
 规范化并校验 World / Draft authority
         ↓
-append 一条 user message 到 Promptpile Conversation
-        ↓
 准备 Dayloom prompts + MCP capabilities
         ↓
-运行 promptpile-react
+append 一条 user message 到 Promptpile Conversation
+        ↓
+立即运行 promptpile-react
         ↓
 原样转发输出并返回退出状态
 ```
@@ -301,6 +301,21 @@ canonical path 相同
 
 这样不存在“同一路径同时被 World RO 与 Draft RW 授权”的冲突。
 
+### 5.5 LLM config 不得落入 Draft 可写范围
+
+`--llm-config` **MUST NOT** 落在本轮 Draft write authority 内。
+
+以下情况均 **MUST** 拒绝：
+
+```text
+--llm-config 正是某个 --draft 文件
+--llm-config 位于 --draft-dir 子树内
+canonical path 相同
+通过 symlink 形成上述任一关系
+```
+
+本次 invocation 在 React 启动前已经读出 config，但 Agent 仍可改写下一次 invocation 使用的模型 / provider。这不属于 Draft 的业务 authority。
+
 ---
 
 ## 6. Conversation 契约
@@ -314,9 +329,20 @@ Conversation 目录可以不存在；V1 **MUST** 按 Promptpile public CLI 能�
 一轮调用的 Conversation 写入顺序固定为：
 
 ```text
-1. 将 --message 作为一条 user message append 到 --conversation
-2. 运行一次 promptpile-react
-3. Final 通过 React --continue 写回同一个 --conversation
+1. 完成确定性 setup：MCP gateway、tools 导出、prompts、derived React config
+2. 将 --message 作为一条 user message append 到 --conversation
+3. 立即运行一次 promptpile-react
+4. Final 通过 React --continue 写回同一个 --conversation
+```
+
+事务边界：
+
+```text
+preflight / setup 失败
+→ Conversation 不变
+
+React execution 失败
+→ 已发布的 user message 可以保留
 ```
 
 User message append **MUST** 使用 Promptpile 的公开 Conversation CLI 语义，例如等价于：
@@ -338,7 +364,7 @@ Dayloom **MUST NOT** 解析或直接写 Promptpile Conversation 内部文件格�
 
 同一 `--conversation` 被后续 invocation 再次使用时，即自然延续同一上下文。
 
-注意：user message append 成功后，如果后续 React 失败，该已发布 user message不回滚；这一行为沿用 Promptpile React / Promptpile 的原生语义。
+注意：user message append 成功后，如果后续 React 失败，该已发布 user message 不回滚；这一行为沿用 Promptpile React / Promptpile 的原生语义。该语义只适用于 React 已经开始之后的失败。MCP gateway、tools 导出或 derived config 等确定性 setup 尚未完成时，**MUST NOT** 修改 Conversation。
 
 ---
 
@@ -457,6 +483,7 @@ Dayloom **MUST NOT**：
 - invalid World；
 - 无效 Draft path / Draft dir；
 - World / Draft authority overlap；
+- `--llm-config` 落在 Draft write authority 内；
 - path traversal / symlink authority escape；
 - MCP authority 无法安全建立；
 - `--llm-config` 无法使用；
@@ -469,6 +496,8 @@ Dayloom **MUST NOT**：
 - Dayloom 不应把具体 React failure 无必要地抹平成一个通用错误。
 
 所有 filesystem authority 错误 **MUST** fail closed。
+
+确定性 setup（MCP gateway、tools 导出、prompts、derived config）失败时，**MUST NOT** 向 Conversation append user message。
 
 ---
 
@@ -551,6 +580,29 @@ World/Draft canonical overlap → fail before React
 stream-json → stdout 仍是原生 React Agent Event Protocol v1 JSONL
 ```
 
+另外 **MUST** 有一条真实 Promptpile 闭环 smoke（不必覆盖全部 E2E 矩阵）：
+
+```text
+real promptpile-react
+real promptpile
+real promptpile-mcp
+real filesystem MCP
+local OpenAI-compatible stub（固定 Thought → Observe → Check → Final）
+```
+
+验证最小链：
+
+```text
+message
+→ real React
+→ real ToolCall artifact
+→ real after-hook
+→ real MCP
+→ Draft file changed
+→ Final persisted
+→ stream completed
+```
+
 ---
 
 ## 12. V1 Done
@@ -565,7 +617,8 @@ stream-json → stdout 仍是原生 React Agent Event Protocol v1 JSONL
 6. Conversation 完全通过 Promptpile public semantics 创建、延续和持久化；
 7. `terminal` / `stream-json` 保持 React 原生输出契约，不存在第二套 Dayloom event protocol；
 8. 生成的 Draft 可无需转换直接交给 `@dayloom/cli`；
-9. 没有引入第二套 Dayloom Session / Conversation / Agent Runtime。
+9. 没有引入第二套 Dayloom Session / Conversation / Agent Runtime；
+10. 至少一条真实 `promptpile-react` + `promptpile-mcp` integration smoke 证明 primitive 闭环。
 
 V1 明确不包含：自动 compression、archive search、fork、TUI、Draft schema、Draft-to-World converter、World publication 或 settle。这些能力继续由 Promptpile / `@dayloom/cli` 组合提供，除非未来出现明确业务需求。
 

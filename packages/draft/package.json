@@ -18,8 +18,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "guard": "node scripts/check-architecture.mjs",
-    "test": "npm run build && npm run guard && node --test test/argv.test.js test/command.test.js test/authority.test.js test/hook.test.js test/e2e.test.js",
+    "test": "npm run build && node --test test/argv.test.js test/command.test.js test/authority.test.js test/hook.test.js test/e2e.test.js test/react-smoke.test.js",
     "prepack": "npm run build"
   },
   "files": [

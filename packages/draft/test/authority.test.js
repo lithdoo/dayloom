@@ -104,6 +104,40 @@ test('existing Draft symlink is rejected', { skip: process.platform === 'win32' 
   }
 });
 
+test('Draft authority must not include the LLM config file', async () => {
+  const root = await tempDir();
+  try {
+    const paths = await layout(root);
+    await assert.rejects(
+      () => resolveAuthorityV1({
+        world: paths.world,
+        drafts: [paths.llmConfig],
+        draftDir: null,
+        conversation: paths.conversation,
+        llmConfig: paths.llmConfig,
+      }),
+      (error) => error.code === 'AUTHORITY_INVALID' && /LLM config/.test(error.message),
+    );
+
+    const workspace = path.join(root, 'workspace');
+    await mkdir(workspace);
+    const nestedConfig = path.join(workspace, 'promptpile.toml');
+    await writeFile(nestedConfig, '[promptpile]\nllm_api_model = "test"\n', 'utf8');
+    await assert.rejects(
+      () => resolveAuthorityV1({
+        world: paths.world,
+        drafts: [],
+        draftDir: workspace,
+        conversation: paths.conversation,
+        llmConfig: nestedConfig,
+      }),
+      (error) => error.code === 'AUTHORITY_INVALID' && /LLM config/.test(error.message),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Draft directory must already exist and cannot contain the World', async () => {
   const root = await tempDir();
   try {

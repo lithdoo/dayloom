@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { DraftCommandV1 } from './argv.js';
 
 export function packageVersionV1(): string {
   const metadata = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version?: unknown };
@@ -31,17 +30,4 @@ Options:
   --help                                Show this help
   --version                             Show version
 `;
-}
-
-export function commandAppendixV1(command: DraftCommandV1): string {
-  if (command === 'init') {
-    return `INIT: capture the user's intended initial World. Draft the premise, rules, tone, user role, and any starting entities as semantic notes. Do not emit Archive files, Patch JSON, or a mutation plan.`;
-  }
-  if (command === 'plan') {
-    return `PLAN: capture the user's intent for the next day. Draft goals, scenes, beats, and constraints. Do not write days/** or control files.`;
-  }
-  if (command === 'play') {
-    return `PLAY: capture the user's play of the current day. Draft what happened, dialogue, choices, and unresolved threads. Do not write event YAML or settlement records.`;
-  }
-  return `REVISE: capture the user's intended long-term World revisions. Draft which canon, entities, or memory should change. Do not edit profile/**, days/**, or Archive protocol files.`;
 }
