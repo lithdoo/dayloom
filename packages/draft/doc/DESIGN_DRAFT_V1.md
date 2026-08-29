@@ -1,49 +1,83 @@
-# Dayloom Draft V1 — Design Draft
+# Dayloom Draft V1 — 冻结实施契约
 
-Status: draft
+状态：**frozen-for-implementation**
 
-## 1. Goal
+本文档定义 `@dayloom/draft` V1 的冻结实施契约。除非后续明确修改本契约，否则实现应以本文为准。
 
-`@dayloom/draft` is a deliberately thin Dayloom-specific wrapper around `promptpile-react`.
+---
 
-It does not define a new conversation runtime, session model, memory system, or agent protocol. Its job is to bind Dayloom-specific prompts and MCP policy to an existing Promptpile Conversation and forward one user turn into one Promptpile React run.
+## 1. 目标
 
-The intended shape is:
+`@dayloom/draft` 是一个刻意保持轻薄的 Dayloom 业务封装，底层直接建立在 `promptpile-react` 之上。
+
+它只负责：
+
+- 根据当前 World 状态校验或推导 Dayloom Draft command；
+- 将 World 以只读能力暴露给 React agent；
+- 将显式选择的 Draft 文件或 Draft 目录以精确读写能力暴露给 React agent；
+- 注入 Dayloom 业务 prompt 与 MCP policy；
+- 对一条用户消息执行一次 `promptpile-react`；
+- 尽量原样转发 React 的 stdout、stderr 与退出状态。
+
+它 **MUST NOT** 再定义一套 Conversation runtime、Session 模型、Memory 系统、Agent protocol 或第二套 orchestration engine。
+
+V1 的核心等式：
 
 ```text
-user input
-   ↓
 @dayloom/draft
-   ↓
-Dayloom prompts + Dayloom MCP policy
-   ↓
+=
 promptpile-react
-   ↓
-Promptpile Conversation + React output
++ Dayloom command policy
++ Dayloom business prompts
++ Dayloom MCP authority wiring
 ```
 
-The package should remain close to this model unless concrete product requirements force a deeper abstraction.
+---
 
-## 2. Core principles
+## 2. 唯一主执行路径
 
-1. One invocation is one React turn.
-2. Conversation ownership belongs to Promptpile.
-3. Draft ownership remains file-native and explicit in CLI arguments.
-4. World access is read-only.
-5. Draft access is read-write, constrained by the exact Draft input authority selected by the caller.
-6. Dayloom injects business prompts and MCP policy, but does not redefine Promptpile orchestration.
-7. Promptpile React stdout/stderr/output-format/exit semantics should be forwarded with as little translation as possible.
-8. V1 should not introduce `DraftRuntime`, `DraftSession`, `ConversationManager`, `MemoryManager`, `TurnCoordinator`, or equivalent deep abstractions.
+V1 **MUST** 只实现一条主路径：
 
-## 3. Proposed CLI surface
+```text
+dayloom-draft [command?] [options]
+        ↓
+解析 CLI 参数
+        ↓
+分类 World
+        ↓
+校验或推导 command
+        ↓
+解析 Draft authority
+        ↓
+准备 Dayloom prompts
+        ↓
+准备 MCP capabilities
 
-The initial command is a single-turn command. The Dayloom business command is an optional positional argument:
+  World → read-only
+  Draft → read-write
+        ↓
+调用 promptpile-react
+        ↓
+转发 stdout / stderr
+        ↓
+返回 React 退出状态
+```
+
+一次 `dayloom-draft` invocation **MUST** 对应一次 Promptpile React turn。
+
+V1 **MUST NOT** 在 React 外层再实现独立 Dayloom agent loop。
+
+---
+
+## 3. CLI 契约
+
+### 3.1 语法
 
 ```text
 dayloom-draft [command] [options]
 ```
 
-Supported Draft-driven commands in V1:
+`command` 可选，V1 仅支持：
 
 ```text
 init
@@ -52,95 +86,118 @@ play
 revise
 ```
 
-Commands such as `settle`, `abandon`, `status`, and `verify` are not Draft-generation commands and are out of scope for this package.
-
-Example with an explicit command:
-
-```bash
-dayloom-draft play \
-  --world ./world \
-  --draft ./draft.md \
-  --conversation ./conversation \
-  --llm-config ./promptpile.toml \
-  --message "今天先去找林" \
-  --output-format stream-json
-```
-
-Example with command inference:
-
-```bash
-dayloom-draft \
-  --world ./world \
-  --draft ./draft.md \
-  --conversation ./conversation \
-  --llm-config ./promptpile.toml \
-  --message "继续今天的行动"
-```
-
-Proposed arguments:
+以下命令不属于 Draft 生成范围，不由本包处理：
 
 ```text
-[command]                     optional: init | plan | play | revise
+settle
+abandon
+status
+verify
+```
 
---world <dir>                 required exactly once
---draft <file>                repeatable; one or more explicit Draft files
---draft-dir <dir>             one Draft directory; mutually exclusive with --draft
---conversation <dir>          required exactly once
---llm-config <file>           required exactly once
---message <text>              required exactly once for V1
---output-format <mode>        optional: text | stream-json; default text
+### 3.2 参数
+
+```text
+--world <dir>
+
+--draft <file>
+--draft <file> ...
+        OR
+--draft-dir <dir>
+
+--conversation <dir>
+--llm-config <file>
+--message <text>
+
+--output-format <text|stream-json>
+
 --help
 --version
 ```
 
-`--draft` and `--draft-dir` mirror the existing `@dayloom/cli` Draft input surface.
-
-The CLI should reject duplicate non-repeatable options and unknown arguments.
-
-## 4. Command selection and World-state validation
-
-The selected Dayloom command determines the business prompt and any command-specific MCP policy for the React turn.
-
-### 4.1 Explicit command
-
-If the caller supplies a command, it is authoritative user intent, but it must still be valid for the current World state.
-
-Conceptually:
+普通 React invocation 中，以下参数 **MUST** 恰好出现一次：
 
 ```text
-explicit command
-   ↓
-classify current World
-   ↓
-compute available Draft-driven commands
-   ↓
-command available?
-   ├─ yes → use it
-   └─ no  → fail closed
+--world
+--conversation
+--llm-config
+--message
 ```
 
-The wrapper must not run a `play` Draft turn against a World that is not in a state where `play` is available, and must apply the same principle to `init`, `plan`, and `revise`.
-
-### 4.2 Omitted command
-
-If the caller omits the command, the package may infer it from the current World state only when exactly one Draft-driven command is available.
-
-Rules:
+Draft 输入 **MUST** 二选一：
 
 ```text
-available Draft-driven commands = [exactly one]
-→ infer that command
-
-available Draft-driven commands = []
-→ fail: current World state cannot start a Draft-driven command
-
-available Draft-driven commands = [more than one]
-→ fail: command is ambiguous; caller must specify it explicitly
+一个或多个 --draft
 ```
 
-The package must not silently choose a default when multiple business commands are valid.
+或：
 
-Example:
+```text
+一个 --draft-dir
+```
+
+`--draft` 与 `--draft-dir` **MUST** 互斥。
+
+重复的非 repeatable 参数、未知参数或非法值 **MUST** 在启动 React 前失败。
+
+---
+
+## 4. Command 语义
+
+### 4.1 显式 command
+
+调用方显式传入：
+
+```text
+init | plan | play | revise
+```
+
+时，该 command 表示用户的明确业务意图，但仍 **MUST** 与当前 World 状态进行校验。
+
+若当前 World 不允许该 command：
+
+```text
+requested command
+        ↓
+current World classification
+        ↓
+available Draft-driven commands
+        ↓
+requested command 不可用
+        ↓
+fail before React
+```
+
+实现 **MUST NOT** 自动替换成其他 command。
+
+### 4.2 省略 command
+
+command 可省略，但只能在唯一可推导时自动决定。
+
+定义：
+
+```text
+available = 当前 World 可用命令
+            ∩
+            { init, plan, play, revise }
+```
+
+规则：
+
+```text
+available.length == 1
+→ 自动使用唯一 command
+
+available.length == 0
+→ fail
+
+available.length > 1
+→ fail: ambiguous command
+```
+
+实现 **MUST NOT** 对歧义状态设默认 command。
+
+例如：
 
 ```text
 uninitialized World
@@ -154,43 +211,79 @@ planned World
 idle World
 → available: plan, revise
 → ambiguous
-→ require explicit command
+→ 必须显式指定
 ```
 
-The exact availability rules should reuse the existing Dayloom World classification / command-availability semantics rather than define a second state machine in `@dayloom/draft`.
+### 4.3 不复制 World 状态机
 
-### 4.3 Missing, uninitialized, valid, and invalid World
+`@dayloom/draft` **SHOULD** 复用 Dayloom 已有的 World classification 与 command availability 逻辑。
 
-Command inference must distinguish at least these cases:
+若现有逻辑过度耦合在 `@dayloom/cli` 内，实现 **MAY** 抽出最小纯业务模块，例如：
+
+```ts
+classifyWorld(...)
+availableCommands(...)
+```
+
+但 **MUST NOT** 因此重新引入新的 Dayloom Core / Runtime。
+
+---
+
+## 5. World 分类
+
+至少 **MUST** 区分：
 
 ```text
-missing/uninitialized World
+missing / uninitialized
 valid World
-invalid/corrupt World
+invalid World
 ```
 
-A missing or uninitialized World may make `init` uniquely available.
+### 5.1 missing / uninitialized
 
-An invalid or corrupt World must fail closed. It must not be treated as equivalent to an uninitialized World and must not be auto-inferred as `init`.
+真正缺失或未初始化的 World **MAY** 使 `init` 成为唯一候选，因此允许自动推导为 `init`。
 
-## 5. Draft input authority
+### 5.2 valid World
 
-V1 supports three forms of Draft input.
+有效 World **MUST** 使用 Dayloom 权威规则计算当前可用 command。
 
-### 5.1 Single file
+### 5.3 invalid World
+
+损坏、不一致或非法 World **MUST** fail closed。
+
+特别是：
+
+```text
+invalid World
+≠
+uninitialized World
+```
+
+非法 World **MUST NOT** 被自动推导成 `init`。
+
+---
+
+## 6. Draft 输入与写权限
+
+Draft 参数同时定义：
+
+1. 本轮业务语义输入；
+2. Agent 可写的精确 authority boundary。
+
+### 6.1 单文件
 
 ```bash
 --draft ./draft.md
 ```
 
-Authority:
+权限：
 
 ```text
 read:  ./draft.md
 write: ./draft.md
 ```
 
-### 5.2 Multiple explicit files
+### 6.2 多文件
 
 ```bash
 --draft ./intent.md \
@@ -198,9 +291,9 @@ write: ./draft.md
 --draft ./constraints.md
 ```
 
-`--draft` is repeatable.
+`--draft` 可重复。
 
-Authority is the exact selected file set:
+权限 **MUST** 精确等于显式文件集合：
 
 ```text
 read/write:
@@ -209,320 +302,75 @@ read/write:
   ./constraints.md
 ```
 
-Selecting files does not implicitly grant write access to sibling files in their parent directories.
+若选择：
 
-### 5.3 Draft directory
+```text
+draft/intent.md
+draft/notes.md
+```
+
+则 **MUST NOT** 自动获得：
+
+```text
+draft/other.md
+draft/secret.md
+```
+
+的访问权限。
+
+### 6.3 Draft 目录
 
 ```bash
 --draft-dir ./draft
 ```
 
-Authority:
+权限：
 
 ```text
 read/write: ./draft/**
 ```
 
-The exact create/delete policy can be constrained by the MCP tool surface. The important V1 rule is that the selected directory is the Draft capability boundary.
+若 MCP 能力允许，V1 **MAY** 在该子树内创建或删除文件，但所有写操作 **MUST** 被限制在该目录子树内。
 
-### 5.4 Mutual exclusion
+任何 path traversal 或越界访问 **MUST** fail closed。
 
-The two input forms are mutually exclusive:
+---
 
-```text
-one or more --draft
-OR
-one --draft-dir
-```
+## 7. World authority
 
-They must not be supplied together.
+`--world <dir>` 指定当前 Dayloom World，同时也是 command 校验 / 推导的依据。
 
-At least one Draft input form is required.
-
-## 6. World authority
-
-`--world <dir>` identifies the Dayloom World available to the agent and is also the source used for command validation/inference.
-
-World access presented to the React agent is strictly read-only.
-
-The React agent may inspect the World to understand current canon, control state, plans, entities, and other relevant context, but it must not modify the World.
-
-This restriction must be enforced at the actual MCP/tool boundary rather than only through prompting.
-
-Conceptually:
+向 React agent 暴露的 World 能力 **MUST** 为只读：
 
 ```text
-World  → RO
-Draft  → RW
+World
+  read  = allowed
+  write = forbidden
 ```
 
-## 7. Conversation ownership
+Agent 可按 command 需要检查 canon、control、plan、entity、day artifacts 等内容，但不能修改 World。
 
-`--conversation <dir>` points to the Promptpile Conversation used for the turn.
+只读限制 **MUST** 在实际 MCP/tool boundary 上执行，不能只依赖 prompt。
 
-`@dayloom/draft` does not define another conversation representation and should not duplicate Promptpile conversation state.
+---
 
-Repeated invocations against the same Conversation continue the same interaction:
+## 8. 与 @dayloom/cli 的边界
 
-```bash
-dayloom-draft play ... --conversation ./conversation --message "先调查酒馆"
-
-dayloom-draft play ... --conversation ./conversation --message "还是先不要找老板"
-```
-
-The Conversation directory remains Promptpile-native and may later use Promptpile compression, archive search, fork, and related lifecycle tooling without requiring a Dayloom-specific conversation format.
-
-## 8. User message
-
-`--message <text>` supplies the user message for this React turn.
-
-V1 treats one invocation as exactly one user-message turn, so exactly one message is required.
-
-The initial implementation may pass this message into Promptpile React through the most direct supported input path. Supporting stdin or message-file input can be added later if a concrete need appears; those forms are not part of the initial V1 CLI contract yet.
-
-## 9. Promptpile React integration
-
-The central implementation should be close to a parameterized `promptpile-react` invocation.
-
-The wrapper should provide:
-
-- the resolved Dayloom command;
-- Dayloom Thought prompt;
-- Dayloom Observe prompt;
-- Dayloom Check prompt;
-- Dayloom Final prompt;
-- MCP configuration/tool surface for World and Draft;
-- the caller-provided Conversation directory;
-- the caller-provided LLM configuration;
-- the caller-provided user message;
-- the requested Promptpile React output format.
-
-Conceptually:
-
-```text
-parse arguments
-   ↓
-classify World
-   ↓
-validate or infer command
-   ↓
-validate paths and Draft authority
-   ↓
-launch/configure Dayloom MCP services
-   ↓
-prepare command-specific Dayloom React prompts
-   ↓
-invoke promptpile-react
-   ↓
-forward output
-   ↓
-return React exit status
-```
-
-No independent Dayloom agent loop should sit around React in V1.
-
-## 10. React turn behavior
-
-A single invocation corresponds to one Promptpile React session for the supplied user message.
-
-Expected business behavior:
-
-```text
-User message
-   ↓
-Thought
-  - understand the latest user intent
-  - inspect World when needed
-  - inspect existing Draft when needed
-  - update Draft through allowed tools
-   ↓
-Observe
-  - assess whether this turn's Draft work is complete
-   ↓
-Check
-  - continue or stop according to React semantics
-   ↓
-Final
-  - produce the user-facing reply
-```
-
-The Dayloom wrapper should rely on Promptpile React for Thought/Observe/Check/Final orchestration rather than recreating it.
-
-## 11. MCP composition
-
-V1 needs two logical capabilities.
-
-### World MCP
-
-Read-only tools only.
-
-Typical capabilities may include:
-
-```text
-list_directory
-read file content
-search files/content
-directory tree
-```
-
-No write/delete/mutation tool should be exported.
-
-### Draft MCP
-
-Read-write tools constrained to the selected Draft authority.
-
-For explicit-file mode, writes are limited to the selected files.
-
-For directory mode, writes are limited to the selected subtree.
-
-The exact upstream MCP implementation is an implementation detail. The externally important contract is the capability boundary.
-
-## 12. Command-specific business prompt responsibility
-
-The core value of this package is Dayloom-specific policy, not generic agent runtime infrastructure.
-
-The resolved command selects the relevant Dayloom business prompt set.
-
-For example:
-
-```text
-init
-  - World may be missing/uninitialized
-  - build initial Draft intent for World creation
-
-plan
-  - inspect current World read-only
-  - focus on next-day planning intent
-
-play
-  - inspect current World and current plan read-only
-  - focus on current-day action/play intent
-
-revise
-  - inspect existing long-term World read-only
-  - focus on requested revision intent
-```
-
-The prompts should establish rules such as:
-
-- Draft is semantic input for later Dayloom CLI execution;
-- Draft is not a World mutation DSL;
-- current World may be inspected but not modified;
-- user intent should be reflected in Draft content;
-- superseded or rejected intent should not remain authoritative merely because it appeared earlier in the conversation;
-- the model must not treat its own suggestions as user-confirmed intent;
-- Final should be natural user-facing conversation rather than an internal Draft dump.
-
-The exact prompt content is intentionally left open in this design draft.
-
-## 13. Output format and stream ownership
-
-V1 should use the Promptpile React term `--output-format` rather than introduce a separate Dayloom `--pipe` abstraction.
-
-Supported initial values:
-
-```bash
---output-format text
---output-format stream-json
-```
-
-Default:
-
-```text
-text
-```
-
-The option should map as directly as possible to Promptpile React's native output-format behavior.
-
-For `stream-json`:
-
-```text
-stdout = Promptpile React Agent Event Protocol v1 JSONL
-stderr = human diagnostics / child stderr
-exit status = Promptpile React execution result
-```
-
-No separate `--channel` argument is needed in V1 because Promptpile React already owns and defines stdout/stderr channel semantics for its machine-readable stream.
-
-V1 should avoid:
-
-- defining a Dayloom output channel abstraction;
-- renaming React events;
-- wrapping every event in a Dayloom envelope;
-- parsing and serializing output unnecessarily;
-- changing stdout/stderr ownership without a concrete requirement.
-
-This allows a future TUI to consume the Promptpile React stream directly through this thin Dayloom command.
-
-## 14. LLM configuration
-
-`--llm-config <file>` is the Promptpile/Promptpile React configuration supplied by the caller.
-
-Dayloom should not introduce a separate provider/model configuration layer in V1.
-
-Provider profiles, model selection, base URLs, API key environment variables, temperatures, and other model-specific options remain Promptpile configuration concerns.
-
-## 15. CLI validation summary
-
-The initial V1 parser should enforce the following surface-level rules:
-
-```text
-command
-  optional positional
-  allowed: init | plan | play | revise
-  if provided: must be valid for current World state
-  if omitted: infer only when exactly one Draft-driven command is available
-
---world
-  required exactly once
-
---draft
-  repeatable
-  one or more when file mode is selected
-
---draft-dir
-  at most once
-  mutually exclusive with --draft
-
-Draft input
-  exactly one of:
-    one or more --draft
-    one --draft-dir
-
---conversation
-  required exactly once
-
---llm-config
-  required exactly once
-
---message
-  required exactly once
-
---output-format
-  optional
-  values: text | stream-json
-  default: text
-```
-
-Unknown arguments, duplicate non-repeatable arguments, invalid values, invalid World state, invalid Draft authority, or ambiguous command inference should fail before starting Promptpile React.
-
-## 16. Relationship with @dayloom/cli
-
-`@dayloom/draft` and `@dayloom/cli` intentionally have opposite authority over the same boundary.
+两个包刻意保持相反 authority：
 
 ```text
 @dayloom/draft
-  World → read-only
-  Draft → read-write
+  World → RO
+  Draft → RW
 
 @dayloom/cli
-  Draft → read-only semantic input
-  World workspace → controlled mutation
+  Draft → RO semantic input
+  World → controlled mutation
 ```
 
-A Draft produced or edited by this package should be directly reusable as input to the existing CLI.
+`@dayloom/draft` 生成或维护的 Draft **MUST** 能直接传给 `@dayloom/cli`，不应存在格式转换步骤。
 
-Examples:
+例如：
 
 ```bash
 dayloom-draft play \
@@ -534,7 +382,7 @@ dayloom-draft play \
   --message "不要主动攻击守卫"
 ```
 
-Then:
+之后可以直接：
 
 ```bash
 dayloom play ./world \
@@ -543,98 +391,548 @@ dayloom play ./world \
   --llm-config ./promptpile.toml
 ```
 
-Or directory mode:
+目录模式同理。
+
+---
+
+## 9. Conversation ownership
+
+`--conversation <dir>` 指向本轮使用的 Promptpile Conversation。
+
+Conversation 的格式、持久化和生命周期完全属于 Promptpile。
+
+`@dayloom/draft` **MUST NOT** 定义：
+
+- 平行 Conversation 格式；
+- Dayloom Session 数据库；
+- 重复消息历史；
+- Dayloom 私有 turn id；
+- 另一套 persistence protocol。
+
+对同一个 Conversation 目录重复调用，应通过 Promptpile 原生语义自然延续上下文。
 
 ```bash
-dayloom-draft \
-  --world ./world \
-  --draft-dir ./draft \
+dayloom-draft play ... \
   --conversation ./conversation \
-  --llm-config ./promptpile.toml \
-  --message "继续完善今天的行动意图"
+  --message "先调查酒馆"
 
-# command may be inferred as play when play is uniquely available
-# later
-
-dayloom play ./world \
-  --draft-dir ./draft \
-  --llm-config ./promptpile.toml
+dayloom-draft play ... \
+  --conversation ./conversation \
+  --message "还是先不要找老板"
 ```
 
-There should be no Draft format conversion step between the two packages.
+未来的 compression、archive search、fork 等能力仍应直接组合 Promptpile 生态，而不是被 Dayloom 重新封装。
 
-## 17. Promptpile ecosystem compatibility
+---
 
-V1 does not need to wrap every Promptpile package, but its thin architecture should remain compatible with them.
+## 10. 用户消息
 
-In particular:
-
-- `promptpile-react` remains the agent loop;
-- `promptpile-mcp` can provide tool execution/gateway composition;
-- `promptpile-compress` may maintain a long Conversation independently;
-- `promptpile-compress-grep-search` may expose archived Conversation history when needed;
-- `promptpile-fork` may snapshot or branch a Conversation directly;
-- `promptpile-protocol` remains the stable protocol surface when Dayloom must interpret a public Promptpile artifact.
-
-These capabilities should not be hidden behind new Dayloom equivalents unless a real business requirement appears.
-
-## 18. Non-goals for V1
-
-V1 explicitly does not introduce:
-
-- a Dayloom-owned Conversation protocol;
-- a Dayloom Session database;
-- persistent Draft revision/CAS machinery;
-- a second agent orchestration engine;
-- a generic memory abstraction;
-- a custom event protocol;
-- a custom stdout/stderr channel abstraction;
-- a Draft-to-World converter;
-- World publication;
-- settle logic;
-- conversation branching abstractions;
-- automatic Draft schema design;
-- TUI behavior.
-
-Those concerns either already belong to Promptpile / `@dayloom/cli` or should be added only after concrete requirements appear.
-
-## 19. Initial implementation shape
-
-The implementation should stay small. A likely initial layout is:
+V1 一次 invocation 接受且只接受一条新消息：
 
 ```text
-packages/draft/
-  package.json
-  README.md
-  doc/
-    DESIGN_DRAFT_V1.md
-  src/
-    main.ts
-    argv.ts
-    react.ts
-    mcp.ts
-    prompts/
-      init/
-      plan/
-      play/
-      revise/
+--message <text>
 ```
 
-Prompt files may later be split into Thought/Observe/Check/Final files per command if that proves clearer. This layout is illustrative, not a requirement. If the implementation can remain simpler, fewer files are preferred.
+Wrapper **MUST NOT** 将一条消息拆成多个隐藏 Dayloom turn，也 **MUST NOT** 额外制造隐藏 user message。
 
-## 20. V1 summary
+stdin / message-file 暂不属于冻结 V1 CLI；若未来需要，应单独修改本契约。
 
-The intended primitive is:
+---
+
+## 11. LLM 配置
 
 ```text
-@dayloom/draft
-=
-promptpile-react
-+ Dayloom command resolution
-+ Dayloom business prompts
-+ Dayloom MCP authority wiring
+--llm-config <file>
 ```
 
-The command accepts an existing Promptpile Conversation, a read-only World, and either explicit Draft files or a Draft directory. It validates or infers one Draft-driven Dayloom command, runs one React turn for one user message, and forwards React output with minimal abstraction.
+直接使用 Promptpile / Promptpile React 的 LLM 配置。
 
-The package should remain low-level, file-native, explicit, and composable so a future TUI can build on it without inheriting another heavyweight core runtime.
+Dayloom **MUST NOT** 再定义 provider / model 配置层。
+
+以下继续由 Promptpile 管理：
+
+- provider；
+- model；
+- base URL；
+- API key 环境变量；
+- temperature；
+- 其他模型参数。
+
+---
+
+## 12. Output 契约
+
+V1 使用：
+
+```text
+--output-format <text|stream-json>
+```
+
+默认：
+
+```text
+text
+```
+
+### 12.1 text
+
+```text
+--output-format text
+```
+
+使用 Promptpile React 正常的人类可读输出行为。
+
+### 12.2 stream-json
+
+```text
+--output-format stream-json
+```
+
+直接映射 Promptpile React 原生 structured output。
+
+契约：
+
+```text
+stdout
+→ Promptpile React Agent Event Protocol v1 JSONL
+
+stderr
+→ diagnostics / operational errors
+
+exit status
+→ React execution status
+```
+
+`@dayloom/draft` **MUST NOT** 再定义一层 Dayloom event protocol。
+
+它 **MUST NOT**：
+
+- 重命名 React event；
+- 用 Dayloom envelope 包裹 event；
+- 暴露隐藏 Thought / Observe / Check 文本；
+- 无必要地 parse + reserialize stream。
+
+### 12.3 不提供 channel 参数
+
+V1 **MUST NOT** 增加：
+
+```text
+--channel
+```
+
+stdout / stderr ownership 已由 Promptpile React 定义。
+
+---
+
+## 13. React 集成
+
+实现 **SHOULD** 尽可能接近一次参数化的 `promptpile-react` invocation。
+
+Dayloom 只提供：
+
+- resolved command；
+- Dayloom business prompts；
+- World RO capability；
+- Draft RW capability；
+- caller-provided Conversation；
+- caller-provided LLM config；
+- caller-provided user message；
+- caller-provided output format。
+
+Promptpile React 继续负责：
+
+- Thought；
+- Observe；
+- Check；
+- Final；
+- iteration control；
+- Agent Event Protocol；
+- Conversation persistence behavior。
+
+Dayloom **MUST NOT** 重建这些机制。
+
+---
+
+## 14. Prompt 结构
+
+V1 **SHOULD** 最大化共享 prompt，避免为四个 command 各自复制完整 Thought / Observe / Check / Final。
+
+推荐结构：
+
+```text
+prompts/
+  thought.md
+  observe.md
+  check.md
+  final.md
+  command/
+    init.md
+    plan.md
+    play.md
+    revise.md
+```
+
+核心组合方式：
+
+```text
+shared base behavior
++
+command-specific appendix
+```
+
+Command-specific 部分可以改变：
+
+- 需要关注的 World context；
+- Draft 业务目标；
+- completion criteria；
+- 业务边界。
+
+但 **SHOULD NOT** 重新定义 React orchestration 语义。
+
+---
+
+## 15. Business prompt 不变量
+
+Dayloom prompt 至少 **MUST** 建立以下规则：
+
+1. Draft 是后续 Dayloom CLI 的 semantic input；
+2. Draft 不是 World mutation DSL；
+3. World 可以检查但不能修改；
+4. Draft 应体现用户当前有效、权威的意图；
+5. 已被否定或取代的旧意图不能因为仍存在于 Conversation 中就继续作为权威；
+6. 模型自身建议不能自动视为用户确认；
+7. Agent 只能修改授予的 Draft authority；
+8. Final 是自然的用户回复，而不是内部 reasoning dump；
+9. Draft 修改必须通过工具完成，不能依赖 Final 文本来“提交”。
+
+---
+
+## 16. MCP 契约
+
+V1 需要两个逻辑 capability domain。
+
+### 16.1 World MCP
+
+只读。
+
+典型能力可以包括：
+
+```text
+list
+read
+search
+tree
+```
+
+**MUST NOT** 暴露 write / delete / mutation tool。
+
+### 16.2 Draft MCP
+
+读写。
+
+权限 **MUST** 精确对应：
+
+```text
+显式选中的文件集合
+```
+
+或：
+
+```text
+选中的 Draft 目录子树
+```
+
+MCP 的具体实现属于内部 implementation detail，外部契约只有 capability boundary。
+
+---
+
+## 17. 失败语义
+
+所有确定性 setup error **MUST** 在 React 启动前失败。
+
+包括但不限于：
+
+- CLI 语法非法；
+- 必填参数缺失；
+- 同时提供 `--draft` 与 `--draft-dir`；
+- 没有 Draft 输入；
+- singleton 参数重复；
+- output format 非法；
+- World 非法；
+- 显式 command 当前不可用；
+- 省略 command 但无法唯一推导；
+- Draft path 非法；
+- authority setup 失败；
+- LLM config path 非法。
+
+React 启动后，React 自身错误 **SHOULD** 尽量保留其原始 stderr 与 process status。
+
+Wrapper **SHOULD NOT** 把具体 React error 无意义地统一转换为泛化 Dayloom error。
+
+所有 filesystem authority 错误 **MUST** fail closed。
+
+---
+
+## 18. 实现边界
+
+V1 实现应保持极小。
+
+推荐的最大逻辑拆分：
+
+```text
+src/
+  main.ts
+  argv.ts
+  command.ts
+  mcp.ts
+  react.ts
+  prompts/
+```
+
+职责：
+
+```text
+argv.ts
+→ parse CLI
+→ validate syntactic constraints
+
+command.ts
+→ classify World
+→ compute Draft-driven commands
+→ validate explicit command
+→ infer omitted command
+
+mcp.ts
+→ construct World RO capability
+→ construct Draft RW capability
+→ enforce authority
+
+react.ts
+→ prepare promptpile-react invocation
+→ connect Conversation / LLM / prompts / tools
+→ forward stdio
+→ return child process status
+
+main.ts
+→ minimal composition only
+```
+
+若更少文件即可保持清晰，则 **SHOULD** 使用更少文件。
+
+---
+
+## 19. V1 禁止的深抽象
+
+V1 **SHOULD NOT** 引入以下或等价抽象：
+
+```text
+DraftRuntime
+DraftSession
+ConversationManager
+MemoryManager
+TurnCoordinator
+AgentEngine
+RevisionStore
+SessionRepository
+```
+
+任何新增 abstraction 都 **MUST** 有具体 V1 requirement 才能存在。
+
+默认选择应是：procedural + compositional，而不是 framework 化。
+
+---
+
+## 20. Promptpile 生态兼容
+
+V1 直接使用 `promptpile-react` 作为 agent orchestration layer，并应保持与以下能力直接组合：
+
+- `promptpile-mcp`；
+- `promptpile-compress`；
+- `promptpile-compress-grep-search`；
+- `promptpile-fork`；
+- `promptpile-protocol`。
+
+V1 主路径 **MUST NOT** 自动加入：
+
+```text
+compression
+archive search
+conversation fork
+```
+
+这些能力继续作为 Promptpile 原生组合能力存在，除非未来出现明确 Dayloom 业务需求。
+
+---
+
+## 21. 最小端到端验收
+
+仅有 unit test 不足以视为 V1 完成。
+
+至少 **MUST** 验证以下四条 E2E。
+
+### 21.1 单文件 Draft
+
+输入：
+
+```text
+valid World
+effective command = play
+--draft ./draft.md
+```
+
+验证：
+
+```text
+command 正确解析
+World 可读
+World 不可写
+draft.md 可读
+draft.md 可写
+Conversation 通过 Promptpile 更新
+执行成功
+```
+
+### 21.2 多文件 Draft
+
+输入：
+
+```text
+--draft ./a.md
+--draft ./b.md
+```
+
+验证：
+
+```text
+a.md writable
+b.md writable
+未选择 sibling c.md 不可写
+World 不可写
+```
+
+### 21.3 Draft 目录
+
+输入：
+
+```text
+--draft-dir ./draft
+```
+
+验证：
+
+```text
+./draft 内文件可写
+允许的情况下可在 ./draft 内创建文件
+不能越过 ./draft 边界
+World 始终只读
+```
+
+### 21.4 Command ambiguity
+
+输入 World 状态满足：
+
+```text
+available Draft commands:
+  plan
+  revise
+```
+
+且省略 command。
+
+验证：
+
+```text
+React 启动前失败
+错误明确指出 command ambiguity
+报告 available commands
+不能静默选择 plan 或 revise
+```
+
+---
+
+## 22. 补充 command 验收
+
+实现 **SHOULD** 额外验证：
+
+```text
+missing/uninitialized World
++ omitted command
++ only init available
+→ infer init
+```
+
+以及：
+
+```text
+invalid World
+→ fail
+→ MUST NOT infer init
+```
+
+以及：
+
+```text
+explicit unavailable command
+→ fail before React
+```
+
+---
+
+## 23. V1 非目标
+
+V1 明确不包含：
+
+- Dayloom-owned Conversation protocol；
+- Dayloom Session persistence；
+- generic memory system；
+- Draft revision / CAS machinery；
+- custom Dayloom event protocol；
+- custom stdout / stderr channel abstraction；
+- second agent orchestration engine；
+- Draft schema standardization；
+- Draft-to-World converter；
+- World publication；
+- settle behavior；
+- TUI behavior；
+- automatic conversation compression；
+- automatic archive retrieval；
+- automatic conversation fork management；
+- 不必要的稳定 library API。
+
+---
+
+## 24. V1 Done
+
+只有以下九条全部满足，V1 才视为闭环完成：
+
+1. **CLI contract 已冻结并实现。**
+2. **Command 校验与推导是确定性的，并复用 Dayloom 权威 World policy。**
+3. **World 在 tool boundary 上被证明严格只读。**
+4. **Draft 写权限精确等于显式 `--draft` 文件集合或 `--draft-dir` 子树。**
+5. **一次 invocation 可以端到端完成一次 Promptpile React turn。**
+6. **`text` 与 `stream-json` 都直接透传，不定义第二套 Dayloom protocol。**
+7. **对同一 Conversation 重复 invocation 可以继续同一 Promptpile Conversation。**
+8. **产生的 Draft 可以无需转换直接交给 `@dayloom/cli`。**
+9. **没有引入额外 Dayloom Session / Runtime / orchestration abstraction。**
+
+九条全部成立，即认为该 V1 primitive 已经达到“简洁、优雅、闭环、可实施”。
+
+---
+
+## 25. 后续变更判断准则
+
+在向 V1 增加任何新职责前，先问：
+
+> 这个职责真的属于 Dayloom Draft 的业务 policy，还是 Promptpile / `@dayloom/cli` 已经拥有它？
+
+如果 Promptpile 或 `@dayloom/cli` 已经拥有该能力，`@dayloom/draft` **SHOULD** 直接组合它，而不是复制、包裹或重新命名。
+
+本包应持续保持：
+
+```text
+low-level
+file-native
+explicit
+composable
+thin
+```
