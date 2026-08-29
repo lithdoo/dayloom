@@ -1,0 +1,38 @@
+name: Draft
+
+on:
+  push:
+    paths:
+      - 'packages/draft/**'
+      - 'packages/cli/**'
+      - 'packages/archive-protocol/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/draft.yml'
+  pull_request:
+    paths:
+      - 'packages/draft/**'
+      - 'packages/cli/**'
+      - 'packages/archive-protocol/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/draft.yml'
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @dayloom/archive-protocol
+      - run: npm run build -w @dayloom/cli
+      - run: npm test -w @dayloom/draft
