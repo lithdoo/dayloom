@@ -1,20 +1,22 @@
-name: CLI
+name: Draft
 
 on:
   push:
     paths:
+      - 'packages/draft/**'
       - 'packages/cli/**'
       - 'packages/archive-protocol/**'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/cli.yml'
+      - '.github/workflows/draft.yml'
   pull_request:
     paths:
+      - 'packages/draft/**'
       - 'packages/cli/**'
       - 'packages/archive-protocol/**'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/cli.yml'
+      - '.github/workflows/draft.yml'
 
 jobs:
   test:
@@ -31,5 +33,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test -w @dayloom/archive-protocol
-      - run: npm test -w @dayloom/cli
+      - run: npm run build -w @dayloom/archive-protocol
+      - run: npm run build -w @dayloom/cli
+      - run: npm test -w @dayloom/draft

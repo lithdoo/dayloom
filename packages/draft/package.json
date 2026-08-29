@@ -1,9 +1,46 @@
 {
   "name": "@dayloom/draft",
-  "version": "0.0.0",
+  "version": "1.0.0-beta.1",
   "private": true,
   "description": "Thin Dayloom policy wrapper around Promptpile React for interactive Draft editing.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "dayloom-draft": "./dist/main.js"
+  },
   "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/argv.test.js test/command.test.js test/authority.test.js test/hook.test.js test/e2e.test.js test/react-smoke.test.js",
+    "prepack": "npm run build"
+  },
+  "files": [
+    "dist",
+    "doc",
+    "README.md",
+    "package.json"
+  ],
+  "dependencies": {
+    "@dayloom/cli": "1.0.0-beta.1",
+    "@iarna/toml": "^2.2.5",
+    "@rustmcp/rust-mcp-filesystem": "0.4.3",
+    "promptpile": "0.1.0-beta.2",
+    "promptpile-mcp": "0.1.0-beta.3",
+    "promptpile-protocol": "0.1.0-beta.2",
+    "promptpile-react": "0.1.0-beta.5"
+  },
+  "devDependencies": {
+    "@dayloom/archive-protocol": "1.0.0-beta.1",
+    "@types/node": "^25.5.2",
+    "typescript": "~5.9.3"
+  },
   "engines": {
     "node": ">=20"
   }
