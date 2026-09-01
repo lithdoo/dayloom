@@ -3,9 +3,9 @@ import type { Readable, Writable } from 'node:stream';
 
 export interface ProcessResultV1 { code: number | null; stdout: string; stderr: string }
 
-export function runCommandV1(command: string, args: readonly string[], options: { stdin?: string; timeoutMs?: number } = {}): Promise<ProcessResultV1> {
+export function runCommandV1(command: string, args: readonly string[], options: { stdin?: string; timeoutMs?: number; cwd?: string } = {}): Promise<ProcessResultV1> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(command, [...args], { cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -25,13 +25,13 @@ export function runCommandV1(command: string, args: readonly string[], options: 
   });
 }
 
-export function runNodeCliV1(bin: string, args: readonly string[], options: { stdin?: string; timeoutMs?: number } = {}): Promise<ProcessResultV1> {
+export function runNodeCliV1(bin: string, args: readonly string[], options: { stdin?: string; timeoutMs?: number; cwd?: string } = {}): Promise<ProcessResultV1> {
   return runCommandV1(process.execPath, [bin, ...args], options);
 }
 
-export async function spawnForwardedV1(input: { command: string; args: readonly string[]; stdout: Writable; stderr: Writable }): Promise<number> {
+export async function spawnForwardedV1(input: { command: string; args: readonly string[]; stdout: Writable; stderr: Writable; cwd?: string }): Promise<number> {
   const stdio: SpawnOptions['stdio'] = ['ignore', 'pipe', 'pipe'];
-  const child = spawn(input.command, [...input.args], { stdio, windowsHide: true });
+  const child = spawn(input.command, [...input.args], { cwd: input.cwd, stdio, windowsHide: true });
   await Promise.all([pipeKeepOpenV1(child.stdout, input.stdout), pipeKeepOpenV1(child.stderr, input.stderr)]);
   return (await waitForExitCodeV1(child)) ?? 1;
 }

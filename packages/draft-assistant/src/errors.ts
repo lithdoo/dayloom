@@ -1,7 +1,7 @@
 export type AssistantErrorCodeV1 =
   | 'INVALID_ARGUMENT' | 'AMBIGUOUS_COMMAND' | 'NOT_AVAILABLE' | 'WORLD_INVALID'
   | 'AUTHORITY_INVALID' | 'LLM_CONFIG_INVALID' | 'CONVERSATION_FAILED'
-  | 'MCP_FAILED' | 'INTERNAL_ERROR';
+  | 'MCP_FAILED' | 'DRAFT_SYNC_FAILED' | 'INTERNAL_ERROR';
 
 export class AssistantErrorV1 extends Error {
   constructor(

@@ -1,4 +1,5 @@
 import type { Writable } from 'node:stream';
+import path from 'node:path';
 import { runCommandV1, spawnForwardedV1, type ProcessResultV1 } from './process.js';
 import type { AssistantOutputFormatV1 } from './argv.js';
 
@@ -48,6 +49,7 @@ export function runDialogueReactV1(input: ReactBaseV1 & {
   return spawnForwardedV1({
     command: process.execPath,
     args: [input.reactBin, ...dialogueReactArgvV1(input)],
+    cwd: path.dirname(input.workRoot),
     stdout: input.stdout,
     stderr: input.stderr,
   });
@@ -58,7 +60,7 @@ async function runProjectedDialogueV1(input: ReactBaseV1 & {
   stdout: Writable;
   stderr: Writable;
 }): Promise<number> {
-  const result = await runCommandV1(process.execPath, [input.reactBin, ...dialogueReactArgvV1(input)]);
+  const result = await runCommandV1(process.execPath, [input.reactBin, ...dialogueReactArgvV1(input)], { cwd: path.dirname(input.workRoot) });
   if (result.stderr !== '') input.stderr.write(result.stderr);
   if (result.code !== 0) return result.code ?? 1;
   input.stdout.write(`${approvedFinalFromEventsV1(result.stdout)}\n`);
@@ -81,5 +83,5 @@ export function approvedFinalFromEventsV1(stdout: string): string {
 }
 
 export function runSyncReactV1(input: ReactBaseV1): Promise<ProcessResultV1> {
-  return runCommandV1(process.execPath, [input.reactBin, ...syncReactArgvV1(input)]);
+  return runCommandV1(process.execPath, [input.reactBin, ...syncReactArgvV1(input)], { cwd: path.dirname(input.workRoot) });
 }

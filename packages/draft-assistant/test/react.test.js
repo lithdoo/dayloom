@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { approvedFinalFromEventsV1, dialogueReactArgvV1, runDialogueReactV1, syncReactArgvV1 } from '../dist/react.js';
@@ -32,6 +32,8 @@ test('terminal projection returns only the approved Final', () => {
 test('Dialogue output adapter hides phases for terminal and preserves native stream-json', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'assistant-output-projection-'));
   try {
+    const phaseRoot = path.join(root, 'phase');
+    await mkdir(phaseRoot);
     const events = [
       { type: 'phase.completed', content: 'SECRET_THOUGHT' },
       { type: 'phase.completed', content: '[REVIEW] SECRET_REVIEW' },
@@ -39,8 +41,8 @@ test('Dialogue output adapter hides phases for terminal and preserves native str
     ];
     const jsonl = `${events.map(JSON.stringify).join('\n')}\n`;
     const reactBin = path.join(root, 'react.mjs');
-    await writeFile(reactBin, `process.stdout.write(${JSON.stringify(jsonl)});\n`);
-    const baseInput = { reactBin, config: 'config', conversation: 'conversation', workRoot: 'work' };
+    await writeFile(reactBin, `import fs from 'node:fs';\nfs.writeFileSync('fake.req.json', '{}');\nprocess.stdout.write(${JSON.stringify(jsonl)});\n`);
+    const baseInput = { reactBin, config: 'config', conversation: 'conversation', workRoot: path.join(phaseRoot, 'work') };
     const terminal = capture();
     assert.equal(await runDialogueReactV1({ ...baseInput, outputFormat: 'terminal', stdout: terminal.stdout, stderr: terminal.stderr }), 0);
     assert.equal(terminal.out(), 'Approved only.\n');
@@ -48,6 +50,8 @@ test('Dialogue output adapter hides phases for terminal and preserves native str
     const stream = capture();
     assert.equal(await runDialogueReactV1({ ...baseInput, outputFormat: 'stream-json', stdout: stream.stdout, stderr: stream.stderr }), 0);
     assert.equal(stream.out(), jsonl);
+    await access(path.join(phaseRoot, 'fake.req.json'));
+    await assert.rejects(() => access(path.join(root, 'fake.req.json')));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

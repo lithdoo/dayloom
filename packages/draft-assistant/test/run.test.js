@@ -53,6 +53,7 @@ test('init closes Dialogue then runs Draft-only Sync and exposes no init file to
         const finalMatch = /final_prompt\s*=\s*"([^"]+)"/.exec(derived);
         assert.ok(finalMatch);
         assert.equal(await readFile(finalMatch[1].replace(/\\\\/g, '\\'), 'utf8'), '');
+        await writeFile(path.join(root, 'draft.md'), '# Draft\n');
         return { code: 0, stdout: 'must stay hidden', stderr: '' };
       },
     });
@@ -90,7 +91,10 @@ test('world-bound Dialogue sees only a materialized read-only World and Sync see
         return { binding: { toolsFile: 'tools', afterHookPath: 'hook', hookConfigPath: 'hook-config', toolNames: [] }, async close() {} };
       },
       appendUser: async () => {}, runDialogue: async () => 0,
-      runSync: async () => ({ code: 0, stdout: '', stderr: '' }),
+      runSync: async () => {
+        await writeFile(path.join(root, 'draft.md'), '# Play\n');
+        return { code: 0, stdout: '', stderr: '' };
+      },
     });
     assert.equal(result.exitCode, 0);
     assert.equal(calls.length, 2);
@@ -184,5 +188,78 @@ test('help and version do not resolve external boundaries', async () => {
     const result = await executeDraftAssistantV1([flag], { resolveBoundaries: async () => { resolved = true; return boundaries; }, stdout: capture().stdout });
     assert.equal(result.exitCode, 0);
     assert.equal(resolved, false);
+  }
+});
+
+test('React debug preserves a failed operation root that actually exists', async () => {
+  const root = await tempDir();
+  const io = capture();
+  const previous = process.env.PROMPTPILE_REACT_DEBUG;
+  let preserved;
+  process.env.PROMPTPILE_REACT_DEBUG = '1';
+  try {
+    const result = await executeDraftAssistantV1(baseArgs(await llmConfig(root)), {
+      cwd: root, stdout: io.stdout, stderr: io.stderr,
+      resolveBoundaries: async () => boundaries,
+      appendUser: async () => {},
+      runDialogue: async () => 7,
+    });
+    assert.equal(result.exitCode, 7);
+    const match = /draft-assistant: preserved failed operation: (.+)\n/.exec(io.err());
+    assert.ok(match);
+    preserved = match[1].trim();
+    await access(preserved);
+    await access(path.join(preserved, 'dialogue', 'config.toml'));
+  } finally {
+    if (previous === undefined) delete process.env.PROMPTPILE_REACT_DEBUG;
+    else process.env.PROMPTPILE_REACT_DEBUG = previous;
+    if (preserved) await rm(preserved, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Sync cannot report success without a non-empty Draft artifact', async () => {
+  const root = await tempDir();
+  try {
+    const config = await llmConfig(root);
+    await assert.rejects(() => executeDraftAssistantV1(baseArgs(config), {
+      cwd: root,
+      resolveBoundaries: async () => boundaries,
+      startRuntime: runtimeStub([]),
+      appendUser: async () => {},
+      runDialogue: async () => 0,
+      runSync: async () => ({ code: 0, stdout: '', stderr: '' }),
+    }), (error) => error?.code === 'DRAFT_SYNC_FAILED' && /UTF-8 Draft artifact/.test(error.message));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('React debug also preserves completed operation diagnostics', async () => {
+  const root = await tempDir();
+  const io = capture();
+  const previous = process.env.PROMPTPILE_REACT_DEBUG;
+  let preserved;
+  process.env.PROMPTPILE_REACT_DEBUG = 'true';
+  try {
+    const result = await executeDraftAssistantV1(baseArgs(await llmConfig(root)), {
+      cwd: root, stdout: io.stdout, stderr: io.stderr,
+      resolveBoundaries: async () => boundaries,
+      startRuntime: runtimeStub([]),
+      appendUser: async () => {},
+      runDialogue: async () => 0,
+      runSync: async () => {
+        await writeFile(path.join(root, 'draft.md'), '# Draft\n');
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    });
+    assert.equal(result.exitCode, 0);
+    const match = /draft-assistant: preserved completed operation: (.+)\n/.exec(io.err());
+    assert.ok(match);
+    preserved = match[1].trim();
+    await access(path.join(preserved, 'sync', 'config.toml'));
+  } finally {
+    if (previous === undefined) delete process.env.PROMPTPILE_REACT_DEBUG;
+    else process.env.PROMPTPILE_REACT_DEBUG = previous;
+    if (preserved) await rm(preserved, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

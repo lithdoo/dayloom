@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Writable } from 'node:stream';
 import { appendConversationUserV1 } from './conversation.js';
+import { assistantErrorV1 } from './errors.js';
 import { readLlmConfigV1, writeDerivedReactConfigV1, type CallerLlmConfigV1 } from './config.js';
 import { resolvePromptpileBoundariesV1, type PromptpileBoundariesV1 } from './binaries.js';
 import { startFileRuntimeV1, type FileRuntimeBindingV1, type FileRuntimeV1 } from './runtime.js';
@@ -78,6 +79,7 @@ export async function executeDraftAssistantV1(
   const operationRoot = await mkdtemp(path.join(os.tmpdir(), 'dayloom-draft-assistant-'));
   let startedDialogue = false;
   let startedSync = false;
+  let completedSuccessfully = false;
 
   try {
     const worldViewRoot = authority.archiveRoot === null
@@ -151,7 +153,7 @@ export async function executeDraftAssistantV1(
         root: syncRoot,
         caller,
         prompts: {
-          thought: syncThoughtPromptV1(resolved.command),
+          thought: syncThoughtPromptV1(resolved.command, authority.draft),
           observe: syncObservePromptV1(resolved.command),
           check: syncCheckPromptV1(),
           final: syncFinalPromptV1(),
@@ -170,13 +172,54 @@ export async function executeDraftAssistantV1(
         if (diagnostic !== '') stderr.write(`${diagnostic}\n`);
         return { exitCode: sync.code ?? 1, startedDialogue, startedSync, command: resolved.command };
       }
+      await assertDraftProducedV1(authority.draft);
+      completedSuccessfully = true;
       return { exitCode: 0, startedDialogue, startedSync, command: resolved.command };
     } finally {
       await syncRuntime.close();
     }
   } finally {
-    await removeOperationRootV1(operationRoot);
+    if (isReactDebugV1()) {
+      const outcome = completedSuccessfully ? 'completed' : 'failed';
+      stderr.write(`draft-assistant: preserved ${outcome} operation: ${operationRoot}\n`);
+    } else {
+      await removeOperationRootV1(operationRoot);
+    }
   }
+}
+
+async function assertDraftProducedV1(draft: import('./authority.js').DraftAuthorityV1): Promise<void> {
+  const files = draft.mode === 'files'
+    ? draft.files.map((file) => file.canonical)
+    : await regularFilesBelowV1(draft.root);
+  for (const file of files) {
+    try {
+      const bytes = await readFile(file);
+      if (bytes.length > 0) {
+        try { if (new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim() !== '') return; }
+        catch { /* Invalid UTF-8 is not a usable Draft artifact. */ }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  throw assistantErrorV1('DRAFT_SYNC_FAILED', 'Draft Sync completed without producing a non-empty UTF-8 Draft artifact.');
+}
+
+async function regularFilesBelowV1(root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const target = path.join(root, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) files.push(...await regularFilesBelowV1(target));
+    else if (entry.isFile() && (await lstat(target)).isFile()) files.push(target);
+  }
+  return files;
+}
+
+function isReactDebugV1(): boolean {
+  const value = process.env.PROMPTPILE_REACT_DEBUG?.trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
 async function removeOperationRootV1(operationRoot: string): Promise<void> {
