@@ -1,6 +1,6 @@
 # `@dayloom/draft-assistant` V1 设计
 
-> 状态：**Frozen V1（Dayloom-side；Promptpile React max-step dependency pending）**（2026-09-01）  
+> 状态：**Frozen V1**（2026-09-01）  
 > 范围：`packages/draft-assistant`  
 > 目标：在保持 `dayloom-draft` CLI 与实现风格兼容的前提下，把“用户对话”和“Draft 更新”拆成两条职责单一的 Promptpile React 流程，并完整实现 `init / plan / play / revise`。
 
@@ -192,6 +192,7 @@ Draft           NONE
 ```toml
 [promptpile-react]
 max_step = 4
+max_step_policy = "error"
 observe_carryover = 1
 ```
 
@@ -208,6 +209,8 @@ Thought₁ 看到 Observe₀
   ↓
 修正
 ```
+
+`max_step_policy = "error"` 用于 fail-closed：当最后一次 Check 仍要求继续而耗尽 `max_step` 时，Promptpile React 不执行 Final，并以失败状态退出。
 
 不修改 Promptpile React Check protocol。
 
@@ -329,8 +332,11 @@ V1 不增加 confirmation protocol；“可以”“第二个”“就这样”�
 ```toml
 [promptpile-react]
 max_step = 6
+max_step_policy = "error"
 observe_carryover = 1
 ```
+
+`max_step_policy = "error"` 保证 Draft 尚未收敛时不会因为达到步数上限而被误判为成功。
 
 Thought MUST 读取当前 Conversation 与 Draft，必要且 World 存在时读取 World，并通过 Draft tools 把 Draft 收敛到有效语义。
 
@@ -366,6 +372,7 @@ promptpile-react
   --continue
   --output-format <caller terminal|stream-json>
   --max-step 4
+  --max-step-policy error
   --observe-carryover 1
   --work-root <operation>/dialogue/work
 ```
@@ -386,6 +393,7 @@ promptpile-react
   -d <conversation>
   --output-format terminal
   --max-step 6
+  --max-step-policy error
   --observe-carryover 1
   --work-root <operation>/sync/work
 ```
@@ -505,9 +513,11 @@ V1 不伪造跨文件系统事务。
 | pre-Dialogue setup | 不变 | 不变 | 无 Final | non-zero |
 | append user | fail-closed | 不变 | 无 Final | non-zero |
 | Dialogue | User 可能已存在；不伪造 Assistant Final | 不变 | 不伪造 Final | non-zero |
+| Dialogue max-step exhausted | User 可能已存在；不产生 Assistant Final | 不变 | 无 Final | non-zero |
 | Dialogue success | User + Assistant Final 已提交 | 原状态 | Dialogue Final 有效 | 继续 Sync |
 | Draft Sync setup | 已提交，不 rollback | 原状态 | 已产生的 Dialogue 输出仍有效 | non-zero |
 | Draft Sync | 已提交，不 rollback | 可能 stale / partial | 已产生的 Dialogue 输出仍有效 | non-zero |
+| Draft Sync max-step exhausted | 已提交，不 rollback | 可能 stale / partial | 已产生的 Dialogue 输出仍有效 | non-zero |
 | authority violation | 保留已提交历史 | 不扩大 authority | error diagnostic | non-zero |
 
 进程成功定义固定为：
@@ -516,6 +526,8 @@ V1 不伪造跨文件系统事务。
 exit 0
 = append user + Dialogue + Draft Sync 全部成功
 ```
+
+两条 React 均 MUST 使用 `max_step_policy = "error"`；达到步数上限且 Check 仍要求继续时属于失败，不能执行成功 Final，也不能计入 `exit 0`。
 
 其他情况均 non-zero。V1 不承诺稳定的具体 numeric error code；错误类别通过 stderr / typed internal error 表达。
 
@@ -554,9 +566,15 @@ node >= 20
 
 `draft-assistant` 直接依赖 `@dayloom/draft` 并复用其 public primitive；不复制 CLI / authority / runtime 实现。
 
-本设计依赖 Promptpile React 的 file-native Observe carryover。`0.1.0-beta.6` 是当前 carryover baseline；Promptpile React 的 max-step terminal semantics 仍有一个已知外部依赖缺口，见第 15 节。在该缺口解决前，最终可实施的 Promptpile React 版本不在本文冻结。
+V1 MUST 使用并 pin：
 
-由于 `resolvePromptpileBoundariesV1()` 从 `@dayloom/draft` 自身依赖位置解析 packaged binary，最终采用兼容版本时 MUST 同步更新并 pin `@dayloom/draft` 的 `promptpile-react` 依赖；不能只在 `draft-assistant` 增加不同版本。
+```text
+promptpile-react = 0.1.0-beta.7
+```
+
+该版本同时提供本设计依赖的 file-native `observe_carryover` 与 `max_step_policy = "error"` terminal semantics。
+
+由于 `resolvePromptpileBoundariesV1()` 从 `@dayloom/draft` 自身依赖位置解析 packaged binary，MUST 同步把 `@dayloom/draft` 的 `promptpile-react` 依赖 pin 到 `0.1.0-beta.7`；不能只在 `draft-assistant` 增加不同版本。
 
 其余 Promptpile / MCP 依赖沿用 `@dayloom/draft` 当前已验证组合，除非实现所需 API 明确要求升级；任何这类升级都必须保持现有 Draft 回归测试通过。
 
@@ -625,7 +643,7 @@ V1 只有在下列测试组全部通过后才算完整实现。
 - 四个 command 均能识别 phase drift；
 - Observe `true` → carryover → Thought repair；
 - repair 后 Observe `false`；
-- max-step exhaustion 失败；
+- max-step exhaustion 在 `max_step_policy=error` 下失败且不执行 Final；
 - Final 与 approved `[USER_REPLY]` 逐字相等；
 - Final 不产生 post-check drift；
 - `init` 且 World 不存在时 Dialogue 无 MCP runtime / 无 file tools 仍可正常工作。
@@ -653,7 +671,8 @@ V1 只有在下列测试组全部通过后才算完整实现。
 - “可以 / 第二个 / 就这样”等上下文确认；
 - Assistant suggestion 未确认时不进入 Draft；
 - play accepted outcome 进入 Draft；
-- 已收敛 Draft 重跑语义幂等。
+- 已收敛 Draft 重跑语义幂等；
+- max-step exhaustion 在 `max_step_policy=error` 下失败且不执行成功 Final。
 
 ### Authority
 
@@ -678,6 +697,7 @@ V1 只有在下列测试组全部通过后才算完整实现。
 - Dialogue max-step failure；
 - Draft Sync runtime / config setup failure 保留已提交 Dialogue Final；
 - Draft Sync child failure；
+- Draft Sync max-step failure；
 - Draft Sync partial write failure 不 rollback Conversation；
 - Dialogue MCP runtime startup failure；
 - Draft Sync MCP runtime startup failure；
@@ -688,6 +708,7 @@ V1 只有在下列测试组全部通过后才算完整实现。
 
 - Dialogue terminal output 正常转发；
 - Dialogue stream-json 正常转发；
+- Dialogue `stream-json` max-step exhaustion 以失败事件收口且不产生 Final / completed；
 - Sync stdout 不可见；
 - Sync event 不进入用户 Conversation；
 - Sync setup / execution failure 后 Dialogue Final 仍保留；
@@ -704,6 +725,7 @@ V1 只有在下列测试组全部通过后才算完整实现。
 - `play` 多轮叙事 → Draft；
 - `revise` 多轮 Conversation → Draft；
 - Promptpile React 的 `observe_carryover=1` repair；
+- Promptpile React 的 `max_step_policy=error` fail-closed；
 - 连续 invocation 使用同一 `--conversation` / Draft；
 - Linux/macOS/Windows 可由现有 CI 能力覆盖的 path / process 行为。
 
@@ -735,11 +757,9 @@ V1 不做：
 
 ## 15. Frozen V1
 
-Dayloom-side V1 已闭环并冻结：CLI、Conversation / Draft / World authority、双 React 顺序、无工具 init、runtime 生命周期、command 语义、play policy、Draft projection、failure / output 与 package contract 均不再需要产品或架构选择。
+V1 已完整闭环并冻结：CLI、Conversation / Draft / World authority、双 React 顺序、repair 与 max-step fail-closed、无工具 init、runtime 生命周期、command 语义、play policy、Draft projection、failure / output、package / dependency contract 与完整验收矩阵均不再需要产品或架构选择。
 
-唯一已知未闭环项属于 Promptpile React 外部依赖：当前 carryover baseline 的 max-step terminal semantics 与本设计要求的“repair / sync 未完成时 max-step 必须失败”不一致。本文保留该行为要求与 acceptance case，但不在本次 Dayloom-side 修订中规定 Promptpile React 的具体修复方式。
-
-在该外部依赖解决后，实现可以调整内部代码组织与 prompt 非语义措辞，但 MUST 保持本文所有规范性 contract。
+实现可以调整内部代码组织与 prompt 非语义措辞，但 MUST 保持本文所有规范性 contract。
 
 以下变化需要先修改本设计再实施：
 
@@ -750,9 +770,10 @@ Dayloom-side V1 已闭环并冻结：CLI、Conversation / Draft / World authorit
 - play agency / narrative / canon policy；
 - Observe / Check / Final contract；
 - React persistence 与 exact invocation semantics；
+- Promptpile React `observe_carryover` / `max_step_policy` assumptions；
 - runtime 的 optional Draft / no-tool authority 模型；
 - runtime 按阶段顺序持有的生命周期；
 - failure / output semantics；
 - Complete acceptance matrix 的行为要求。
 
-完整实现的判断标准是：Promptpile React 外部依赖满足本文 terminal behavior 后，另一名工程师无需再做产品或架构选择，只需完成代码层面的实现选择，并使第 13 节全部通过。
+完整实现的判断标准是：另一名工程师无需再做产品或架构选择，只需完成代码层面的实现选择，并使第 13 节全部通过。
