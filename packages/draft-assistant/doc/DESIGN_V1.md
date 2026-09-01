@@ -157,7 +157,14 @@ command 同时决定 Dialogue React 的当前对话目标和 Draft Sync 的投�
 
 目标：在当前 World 与计划约束下进行交互式叙事推进。
 
-`play` 的用户角色 authority 与 canon 生成边界仍需单独冻结，见 Open question。
+规则：
+
+- 用户角色的 material action、choice、intention 与 private thought 只能来自用户；Assistant 不替用户决定；
+- Assistant 可以控制符合 World / plan / 已有状态的 NPC、environment 与用户行动的直接 consequence，并只推进到下一个需要用户决定的节点；
+- NPC / environment outcome 可以成为当前 play 的已发生事实并进入 Draft，但不得据此改写长期 canon / profile；
+- 长期 World 变化继续由 Draft 经 `@dayloom/cli` lifecycle 处理；Play 不直接 publish / settle。
+
+Dialogue Observe 必须把替用户决定、越过新的 material decision point 或擅自改写长期 canon 的回复视为需要 repair。
 
 ### `revise`
 
@@ -545,6 +552,16 @@ Draft Sync 后必须满足：
 
 不得继续保留“警察”，也不得把 Assistant 自己提出但用户没有确认的内容写成有效意图。
 
+### Play authority
+
+至少覆盖：
+
+- 用户说“我推开门”时，Assistant 可以生成 NPC / environment 的直接反应，但不能替用户决定下一步行动；
+- Dialogue 必须在新的 material user decision point 前停下；
+- Draft 可以记录用户明确行动以及已接受的 NPC / environment outcome；
+- Assistant 自行生成的用户行动不得被 Draft 当成 user action；
+- Play outcome 不得被解释为修改长期 canon / profile 的授权。
+
 ### Authority
 
 必须证明：
@@ -584,16 +601,8 @@ V1 不做：
 
 ---
 
-## 14. Open question
+## 14. V1 状态
 
-V1 实现前唯一需要继续细化的业务 contract 是 `play`。
+`play` authority 已按旧 Core 中经过验证的边界冻结，但不继承其 Arbiter / Change Plan / Candidate 等执行层。
 
-需要明确：
-
-1. Assistant 可以控制哪些 environment / NPC / consequence；
-2. Assistant 不得替用户角色决定哪些 material choice / irreversible action / private intent；
-3. 哪些叙事事实可以作为当前 play 的局部事实自由产生；
-4. 哪些内容已经属于长期 canonical World 变化，必须继续通过 Draft / CLI lifecycle；
-5. 当前 World / plan 约束下，越界叙事应如何被 Dialogue Observe 识别。
-
-除此之外，V1 优先直接实现并通过测试收敛，而不是继续增加抽象。
+当前设计没有需要新增 runtime/state protocol 才能解决的 Open question。后续优先通过最小实现与真实 Promptpile E2E 验证行为，而不是继续增加抽象。
