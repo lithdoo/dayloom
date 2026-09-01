@@ -30,8 +30,8 @@ World
 含义：
 
 ```text
-Conversation = 用户意图形成过程
-Draft        = Conversation 的当前语义投影
+Conversation = authoritative interaction history
+Draft        = 当前 command 下 Conversation 的有效语义投影
 World        = settle 后的 canonical state
 ```
 
@@ -290,14 +290,28 @@ Draft Sync 不向用户 Conversation 写入任何 Thought / Observe / Final。
 ### 6.2 目标
 
 ```text
-根据当前 command，把 Conversation 中仍然有效的用户意图投影到 Draft。
+根据当前 command，把 Conversation 中仍然有效的语义投影到 Draft。
+```
+
+command 决定什么属于“有效语义”：
+
+```text
+init / plan / revise
+→ 当前仍然成立的用户意图
+→ Assistant suggestion 只有被用户确认后才成立
+
+play
+→ 用户明确表达的行动 / 选择
+→ 已接受的 NPC / environment / direct consequence
+→ 不得把 Assistant 自行生成的用户行动当成 user action
+→ 不得从 play outcome 推导长期 canon / profile 修改授权
 ```
 
 保留现有 `@dayloom/draft` V1 已有的不变量：
 
 1. Draft 是 `@dayloom/cli` 的后续语义输入，不是 World mutation DSL；
 2. World 只读；
-3. Draft 必须反映当前有效用户意图；
+3. Draft 必须反映当前 command 下 Conversation 的有效语义；
 4. 被否定或替换的旧意图不能继续占优；
 5. assistant 自己的建议不等于用户确认；
 6. 只能写 granted Draft authority；
@@ -311,7 +325,7 @@ V1 不增加单独的 confirmation protocol；“可以”“第二个”“就�
 
 ```text
 [REVIEW]
-<none>，或说明当前 Draft 与有效 Conversation 仍有什么不一致以及应如何修正。
+<none>，或说明当前 Draft 与有效 Conversation 语义仍有什么不一致以及应如何修正。
 
 [SHOULD_CONTINUE]
 true | false
@@ -325,7 +339,7 @@ max_step = 6
 observe_carryover = 1
 ```
 
-Draft Sync 本身应是趋向幂等的：重新读取完整 Conversation 与当前 Draft 后，继续把 Draft 收敛到当前有效意图。
+Draft Sync 本身应是趋向幂等的：重新读取完整 Conversation 与当前 Draft 后，继续把 Draft 收敛到当前 command 下的有效语义。
 
 ---
 
@@ -604,5 +618,7 @@ V1 不做：
 ## 14. V1 状态
 
 `play` authority 已按旧 Core 中经过验证的边界冻结，但不继承其 Arbiter / Change Plan / Candidate 等执行层。
+
+Draft Sync 已统一定义为“当前 command 下 Conversation 的有效语义投影”：`init / plan / revise` 投影有效用户意图，`play` 额外包含已接受的 NPC / environment / direct consequence，同时保持用户行动主权与长期 canon 边界。
 
 当前设计没有需要新增 runtime/state protocol 才能解决的 Open question。后续优先通过最小实现与真实 Promptpile E2E 验证行为，而不是继续增加抽象。
