@@ -66,15 +66,18 @@ export async function startFileRuntimeV1(input: {
   promptpileMcpBin: string;
   filesystemMcp: CommandBoundaryV1;
   worldRoot: string | null;
-  draft: DraftAuthorityV1;
+  draft: DraftAuthorityV1 | null;
 }): Promise<FileRuntimeV1> {
+  if (input.worldRoot === null && input.draft === null) {
+    throw draftErrorV1('MCP_FAILED', 'File runtime requires World or Draft authority.');
+  }
   await mkdir(input.runtimeRoot, { recursive: true });
-  const mcpDraftTools = input.draft.mode === 'files' ? DRAFT_FILE_TOOLS_V1 : DRAFT_DIRECTORY_MCP_TOOLS_V1;
-  const draftRoot = input.draft.mode === 'files' ? input.draft.mcpRoot : input.draft.root;
+  const mcpDraftTools = input.draft === null ? [] : input.draft.mode === 'files' ? DRAFT_FILE_TOOLS_V1 : DRAFT_DIRECTORY_MCP_TOOLS_V1;
+  const draftRoot = input.draft === null ? null : input.draft.mode === 'files' ? input.draft.mcpRoot : input.draft.root;
   const expectedTools = Object.freeze([
     ...(input.worldRoot === null ? [] : WORLD_READ_TOOLS_V1.map((tool) => `mcp__world__${tool}`)),
     ...mcpDraftTools.map((tool) => `mcp__draft__${tool}`),
-    ...(input.draft.mode === 'directory' ? ['mcp__draft__delete_file'] : []),
+    ...(input.draft?.mode === 'directory' ? ['mcp__draft__delete_file'] : []),
   ]);
   let lastError: unknown;
 
@@ -97,9 +100,8 @@ export async function startFileRuntimeV1(input: {
       allowed_tools: [...tools],
     });
 
-    const servers: TOML.JsonMap = {
-      draft: server(draftRoot, true, mcpDraftTools),
-    };
+    const servers: TOML.JsonMap = {};
+    if (draftRoot !== null) servers.draft = server(draftRoot, true, mcpDraftTools);
     if (input.worldRoot !== null) servers.world = server(input.worldRoot, false, WORLD_READ_TOOLS_V1);
 
     const config: TOML.JsonMap = {
@@ -128,7 +130,7 @@ export async function startFileRuntimeV1(input: {
       maxToolResultLineBytes: settings.maxToolResultLineBytes,
       allowedToolNames: expectedTools,
       worldRoot: input.worldRoot,
-      draft: input.draft.mode === 'files'
+      draft: input.draft === null ? null : input.draft.mode === 'files'
         ? { mode: 'files', mcpRoot: input.draft.mcpRoot, files: input.draft.files.map((file) => file.canonical) }
         : { mode: 'directory', mcpRoot: input.draft.root, root: input.draft.root },
     };
@@ -174,7 +176,7 @@ export async function startFileRuntimeV1(input: {
             if (!sameSetV1(exported, gatewayTools)) {
               throw new Error(`Promptpile MCP exported the wrong tool set: ${exported.join(', ')}.`);
             }
-            if (input.draft.mode === 'directory') {
+            if (input.draft?.mode === 'directory') {
               const tools = document.tools as TOML.JsonMap[];
               tools.push({
                 name: 'mcp__draft__delete_file',
@@ -203,9 +205,9 @@ export async function startFileRuntimeV1(input: {
           if (state === 'closed') return;
           if (state === 'closing') { await waitForExitV1(child); return; }
           state = 'closing';
-          if (!await waitForExitV1(child, 0)) child.kill();
+          if (!await waitForExitV1(child, 0)) await terminateProcessTreeV1(child);
           if (!await waitForExitV1(child, settings.closeMs)) {
-            child.kill('SIGKILL');
+            await terminateProcessTreeV1(child, true);
             await waitForExitV1(child);
           }
           state = 'closed';
@@ -214,7 +216,7 @@ export async function startFileRuntimeV1(input: {
     } catch (error) {
       lastError = error;
       state = 'closing';
-      child.kill();
+      await terminateProcessTreeV1(child);
       await waitForExitV1(child, settings.closeMs);
       state = 'closed';
       await rm(candidateTools, { force: true });
@@ -271,5 +273,21 @@ async function waitForExitV1(child: ChildProcess, timeoutMs?: number): Promise<b
     const done = () => { if (timer) clearTimeout(timer); resolve(true); };
     const timer = timeoutMs === undefined ? undefined : setTimeout(() => { child.off('exit', done); resolve(false); }, timeoutMs);
     child.once('exit', done);
+  });
+}
+
+async function terminateProcessTreeV1(child: ChildProcess, force = false): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform !== 'win32' || child.pid === undefined) {
+    child.kill(force ? 'SIGKILL' : 'SIGTERM');
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    killer.once('error', () => resolve());
+    killer.once('close', () => resolve());
   });
 }

@@ -9,7 +9,7 @@ export type DraftHookAuthorityV1 =
 
 export interface DraftHookPolicyV1 {
   worldRoot: string | null;
-  draft: DraftHookAuthorityV1;
+  draft: DraftHookAuthorityV1 | null;
 }
 
 const WORLD_WRITE = new Set([
@@ -28,6 +28,7 @@ export function assertAuthorityPolicyV1(calls: readonly ValidatedToolCallV1[], p
       continue;
     }
     if (call.name.startsWith('mcp__draft__')) {
+      if (policy.draft === null) throw new Error('Draft tools are not available.');
       assertDraftCallV1(call, policy.draft);
       continue;
     }

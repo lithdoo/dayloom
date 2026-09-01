@@ -15,7 +15,7 @@ import {
   WORKSPACE_FILE_TOOLS_V1,
   startFileRuntimeV1,
 } from '../dist/ai/file-runtime.js';
-import { ReactProcessErrorV1 } from '../dist/ai/react.js';
+import { ReactProcessErrorV1, runPromptpileReactV1 } from '../dist/ai/react.js';
 import { runReactWithDecisionRetriesV1 } from '../dist/ai/promptpile-editor.js';
 import { assertWorkspaceMutationPolicyV1 } from '../dist/ai/tool-artifacts.js';
 import * as TOML from '@iarna/toml';
@@ -97,7 +97,44 @@ test('Promptpile adapter resolves only packaged binaries', async () => {
   assert.ok(path.isAbsolute(boundaries.reactBin));
   assert.ok(path.isAbsolute(boundaries.promptpileMcpBin));
   assert.ok(path.isAbsolute(boundaries.filesystemMcp.command));
-  assert.equal(typeof boundaries.validateProcessPile, 'function');
+  assert.equal(typeof boundaries.validateAgentEvent, 'function');
+  const reactVersion = spawnSync(process.execPath, [boundaries.reactBin, '--version'], { encoding: 'utf8' });
+  assert.equal(reactVersion.status, 0, reactVersion.stderr);
+  assert.equal(reactVersion.stdout.trim(), '0.1.0-beta.7');
+});
+
+test('Promptpile adapter consumes the Agent Event v1 stream exposed by React beta.7', async () => {
+  const root = await tempRoot();
+  try {
+    const fakeReact = path.join(root, 'react.mjs');
+    const sessionId = 'dayloom-agent-event-test';
+    const events = [
+      { schema_version: 1, type: 'session.started', session_id: sessionId, sequence: 0, max_steps: 1 },
+      {
+        schema_version: 1,
+        type: 'session.completed',
+        session_id: sessionId,
+        sequence: 1,
+        stop_reason: 'final',
+        steps_completed: 0,
+        final: { status: 'completed', content: 'Agent Event final' },
+      },
+    ];
+    await writeFile(fakeReact, `for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event));\n`, 'utf8');
+    const boundaries = await resolvePromptpileBoundariesV1();
+    const final = await runPromptpileReactV1({
+      reactBin: fakeReact,
+      validateAgentEvent: boundaries.validateAgentEvent,
+      config: path.join(root, 'llm.toml'),
+      context: path.join(root, 'context'),
+      conversation: path.join(root, 'conversation'),
+      workRoot: path.join(root, 'work'),
+      maxSteps: 1,
+    });
+    assert.equal(final, 'Agent Event final');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('filesystem runtime exposes tree, search, ranged read, guarded directory creation, and write', async () => {

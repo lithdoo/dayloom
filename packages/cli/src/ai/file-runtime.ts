@@ -163,15 +163,15 @@ export async function startFileRuntimeV1(input: {
           if (state === 'closed') return;
           if (state === 'closing') { await waitForExitV1(child); return; }
           state = 'closing';
-          if (!await waitForExitV1(child, 0)) child.kill();
-          if (!await waitForExitV1(child, settings.closeMs)) { child.kill('SIGKILL'); await waitForExitV1(child); }
+          if (!await waitForExitV1(child, 0)) await terminateProcessTreeV1(child);
+          if (!await waitForExitV1(child, settings.closeMs)) { await terminateProcessTreeV1(child, true); await waitForExitV1(child); }
           state = 'closed';
         },
       });
     } catch (error) {
       lastError = error;
       state = 'closing';
-      child.kill();
+      await terminateProcessTreeV1(child);
       await waitForExitV1(child, settings.closeMs);
       state = 'closed';
       await rm(candidateTools, { force: true });
@@ -219,5 +219,21 @@ async function waitForExitV1(child: ChildProcess, timeoutMs?: number): Promise<b
     const done = () => { if (timer) clearTimeout(timer); resolve(true); };
     const timer = timeoutMs === undefined ? undefined : setTimeout(() => { child.off('exit', done); resolve(false); }, timeoutMs);
     child.once('exit', done);
+  });
+}
+
+async function terminateProcessTreeV1(child: ChildProcess, force = false): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform !== 'win32' || child.pid === undefined) {
+    child.kill(force ? 'SIGKILL' : 'SIGTERM');
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    killer.once('error', () => resolve());
+    killer.once('close', () => resolve());
   });
 }

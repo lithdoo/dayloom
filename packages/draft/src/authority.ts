@@ -32,6 +32,12 @@ export interface ResolvedAuthorityV1 {
   llmConfig: string;
 }
 
+export interface ResolvedDraftInputsAuthorityV1 {
+  draft: DraftAuthorityV1;
+  conversation: ConversationAuthorityV1;
+  llmConfig: string;
+}
+
 export async function resolveAuthorityV1(input: {
   cwd?: string;
   world: string;
@@ -42,15 +48,30 @@ export async function resolveAuthorityV1(input: {
 }): Promise<Readonly<ResolvedAuthorityV1>> {
   const cwd = input.cwd ?? process.cwd();
   const world = await resolveWorldV1(path.resolve(cwd, input.world));
+  const inputs = await resolveDraftInputsAuthorityV1(input);
+
+  assertWorldAuthorityDisjointV1(world.canonical, inputs);
+
+  return Object.freeze({ world, ...inputs });
+}
+
+export async function resolveDraftInputsAuthorityV1(input: {
+  cwd?: string;
+  drafts: readonly string[];
+  draftDir: string | null;
+  conversation: string;
+  llmConfig: string;
+}): Promise<Readonly<ResolvedDraftInputsAuthorityV1>> {
+  const cwd = input.cwd ?? process.cwd();
   const draft = input.draftDir !== null
     ? await resolveDraftDirectoryV1(path.resolve(cwd, input.draftDir))
     : await resolveDraftFilesV1(input.drafts.map((file) => path.resolve(cwd, file)));
   const conversation = await resolveConversationV1(path.resolve(cwd, input.conversation));
   const llmConfig = await resolveLlmConfigFileV1(path.resolve(cwd, input.llmConfig));
 
-  assertDisjointV1(world, draft, conversation, llmConfig);
+  assertDraftInputsDisjointV1(draft, conversation, llmConfig);
 
-  return Object.freeze({ world, draft, conversation, llmConfig });
+  return Object.freeze({ draft, conversation, llmConfig });
 }
 
 async function resolveWorldV1(target: string): Promise<WorldAuthorityV1> {
@@ -183,18 +204,13 @@ async function resolveLlmConfigFileV1(target: string): Promise<string> {
   return realpath(target);
 }
 
-function assertDisjointV1(
-  world: WorldAuthorityV1,
+function assertDraftInputsDisjointV1(
   draft: DraftAuthorityV1,
   conversation: ConversationAuthorityV1,
   llmConfig: string,
 ): void {
-  const worldRoot = world.canonical;
   if (draft.mode === 'files') {
     for (const file of draft.files) {
-      if (overlapsV1(worldRoot, file.canonical)) {
-        throw draftErrorV1('AUTHORITY_INVALID', 'World and Draft authority overlap.');
-      }
       if (overlapsV1(conversation.canonical, file.canonical)) {
         throw draftErrorV1('AUTHORITY_INVALID', 'Conversation and Draft authority overlap.');
       }
@@ -203,9 +219,6 @@ function assertDisjointV1(
       }
     }
   } else {
-    if (overlapsV1(worldRoot, draft.root)) {
-      throw draftErrorV1('AUTHORITY_INVALID', 'World and Draft authority overlap.');
-    }
     if (overlapsV1(conversation.canonical, draft.root)) {
       throw draftErrorV1('AUTHORITY_INVALID', 'Conversation and Draft authority overlap.');
     }
@@ -213,7 +226,22 @@ function assertDisjointV1(
       throw draftErrorV1('AUTHORITY_INVALID', 'Draft authority must not include the LLM config.');
     }
   }
-  if (overlapsV1(worldRoot, conversation.canonical)) {
+}
+
+export function assertWorldAuthorityDisjointV1(
+  worldRoot: string,
+  authority: Readonly<ResolvedDraftInputsAuthorityV1>,
+): void {
+  if (authority.draft.mode === 'files') {
+    for (const file of authority.draft.files) {
+      if (overlapsV1(worldRoot, file.canonical)) {
+        throw draftErrorV1('AUTHORITY_INVALID', 'World and Draft authority overlap.');
+      }
+    }
+  } else if (overlapsV1(worldRoot, authority.draft.root)) {
+    throw draftErrorV1('AUTHORITY_INVALID', 'World and Draft authority overlap.');
+  }
+  if (overlapsV1(worldRoot, authority.conversation.canonical)) {
     throw draftErrorV1('AUTHORITY_INVALID', 'World and Conversation authority overlap.');
   }
 }

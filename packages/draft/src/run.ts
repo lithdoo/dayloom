@@ -132,7 +132,6 @@ async function writeReactSidecarsV1(
     observePrompt: observe,
     checkPrompt: check,
     finalPrompt: final,
-    toolsFile,
-    afterHookPath,
+    toolBinding: { toolsFile, afterHookPath },
   });
 }

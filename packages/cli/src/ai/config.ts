@@ -56,20 +56,23 @@ export async function writeReactConfigV1(input: {
   observePrompt: string;
   checkPrompt: string;
   finalPrompt: string;
-  toolsFile: string;
-  afterHookPath: string;
+  toolBinding: { toolsFile: string; afterHookPath: string | null } | null;
 }): Promise<void> {
+  const runtimeFields: TOML.JsonMap = {};
+  if (input.toolBinding !== null) {
+    runtimeFields.tools_file = input.toolBinding.toolsFile;
+    if (input.toolBinding.afterHookPath !== null) runtimeFields.after_hook = input.toolBinding.afterHookPath;
+  }
   const derived: TOML.JsonMap = {
     ...input.caller,
     'promptpile-react': {
-      tools_file: input.toolsFile,
+      ...runtimeFields,
       thought_prompt: input.thoughtPrompt,
       observe_prompt: input.observePrompt,
       check_prompt: input.checkPrompt,
       final_prompt: input.finalPrompt,
       observe_llm_api_temperature: 0,
       check_llm_api_temperature: 0,
-      after_hook: input.afterHookPath,
     },
   };
   await writeFile(input.target, TOML.stringify(derived), { encoding: 'utf8', mode: 0o600 });

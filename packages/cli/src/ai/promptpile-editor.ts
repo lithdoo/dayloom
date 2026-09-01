@@ -53,15 +53,17 @@ export async function editWorkspaceWithPromptpileV1(input: DraftWorkspaceEditorI
         observePrompt: observe,
         checkPrompt: check,
         finalPrompt: final,
-        toolsFile: runtime.binding.toolsFile,
-        afterHookPath: runtime.binding.afterHookPath,
+        toolBinding: {
+          toolsFile: runtime.binding.toolsFile,
+          afterHookPath: runtime.binding.afterHookPath,
+        },
       });
       const task = taskPromptV1(input);
       await appendPromptpileUserV1(boundaries.promptpileBin, conversation, task);
       await runReactWithDecisionRetriesV1(async (reactAttempt) => {
         await runPromptpileReactV1({
             reactBin: boundaries.reactBin,
-            validateProcessPile: boundaries.validateProcessPile,
+            validateAgentEvent: boundaries.validateAgentEvent,
             config: reactConfig,
             context,
             conversation,

@@ -1,8 +1,7 @@
 {
   "name": "@dayloom/draft-assistant",
-  "version": "0.0.0",
-  "private": true,
-  "description": "草稿助手",
+  "version": "1.0.0-beta.1",
+  "description": "Conversation-driven Dialogue and Draft projection boundary for Dayloom.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,9 +12,23 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "dayloom-draft-assistant": "./dist/main.js"
+  },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build"
+    "test": "npm run build && node --test test/argv.test.js test/command.test.js test/authority.test.js test/prompts.test.js test/react.test.js test/run.test.js test/e2e.test.js",
+    "prepack": "npm run build"
+  },
+  "files": [
+    "dist",
+    "doc",
+    "README.md",
+    "package.json"
+  ],
+  "dependencies": {
+    "@dayloom/cli": "1.0.0-beta.1",
+    "@dayloom/draft": "1.0.0-beta.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

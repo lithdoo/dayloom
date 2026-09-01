@@ -17,8 +17,7 @@ export async function writeDerivedReactConfigV1(input: {
   observePrompt: string;
   checkPrompt: string;
   finalPrompt: string;
-  toolsFile: string;
-  afterHookPath: string;
+  toolBinding: { toolsFile: string; afterHookPath: string | null } | null;
 }): Promise<void> {
   await writeReactConfigV1(input);
 }

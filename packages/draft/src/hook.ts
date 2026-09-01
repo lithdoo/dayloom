@@ -22,7 +22,7 @@ export interface FileHookConfigV1 extends ToolArtifactPolicyV1 {
   token: string;
   execRequestTimeoutMs: number;
   worldRoot: string | null;
-  draft: DraftHookAuthorityV1;
+  draft: DraftHookAuthorityV1 | null;
 }
 
 export function readFileHookConfigV1(configPath: string): FileHookConfigV1 {
@@ -35,7 +35,7 @@ export function readFileHookConfigV1(configPath: string): FileHookConfigV1 {
     typeof config.baseUrl !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]*$/.test(config.baseUrl) ||
     typeof config.token !== 'string' || !/^[0-9a-f]{64}$/.test(config.token) ||
     !(config.worldRoot === null || (typeof config.worldRoot === 'string' && path.isAbsolute(config.worldRoot))) ||
-    !isDraftAuthorityV1(config.draft) ||
+    !(config.draft === null || isDraftAuthorityV1(config.draft)) ||
     !Number.isSafeInteger(config.execRequestTimeoutMs) || config.execRequestTimeoutMs <= 0 ||
     !Number.isSafeInteger(config.maxToolCallsPerThought) || config.maxToolCallsPerThought <= 0 ||
     !Number.isSafeInteger(config.maxToolResultLineBytes) || config.maxToolResultLineBytes <= 0 ||
@@ -46,7 +46,7 @@ export function readFileHookConfigV1(configPath: string): FileHookConfigV1 {
   return Object.freeze({
     ...config,
     allowedToolNames: Object.freeze([...config.allowedToolNames]),
-    draft: freezeDraftAuthorityV1(config.draft),
+    draft: config.draft === null ? null : freezeDraftAuthorityV1(config.draft),
   });
 }
 
@@ -66,6 +66,11 @@ export async function runFileHookV1(configPath: string): Promise<void> {
 
   const deleteCalls = calls.filter((call) => call.name === 'mcp__draft__delete_file');
   if (deleteCalls.length > 0) {
+    if (config.draft === null) {
+      writeSyntheticToolResultsV1(calls, resultPath, SYNTHETIC_TOOL_ERROR_V1, config);
+      return;
+    }
+    const draft = config.draft;
     if (deleteCalls.length !== calls.length) {
       writeSyntheticToolResultsV1(calls, resultPath, `${SYNTHETIC_TOOL_ERROR_V1}\nSubmit delete_file calls in a separate tool batch.`, config);
       return;
@@ -74,7 +79,7 @@ export async function runFileHookV1(configPath: string): Promise<void> {
       try {
         const requested = JSON.parse(call.arguments) as { path?: unknown };
         if (typeof requested.path !== 'string') throw new Error('delete_file requires a path.');
-        const target = canonicalizeExistingPrefixV1(resolveRelativeInsideV1(config.draft.mcpRoot, requested.path));
+        const target = canonicalizeExistingPrefixV1(resolveRelativeInsideV1(draft.mcpRoot, requested.path));
         unlinkSync(target);
         return `[DAYLOOM_DELETE_FILE_OK]\nDeleted ${requested.path}.`;
       } catch (error) {

@@ -2,9 +2,9 @@ import { mkdir, rm } from 'node:fs/promises';
 import type { ValidateFunction } from 'ajv';
 import { runNodeCliV1 } from './process.js';
 
-interface ProcessEventV1 {
+interface AgentEventV1 {
   type: string;
-  process_id: string;
+  session_id: string;
   sequence: number;
   final?: { status: 'completed' | 'skipped'; content?: string };
   error?: { code: string; message: string };
@@ -25,7 +25,7 @@ export async function appendPromptpileUserV1(promptpileBin: string, directory: s
 
 export async function runPromptpileReactV1(input: {
   reactBin: string;
-  validateProcessPile: ValidateFunction;
+  validateAgentEvent: ValidateFunction;
   config: string;
   context: string;
   conversation: string;
@@ -38,19 +38,7 @@ export async function runPromptpileReactV1(input: {
   await mkdir(input.context, { recursive: true });
   await mkdir(input.conversation, { recursive: true });
 
-  const reducer = new ProcessPileReducerV1(input.validateProcessPile);
-  let buffer = '';
-  const consume = (chunk: string) => {
-    buffer += chunk;
-    if (buffer.length > 1024 * 1024 && !buffer.includes('\n')) throw new Error('React Process Pile line exceeds the size limit.');
-    for (;;) {
-      const newline = buffer.indexOf('\n');
-      if (newline < 0) break;
-      const raw = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      reducer.consume(raw.endsWith('\r') ? raw.slice(0, -1) : raw);
-    }
-  };
+  const reducer = new AgentEventReducerV1(input.validateAgentEvent);
 
   const result = await runNodeCliV1(input.reactBin, [
     '--config', input.config,
@@ -59,44 +47,42 @@ export async function runPromptpileReactV1(input: {
     '--continue',
     '--max-step', String(input.maxSteps ?? 10),
     '--work-root', input.workRoot,
-    '--work-lifecycle', 'caller',
     '--quiet',
-    '--process-pile-fd', '3',
-    '--process-pile-format', 'json',
-  ], { onExtraPipe: consume, timeoutMs: input.timeoutMs ?? 5 * 60_000 });
+    '--output-format', 'stream-json',
+  ], { timeoutMs: input.timeoutMs ?? 5 * 60_000 });
 
-  if (buffer.length !== 0) throw new Error('React emitted truncated Process Pile JSONL.');
+  for (const line of result.stdout.split(/\r?\n/)) reducer.consume(line);
   return reducer.finish(result.code, result.stderr);
 }
 
-class ProcessPileReducerV1 {
+class AgentEventReducerV1 {
   private expectedSequence = 0;
-  private processId: string | null = null;
-  private terminal: ProcessEventV1 | null = null;
+  private sessionId: string | null = null;
+  private terminal: AgentEventV1 | null = null;
 
   constructor(private readonly validate: ValidateFunction) {}
 
   consume(line: string): void {
     if (line.length === 0) return;
-    let event: ProcessEventV1;
-    try { event = JSON.parse(line) as ProcessEventV1; }
-    catch { throw new Error('React emitted malformed Process Pile JSONL.'); }
-    if (!this.validate(event)) throw new Error('React emitted an event that violates Process Pile v1.');
-    if (this.terminal !== null) throw new Error('React emitted a Process Pile event after terminal.');
-    if (event.sequence !== this.expectedSequence) throw new Error('React Process Pile sequence is not contiguous.');
+    let event: AgentEventV1;
+    try { event = JSON.parse(line) as AgentEventV1; }
+    catch { throw new Error('React emitted malformed Agent Event JSONL.'); }
+    if (!this.validate(event)) throw new Error('React emitted an event that violates Agent Event v1.');
+    if (this.terminal !== null) throw new Error('React emitted an Agent Event after terminal.');
+    if (event.sequence !== this.expectedSequence) throw new Error('React Agent Event sequence is not contiguous.');
     this.expectedSequence += 1;
-    if (this.processId === null) {
-      if (event.type !== 'process.started' || event.sequence !== 0) throw new Error('First Process Pile event must be process.started.');
-      this.processId = event.process_id;
+    if (this.sessionId === null) {
+      if (event.type !== 'session.started' || event.sequence !== 0) throw new Error('First Agent Event must be session.started.');
+      this.sessionId = event.session_id;
       return;
     }
-    if (event.process_id !== this.processId) throw new Error('React Process Pile process_id changed.');
-    if (event.type === 'process.completed' || event.type === 'process.failed') this.terminal = event;
+    if (event.session_id !== this.sessionId) throw new Error('React Agent Event session_id changed.');
+    if (event.type === 'session.completed' || event.type === 'session.failed') this.terminal = event;
   }
 
   finish(exitCode: number | null, stderr: string): string {
-    if (this.terminal === null) throw new Error('React Process Pile ended before terminal.');
-    if (this.terminal.type === 'process.failed') {
+    if (this.terminal === null) throw new Error('React Agent Event stream ended before terminal.');
+    if (this.terminal.type === 'session.failed') {
       throw new ReactProcessErrorV1(
         this.terminal.error?.code ?? 'react_process_failed',
         this.terminal.error?.message ?? (stderr || 'React process failed.'),

@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { executeCliV1 } from '@dayloom/cli';
+import { resolvePromptpileBoundariesV1 } from '../dist/binaries.js';
 import { executeDraftV1 } from '../dist/run.js';
 import { startOpenAiStub } from './support/openai-stub.mjs';
 
 const API_KEY_ENV = 'DAYLOOM_DRAFT_SMOKE_KEY';
+
+test('Draft resolves promptpile-react beta.7 from its packaged boundary', async () => {
+  const boundaries = await resolvePromptpileBoundariesV1();
+  const version = spawnSync(process.execPath, [boundaries.reactBin, '--version'], { encoding: 'utf8' });
+  assert.equal(version.status, 0, version.stderr);
+  assert.equal(version.stdout.trim(), '0.1.0-beta.7');
+});
 
 test('real promptpile-react writes Draft through hook+MCP and persists Final', { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dayloom-draft-react-smoke-'));

@@ -14,7 +14,7 @@ export interface PromptpileBoundariesV1 {
   reactBin: string;
   promptpileMcpBin: string;
   filesystemMcp: CommandBoundaryV1;
-  validateProcessPile: ValidateFunction;
+  validateAgentEvent: ValidateFunction;
 }
 
 const localRequire = createRequire(import.meta.url);
@@ -42,7 +42,7 @@ export async function resolvePromptpileBoundariesV1(): Promise<PromptpileBoundar
   const react = await packageRootV1('promptpile-react');
   const mcp = await packageRootV1('promptpile-mcp');
   const filesystem = await packageRootV1('@rustmcp/rust-mcp-filesystem');
-  const processSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'process-pile-v1.schema.json'), 'utf8'));
+  const eventSchema = JSON.parse(await readFile(path.join(react.root, 'schema', 'agent-event-v1.schema.json'), 'utf8'));
   const Ajv2020 = localRequire('ajv/dist/2020.js') as typeof Ajv2020Type;
   const ajv = new Ajv2020({ strict: true, strictRequired: false });
   return Object.freeze({
@@ -50,6 +50,6 @@ export async function resolvePromptpileBoundariesV1(): Promise<PromptpileBoundar
     reactBin: binV1(react.metadata, 'promptpile-react', react.root),
     promptpileMcpBin: binV1(mcp.metadata, 'promptpile-mcp', mcp.root),
     filesystemMcp: commandBoundaryV1(filesystem.metadata, 'rust-mcp-filesystem', filesystem.root),
-    validateProcessPile: ajv.compile(processSchema),
+    validateAgentEvent: ajv.compile(eventSchema),
   });
 }
