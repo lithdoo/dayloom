@@ -1,8 +1,8 @@
-# `@dayloom/draft-assistant` V1 设计草案
+# `@dayloom/draft-assistant` V1 设计
 
-> 状态：**Draft**（2026-09-01）  
+> 状态：**Frozen V1**（2026-09-01）  
 > 范围：`packages/draft-assistant`  
-> 目标：在保持 `dayloom-draft` CLI 与实现风格兼容的前提下，把“用户对话”和“Draft 更新”拆成两条职责单一的 Promptpile React 流程。
+> 目标：在保持 `dayloom-draft` CLI 与实现风格兼容的前提下，把“用户对话”和“Draft 更新”拆成两条职责单一的 Promptpile React 流程，并完整实现 `init / plan / play / revise`。
 
 ---
 
@@ -17,7 +17,7 @@
 - 不新增 Dayloom-owned runtime state，只使用已有 Conversation / Draft / World；
 - 复杂度只允许出现在真实安全边界，例如 path authority、MCP tool authority 和 Promptpile runtime integration。
 
-核心数据层级保持：
+核心数据层级：
 
 ```text
 Conversation
@@ -32,35 +32,28 @@ World
 ```text
 Conversation = authoritative interaction history
 Draft        = 当前 command 下 Conversation 的有效语义投影
-World        = settle 后的 canonical state
+World        = CLI lifecycle 后的 canonical state
 ```
+
+V1 是完整实现，不以 vertical slice / MVP 为完成标准。
 
 ---
 
-## 2. 核心变化
+## 2. 核心架构
 
-现有 `@dayloom/draft`：
+现有 `@dayloom/draft` 本质上是一条同时负责对话与 Draft 编辑的 React：
 
 ```text
 User message
     ↓
 Single Promptpile React
     ↓
-Thought 同时：
-- 理解用户意图
-- 读取 World
-- 修改 Draft
-    ↓
-Observe 检查 Draft 是否还需要继续编辑
-    ↓
-Check
+理解用户意图 + 读取 World + 修改 Draft
     ↓
 Final
 ```
 
-它本质上是一个“带对话能力的 Draft editor”。
-
-`draft-assistant` V1 只做一个结构变化：
+`draft-assistant` V1 固定拆成两条顺序 React：
 
 ```text
 User message
@@ -88,13 +81,13 @@ Draft Sync React
   Draft        RW
 ```
 
-Promptpile React 本身保持通用，不知道 `init / plan / play / revise` 的业务语义。
+Promptpile React 保持通用，不知道 `init / plan / play / revise` 的业务语义；command policy 由 Dayloom prompt contract 提供。
 
 ---
 
 ## 3. CLI contract
 
-V1 完全参考现有 `dayloom-draft` 参数面：
+V1 参数面与现有 `dayloom-draft` 保持兼容：
 
 ```text
 dayloom-draft-assistant [init|plan|play|revise]
@@ -106,7 +99,7 @@ dayloom-draft-assistant [init|plan|play|revise]
   [--output-format terminal|stream-json]
 ```
 
-规则保持一致：
+规则固定：
 
 1. command 可显式指定 `init | plan | play | revise`；
 2. 未显式指定时，通过当前 World 状态推导可用 command；
@@ -115,23 +108,22 @@ dayloom-draft-assistant [init|plan|play|revise]
 5. `--draft` 可重复；
 6. `--draft` 与 `--draft-dir` 互斥且必须二选一；
 7. `--output-format` 默认 `terminal`；
-8. argv、command availability、path canonicalization、authority resolution 和 Promptpile binary resolution 优先直接复用 `@dayloom/draft` 已公开 primitive。
+8. unknown argument / duplicate singleton option / unavailable explicit command 均 fail-closed；
+9. argv、command availability、path canonicalization、authority resolution 与 Promptpile binary resolution 直接复用 `@dayloom/draft` public primitive。
 
-外部语义仍是：
+外部语义固定为：
 
 ```text
 one invocation = one user message
 ```
 
-内部只是从一条 React 变为顺序执行两条 React。
+内部双 React 对调用方透明。
 
 ---
 
-## 4. Command / stage policy
+## 4. Command policy
 
-command 同时决定 Dialogue React 的当前对话目标和 Draft Sync 的投影目标。
-
-不为 stage 建立额外 TypeScript domain model；V1 直接在 prompt 中按 command 分支。
+command 同时决定 Dialogue React 的对话目标和 Draft Sync 的投影目标。V1 不为 stage 建立额外 TypeScript domain model，直接在 prompt 中按 command 分支。
 
 ### `init`
 
@@ -142,7 +134,7 @@ command 同时决定 Dialogue React 的当前对话目标和 Draft Sync 的投�
 - 未完成初始化就推进故事时间；
 - 自顾自写场景或小说正文；
 - 提前进入 `plan`；
-- 将 assistant 自己的建议视为用户确认。
+- 将 Assistant 自己的建议视为用户确认。
 
 ### `plan`
 
@@ -157,14 +149,16 @@ command 同时决定 Dialogue React 的当前对话目标和 Draft Sync 的投�
 
 目标：在当前 World 与计划约束下进行交互式叙事推进。
 
-规则：
+规则固定：
 
 - 用户角色的 material action、choice、intention 与 private thought 只能来自用户；Assistant 不替用户决定；
-- Assistant 可以控制符合 World / plan / 已有状态的 NPC、environment 与用户行动的直接 consequence，并只推进到下一个需要用户决定的节点；
-- NPC / environment outcome 可以成为当前 play 的已发生事实并进入 Draft，但不得据此改写长期 canon / profile；
+- Assistant 可以控制符合 World / plan / 已有状态的 NPC、environment 与用户行动的直接 consequence；
+- Assistant 只推进到下一个需要用户做 material decision 的节点；
+- NPC / environment outcome 可以成为当前 play 的已发生事实并进入 Draft；
+- Play outcome 不构成修改长期 canon / profile 的授权；
 - 长期 World 变化继续由 Draft 经 `@dayloom/cli` lifecycle 处理；Play 不直接 publish / settle。
 
-Dialogue Observe 必须把替用户决定、越过新的 material decision point 或擅自改写长期 canon 的回复视为需要 repair。
+Dialogue Observe 必须把替用户决定、越过新的 material decision point 或擅自改写长期 canon 的回复判定为需要 repair。
 
 ### `revise`
 
@@ -187,13 +181,11 @@ Conversation    RW（通过 Promptpile）
 Draft           NONE
 ```
 
-工具层必须保证 Dialogue React 看不到任何 `mcp__draft__*` 工具。
+工具层必须保证 Dialogue React 的 tool set 中不存在任何 `mcp__draft__*`。这是 infrastructure authority，不是 prompt-only 约束。
 
-这是 infrastructure authority，不是 prompt-only 约束。
+### 5.2 React contract
 
-### 5.2 React 配置
-
-V1：
+固定：
 
 ```toml
 [promptpile-react]
@@ -201,12 +193,12 @@ max_step = 4
 observe_carryover = 1
 ```
 
-`observe_carryover = 1` 让上一轮 Observe 自然进入下一轮 Thought 的 active work Conversation：
+`observe_carryover = 1` 用于 repair：
 
 ```text
 Thought₀
   ↓
-Observe₀ 发现问题并说明修正方向
+Observe₀ 发现问题并给出修正方向
   ↓
 Check₀ = continue
   ↓
@@ -217,13 +209,21 @@ Thought₁ 看到 Observe₀
 
 不修改 Promptpile React Check protocol。
 
-### 5.3 Observe contract
+### 5.3 Prompt contract
 
-保持最小：
+Thought MUST：
+
+- 遵守当前 command policy；
+- 把 World 仅作为只读事实依据；
+- 不访问 Draft；
+- 把 carryover Observe 视为历史评审与 repair context；
+- 当前轮始终以最新 Conversation 与当前目标为准。
+
+Observe MUST 严格产出：
 
 ```text
 [REVIEW]
-<none>，或说明当前回复的问题以及下一轮应该如何修正。
+<none>，或说明当前回复的问题以及下一轮应如何修正。
 
 [USER_REPLY]
 通过审查、准备发送给用户的回复；若仍需修正则为 <none>。
@@ -232,42 +232,38 @@ Thought₁ 看到 Observe₀
 true | false
 ```
 
-语义：
+判定规则固定：
 
 ```text
-SHOULD_CONTINUE=true
-= 当前 reply 仍需要内部修正
+invalid reply
+→ REVIEW != <none>
+→ USER_REPLY = <none>
+→ SHOULD_CONTINUE = true
 
-SHOULD_CONTINUE=false
-= 当前 reply 已经可以交给 Final
+valid reply
+→ REVIEW = <none>
+→ USER_REPLY = exact approved response
+→ SHOULD_CONTINUE = false
 ```
 
-它不表示整个 `init / plan / play / revise` 是否完成。
+`SHOULD_CONTINUE` 只表示当前 reply 是否仍需内部修正，不表示整个 `init / plan / play / revise` 是否完成。
 
-不增加 `STAGE_STATUS`、结构化 intent event 或额外业务 protocol。
-
-### 5.4 Check contract
-
-Check 只读取 latest Observe 的 `[SHOULD_CONTINUE]`：
+Check MUST 只依据 latest Observe：
 
 ```text
 true  → react_check_decision({ decision: true })
 false → react_check_decision({ decision: false })
 ```
 
-Check 不产生业务 feedback；feedback 已经存在于 Observe 的 `[REVIEW]` 中。
+Check 不产生业务 feedback。
 
-### 5.5 Final contract
-
-Final 是 delivery adapter，不是第二个 writer。
-
-V1 固定：
+Final MUST：
 
 ```text
 Final output == latest approved Observe 的 [USER_REPLY]
 ```
 
-不得重新改写、补充、格式化或引入新的事实、决定、问题、计划与剧情推进。
+逐字交付，不重新改写、补充、格式化，也不引入新的事实、决定、问题、计划或剧情推进。
 
 ---
 
@@ -283,45 +279,60 @@ World           RO
 Draft           RW
 ```
 
-Draft RW 严格受 `--draft` / `--draft-dir` authority 限制。
+Draft RW 严格受 `--draft` / `--draft-dir` authority 限制。Draft Sync 不向用户 Conversation 写入任何 Thought / Observe / Final。
 
-Draft Sync 不向用户 Conversation 写入任何 Thought / Observe / Final。
+### 6.2 Projection contract
 
-### 6.2 目标
+总目标固定为：
 
 ```text
 根据当前 command，把 Conversation 中仍然有效的语义投影到 Draft。
 ```
 
-command 决定什么属于“有效语义”：
+command 语义矩阵：
+
+| command | Draft Sync 投影 |
+| --- | --- |
+| `init` | 当前仍然成立的初始化用户意图 |
+| `plan` | 当前仍然成立的下一日 / 下一阶段计划意图 |
+| `play` | 用户明确行动 / 选择 + 已接受的 NPC / environment / direct consequence |
+| `revise` | 当前仍然成立的长期 World revision 用户意图 |
+
+统一规则：
 
 ```text
-init / plan / revise
-→ 当前仍然成立的用户意图
-→ Assistant suggestion 只有被用户确认后才成立
-
-play
-→ 用户明确表达的行动 / 选择
-→ 已接受的 NPC / environment / direct consequence
-→ 不得把 Assistant 自行生成的用户行动当成 user action
-→ 不得从 play outcome 推导长期 canon / profile 修改授权
+Assistant suggestion alone      → never authoritative
+user rejection / replacement    → old meaning removed
+accepted play world outcome      → may enter play Draft
+Assistant-invented user action   → never becomes user action
+play outcome                     → never implies canon/profile revision permission
 ```
 
-保留现有 `@dayloom/draft` V1 已有的不变量：
+保留现有 `@dayloom/draft` 的不变量：
 
 1. Draft 是 `@dayloom/cli` 的后续语义输入，不是 World mutation DSL；
 2. World 只读；
 3. Draft 必须反映当前 command 下 Conversation 的有效语义；
-4. 被否定或替换的旧意图不能继续占优；
-5. assistant 自己的建议不等于用户确认；
+4. 被否定或替换的旧语义不能继续占优；
+5. Assistant 自己的建议不等于用户确认；
 6. 只能写 granted Draft authority；
 7. Draft 改动只能通过授权工具发生。
 
-V1 不增加单独的 confirmation protocol；“可以”“第二个”“就这样”“前面的不要了”等确认语义继续由 React 从 Conversation 解释，并通过测试覆盖。
+V1 不增加 confirmation protocol；“可以”“第二个”“就这样”“前面的不要了”等确认语义由 React 从 Conversation 解释，并由测试冻结行为。
 
-### 6.3 Observe contract
+### 6.3 React contract
 
-同样保持最小：
+固定：
+
+```toml
+[promptpile-react]
+max_step = 6
+observe_carryover = 1
+```
+
+Thought MUST 读取当前 Conversation 与 Draft，必要时读取 World，并通过 Draft tools 把 Draft 收敛到有效语义。
+
+Observe MUST 严格产出：
 
 ```text
 [REVIEW]
@@ -331,35 +342,127 @@ V1 不增加单独的 confirmation protocol；“可以”“第二个”“就�
 true | false
 ```
 
-V1：
+Draft 已收敛时 `false`；仍需修改时 `true`。Draft Sync 本身应趋向幂等：对相同 Conversation + World + 已收敛 Draft 重跑不得产生新的语义变化。
 
-```toml
-[promptpile-react]
-max_step = 6
-observe_carryover = 1
-```
-
-Draft Sync 本身应是趋向幂等的：重新读取完整 Conversation 与当前 Draft 后，继续把 Draft 收敛到当前 command 下的有效语义。
+Sync Final 没有用户产品语义，其文本被内部丢弃。
 
 ---
 
-## 7. Invocation 顺序
+## 7. Exact React invocation
 
-顶层流程保持像现有 `@dayloom/draft` 一样直接：
+两条 React 的进程 wiring 属于 Frozen contract。
+
+### 7.1 Dialogue
+
+等价 argv 固定为：
+
+```text
+promptpile-react
+  --config <operation>/dialogue/config.toml
+  -d <conversation>
+  --output-dir <conversation>
+  --continue
+  --output-format <caller terminal|stream-json>
+  --max-step 4
+  --observe-carryover 1
+  --work-root <operation>/dialogue/work
+```
+
+Dialogue stdout / stderr 按现有 `dayloom-draft` 进程转发方式向调用方转发。
+
+`--output-dir <conversation> + --continue` 是唯一把 accepted Final 写回 authoritative Conversation 的路径。
+
+### 7.2 Draft Sync
+
+等价 argv 固定为：
+
+```text
+promptpile-react
+  --config <operation>/sync/config.toml
+  -d <conversation>
+  --output-format terminal
+  --max-step 6
+  --observe-carryover 1
+  --work-root <operation>/sync/work
+```
+
+Draft Sync MUST NOT 使用：
+
+```text
+--output-dir <conversation>
+--continue
+```
+
+因此 Sync 只读 authoritative Conversation，不向其持久化内部 Final。
+
+Sync stdout 被内部 capture / discard，不得进入用户 stdout。Sync stderr 可内部 capture；失败时向调用方 stderr 提供诊断。
+
+---
+
+## 8. Runtime reuse contract
+
+V1 不复制 `@dayloom/draft` 的 file runtime，也不抽新的 shared runtime package。
+
+实现必须对现有 `@dayloom/draft` runtime 做最小泛化：
+
+```ts
+startFileRuntimeV1({
+  ...,
+  worldRoot: string | null,
+  draft: DraftAuthorityV1 | null,
+})
+```
+
+语义固定：
+
+```text
+draft != null
+→ 保持现有 @dayloom/draft 行为
+→ World RO + Draft RW
+
+draft == null
+→ 不创建 draft MCP server
+→ 不导出任何 mcp__draft__* tool
+→ hook / policy 不接受 Draft authority
+→ World 仍保持 RO
+```
+
+为支持这一点，`FileHookConfigV1` / authority policy 的 Draft authority 同样改为 nullable；`draft == null` 时任何 Draft tool call 均 fail-closed，即使正常情况下该 tool 根本不会被导出。
+
+`@dayloom/draft` public surface 最小增加现有薄 primitive 的导出，供 `draft-assistant` 复用：
+
+```text
+config
+conversation
+process
+runtime
+```
+
+不复制这些文件到 `draft-assistant`，不改变现有 `dayloom-draft` 在 `draft != null` 下的行为。
+
+---
+
+## 9. Invocation lifecycle
+
+顶层流程固定并保持直接：
 
 ```text
 1. parse / validate argv
 2. classify World / resolve command
 3. resolve canonical authority
 4. resolve Promptpile binaries + LLM config
-5. prepare runtime / sidecars
-6. append user message → Conversation
-7. run Dialogue React
-8. Dialogue Final → Conversation
-9. run Draft Sync React
-10. return process status
-11. cleanup operation root
+5. create one invocation operation root
+6. prepare Dialogue world-only runtime + config
+7. prepare Draft Sync world+draft runtime + config
+8. append user message → Conversation
+9. run Dialogue React
+10. accepted Dialogue Final persists → Conversation
+11. run Draft Sync React
+12. return process status
+13. close runtimes / cleanup operation root
 ```
+
+所有能够在 append user 前完成的 setup MUST 在步骤 8 前完成。
 
 V1 不引入：
 
@@ -371,72 +474,33 @@ V1 不引入：
 - Conversation + Draft 跨文件系统事务；
 - public `syncDraft()` / `resyncDraft()` recovery API。
 
-这些只有在出现真实需求后才考虑。
-
 ---
 
-## 8. Failure semantics
+## 10. Failure / output contract
 
-保持现有 Draft 的克制策略，不伪造事务。
+V1 不伪造跨文件系统事务。
 
-### setup 失败
+| 失败点 | Conversation | Draft | 用户 stdout | exit |
+| --- | --- | --- | --- | --- |
+| setup | 不变 | 不变 | 无 Final | non-zero |
+| append user | fail-closed | 不变 | 无 Final | non-zero |
+| Dialogue | User 可能已存在；不伪造 Assistant Final | 不变 | 不伪造 Final | non-zero |
+| Dialogue success | User + Assistant Final 已提交 | 原状态 | Dialogue Final 有效 | 继续 Sync |
+| Draft Sync | 已提交，不 rollback | 可能 stale / partial | 已产生的 Dialogue 输出仍有效 | non-zero |
+| authority violation | 保留已提交历史 | 不扩大 authority | error diagnostic | non-zero |
 
-所有可提前完成的 setup 必须发生在 append user 之前。
-
-```text
-setup failure
-→ Conversation 不变
-→ Draft 不变
-```
-
-### Dialogue 失败
-
-```text
-User 已 append
-Dialogue Final 未完成
-```
-
-本次 invocation 返回失败。
-
-V1：
-
-- 不 rollback User message；
-- 不伪造 Assistant Final；
-- 不增加 pending-turn 状态协议；
-- 保留 Promptpile React 自身的失败 / debug 行为。
-
-### Draft Sync 失败
+进程成功定义固定为：
 
 ```text
-Conversation 已包含成功的 User + Assistant
-Draft 可能 stale 或部分更新
+exit 0
+= append user + Dialogue + Draft Sync 全部成功
 ```
 
-本次 invocation 返回 non-zero。
+其他情况均 non-zero。V1 不承诺稳定的具体 numeric error code；错误类别通过 stderr / typed internal error 表达。
 
-不 rollback Conversation，也不构造跨文件系统事务。
+`--output-format terminal|stream-json` 只描述用户可见 Dialogue 输出。Draft Sync 的 React event / Final 不得污染 stdout，也不得进入用户 Conversation。
 
-Draft Sync 设计为可重新执行的收敛过程；若未来 recovery 成为真实产品需求，再公开专门入口。
-
-### Authority violation
-
-一律 fail-closed。
-
-不得自动扩大 path authority，不得因为模型请求暴露额外工具。
-
----
-
-## 9. Output contract
-
-`--output-format terminal|stream-json` 只代表用户可见的 Dialogue React 输出。
-
-Draft Sync 是内部流程：
-
-- 不把自身 React event 混入用户 stdout；
-- 失败通过进程 exit code / stderr 表达；
-- 不改变用户 Conversation 的消息形态。
-
-用户 Conversation 只包含：
+用户 Conversation 正常形态始终是：
 
 ```text
 User
@@ -446,9 +510,42 @@ Assistant Final
 ...
 ```
 
+Dialogue Final 一旦成功持久化，就是有效 interaction history，即使后续 Draft Sync 失败。
+
 ---
 
-## 10. 实现结构
+## 11. Package / dependency contract
+
+`@dayloom/draft-assistant` V1 是与 `@dayloom/draft` 同级的完整 CLI package，而不是仅供内部调用的 library scaffold。
+
+必须提供：
+
+```text
+bin: dayloom-draft-assistant
+build
+完整 test
+prepack
+files: dist + doc + README.md + package.json
+node >= 20
+```
+
+包仍可保持 `private`，release policy 不属于本设计冻结范围。
+
+`draft-assistant` 直接依赖 `@dayloom/draft` 并复用其 public primitive；不复制 CLI / authority / runtime 实现。
+
+本设计依赖 Promptpile React 的 file-native Observe carryover，因此运行时必须解析到：
+
+```text
+promptpile-react = 0.1.0-beta.6
+```
+
+由于 `resolvePromptpileBoundariesV1()` 从 `@dayloom/draft` 自身依赖位置解析 packaged binary，完整实现 MUST 同步把 `@dayloom/draft` 的 `promptpile-react` 依赖从 beta.5 升级并 pin 到 `0.1.0-beta.6`。不能只在 `draft-assistant` 增加 beta.6。
+
+其余 Promptpile / MCP 依赖沿用 `@dayloom/draft` 当前已验证组合，除非实现所需 API 明确要求升级；任何这类升级都必须保持现有 Draft 回归测试通过。
+
+---
+
+## 12. 实现结构
 
 V1 保持扁平，不预先建立子系统目录：
 
@@ -459,144 +556,138 @@ packages/draft-assistant/src/
 ├── run.ts
 ├── react.ts
 ├── prompts.ts
-├── runtime.ts
-└── conversation.ts   # 仅在有足够独立逻辑时保留
+└── runtime.ts        # 仅放 draft-assistant 对 shared runtime 的薄调用；可并入 run.ts
 ```
 
-实际实现时允许进一步合并文件；不以“每个概念一个文件”为目标。
+如果某文件没有足够独立逻辑，应直接合并；不以“每个概念一个文件”为目标。
 
-职责建议：
+职责：
 
 ```text
 run.ts
 = 顶层顺序编排
 
 react.ts
-= Dialogue / Sync 的 Promptpile React argv 与进程调用
+= Dialogue / Sync argv + process wiring
 
 prompts.ts
-= 两条 React 的 prompts + command 分支
+= 两条 React 的 prompt contracts + command 分支
 
 runtime.ts
-= MCP / tool authority；允许复用现有 @dayloom/draft runtime 代码后做最小拆分
+= 对 @dayloom/draft startFileRuntimeV1 的薄调用（若有必要）
 ```
 
-不新增 `stage/`、`dialogue/`、`sync/`、`services/`、`session/` 等目录，除非后续代码量真实证明有必要。
+不新增 `stage/`、`dialogue/`、`sync/`、`services/`、`session/` 等目录，除非实现后的真实代码量证明有必要。
 
-Prompts V1 继续放 TypeScript 字符串，不增加 package 内 Markdown prompt loading system。
+Prompts V1 使用 TypeScript 字符串，不增加 package 内 Markdown prompt loader。
+
+Frozen 文档不限制 private function 名、私有类型拆分、文件行数或 prompt 的非语义措辞。
 
 ---
 
-## 11. 复用策略
+## 13. Complete acceptance matrix
 
-`draft-assistant` V1 优先直接依赖 `@dayloom/draft` 已公开的稳定 primitive，例如：
+V1 只有在下列测试组全部通过后才算完整实现。
 
-```text
-parseArgvV1
-resolveDraftCommandV1
-resolveAuthorityV1
-resolvePromptpileBoundariesV1
-```
+### CLI compatibility
 
-不调用现有完整 `executeDraftV1()`，因为其 orchestration 仍是单 React。
+- `init / plan / play / revise` 显式 command；
+- command 自动推导；
+- unavailable explicit command；
+- required / duplicate / unknown argv；
+- repeated `--draft`；
+- `--draft-dir`；
+- `--draft` / `--draft-dir` 互斥；
+- `terminal`；
+- `stream-json`；
+- help / version / packaging bin 可运行。
 
-不复制 argv / authority / command / path canonicalization 代码。
+### Dialogue
 
-如果后续 `@dayloom/draft` 与 `draft-assistant` 的共享 primitive 明显增多，再依据真实代码抽共享 package；V1 不提前建立 shared runtime abstraction。
-
----
-
-## 12. V1 验收重点
-
-### Dialogue drift repair
-
-```text
-command = init
-User: 我想初始化一个近未来东京世界。
-
-Thought₀:
-错误开始小说场景
-
-Observe₀:
-[REVIEW]
-init 尚未完成，不应推进剧情；回到初始化并询问用户角色。
-
-[USER_REPLY]
-<none>
-
-[SHOULD_CONTINUE]
-true
-
-Thought₁:
-看到 Observe₀ 后纠正
-
-Observe₁:
-[REVIEW]
-<none>
-
-[USER_REPLY]
-你希望自己在这个世界中扮演什么角色？
-
-[SHOULD_CONTINUE]
-false
-
-Final:
-逐字输出该 USER_REPLY
-```
-
-### Draft projection
-
-Conversation：
-
-```text
-User: 我想设定在东京。
-Assistant: 你希望什么时代？
-User: 2040 年。
-Assistant: 你的角色呢？
-User: 调查记者。之前说的警察不要了。
-```
-
-Draft Sync 后必须满足：
-
-```text
-东京
-2040 年
-调查记者
-```
-
-不得继续保留“警察”，也不得把 Assistant 自己提出但用户没有确认的内容写成有效意图。
+- 四个 command 均有正常无 drift turn；
+- 四个 command 均能识别 phase drift；
+- Observe `true` → carryover → Thought repair；
+- repair 后 Observe `false`；
+- max-step exhaustion 失败；
+- Final 与 approved `[USER_REPLY]` 逐字相等；
+- Final 不产生 post-check drift。
 
 ### Play authority
 
-至少覆盖：
+- 用户行动主权不被 Assistant 夺取；
+- NPC reaction 允许；
+- environment reaction 允许；
+- direct consequence 允许；
+- 新 material decision point 前停止；
+- Assistant-invented user action 被 Observe repair；
+- accepted NPC / environment outcome 可进入 Draft；
+- invented user action 不进入 Draft；
+- play outcome 不升级成 canon/profile revision permission。
 
-- 用户说“我推开门”时，Assistant 可以生成 NPC / environment 的直接反应，但不能替用户决定下一步行动；
-- Dialogue 必须在新的 material user decision point 前停下；
-- Draft 可以记录用户明确行动以及已接受的 NPC / environment outcome；
-- Assistant 自行生成的用户行动不得被 Draft 当成 user action；
-- Play outcome 不得被解释为修改长期 canon / profile 的授权。
+### Draft Sync
+
+- 四个 command 的 projection matrix；
+- initial projection；
+- incremental projection；
+- user changed mind；
+- explicit negation；
+- replacement；
+- “可以 / 第二个 / 就这样”等上下文确认；
+- Assistant suggestion 未确认时不进入 Draft；
+- play accepted outcome 进入 Draft；
+- 已收敛 Draft 重跑语义幂等。
 
 ### Authority
 
-必须证明：
-
-- Dialogue tools 中不存在 Draft 写工具；
-- Draft Sync World 只读；
-- Draft Sync 只能写声明的 Draft file-set / subtree；
-- path escape / symlink escape fail-closed。
+- Dialogue tool set 不存在任何 `mcp__draft__*`；
+- Dialogue World write fail-closed；
+- Draft Sync World write fail-closed；
+- Draft file-set authority；
+- Draft directory authority；
+- path escape；
+- symlink escape；
+- delete / create / write 边界；
+- `draft == null` runtime 不导出 Draft tools；
+- `draft != null` 不破坏现有 `dayloom-draft` 行为。
 
 ### Failure
 
-至少覆盖：
-
 - setup failure 不 append User；
-- Dialogue failure 不伪造 Final；
-- Draft Sync failure 不 rollback Conversation；
-- Draft Sync event 不污染 stdout / 用户 Conversation。
+- append-user failure；
+- Dialogue child failure；
+- Dialogue max-step failure；
+- Draft Sync child failure；
+- Draft Sync partial write failure 不 rollback Conversation；
+- MCP runtime startup failure；
+- authority violation；
+- cleanup / child shutdown。
+
+### Process / output
+
+- Dialogue terminal output 正常转发；
+- Dialogue stream-json 正常转发；
+- Sync stdout 不可见；
+- Sync event 不进入用户 Conversation；
+- Sync failure 后 Dialogue Final 仍保留；
+- success 仅在两条 React 都成功时 exit 0。
+
+### Real E2E
+
+必须使用真实 packaged Promptpile / Promptpile MCP / filesystem MCP 覆盖：
+
+- `init` 多轮 Conversation → Draft；
+- `plan` 多轮 Conversation → Draft；
+- `play` 多轮叙事 → Draft；
+- `revise` 多轮 Conversation → Draft；
+- `promptpile-react 0.1.0-beta.6` 的 `observe_carryover=1` repair；
+- 连续 invocation 使用同一 `--conversation` / Draft；
+- Linux/macOS/Windows 可由现有 CI 能力覆盖的 path / process 行为。
+
+同时必须保持现有 `@dayloom/draft` build 与完整测试集通过。
 
 ---
 
-## 13. 非目标
+## 14. 非目标
 
 V1 不做：
 
@@ -611,14 +702,29 @@ V1 不做：
 - 跨 Conversation / Draft 事务；
 - Prompt markdown loader；
 - 新的通用 agent framework；
+- 复制现有 `@dayloom/draft` runtime；
 - 删除或替换现有 `@dayloom/draft`。
 
 ---
 
-## 14. V1 状态
+## 15. Frozen V1
 
-`play` authority 已按旧 Core 中经过验证的边界冻结，但不继承其 Arbiter / Change Plan / Candidate 等执行层。
+当前 V1 在设计层面已闭环并冻结，可直接进入完整实现。
 
-Draft Sync 已统一定义为“当前 command 下 Conversation 的有效语义投影”：`init / plan / revise` 投影有效用户意图，`play` 额外包含已接受的 NPC / environment / direct consequence，同时保持用户行动主权与长期 canon 边界。
+实现可以调整内部代码组织与 prompt 非语义措辞，但 MUST 保持本文所有规范性 contract。
 
-当前设计没有需要新增 runtime/state protocol 才能解决的 Open question。后续优先通过最小实现与真实 Promptpile E2E 验证行为，而不是继续增加抽象。
+以下变化需要先修改本设计再实施：
+
+- CLI surface；
+- Conversation / Draft / World authority；
+- Dialogue → Conversation → Draft Sync 的顺序；
+- command 语义；
+- play agency / narrative / canon policy；
+- Observe / Check / Final contract；
+- React persistence 与 exact invocation semantics；
+- runtime 的 Draft-null authority 模型；
+- failure / output semantics；
+- Promptpile React beta.6 carryover 假设；
+- Complete acceptance matrix 的行为要求。
+
+完整实现的判断标准是：另一名工程师无需再做产品或架构选择，只需完成代码层面的实现选择，并使第 13 节全部通过。
