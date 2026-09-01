@@ -1,6 +1,6 @@
 # `@dayloom/draft-assistant` V1 设计
 
-> 状态：**Review-ready V1（整体复核）**  
+> 状态：**Implemented V1（实现与真实 API 验收已闭环）**
 > 范围：`packages/draft-assistant`
 
 ## 1. 目标
@@ -152,7 +152,7 @@ operation-local World view
 - invocation 结束即删除；
 - 只用于 Dialogue grounding。
 
-复用 `@dayloom/cli` 已有的 Published World read / `materializeWorkspaceV1`，不在 `draft-assistant` 重写 Archive reader。
+`draft-assistant` 通过 `@dayloom/archive-protocol` 在自己的 package boundary 内校验 Published head、tree 与 blob identity，并只物化 tree documents。它不依赖 `@dayloom/cli` 或 `@dayloom/draft` 的运行时代码，也不复制它们的产品层 orchestration。
 
 `init` 没有 Published World，因此不建立 World view。
 
@@ -225,9 +225,6 @@ MUST：
 
 [USER_REPLY]
 通过审查的用户可见回复；仍需修正则为 <none>
-
-[SHOULD_CONTINUE]
-true | false
 ```
 
 规则：
@@ -236,15 +233,15 @@ true | false
 invalid
 → REVIEW != <none>
 → USER_REPLY = <none>
-→ SHOULD_CONTINUE = true
 
 valid
 → REVIEW = <none>
 → USER_REPLY = exact approved reply
-→ SHOULD_CONTINUE = false
 ```
 
-Check 只把 `[SHOULD_CONTINUE]` 转成 React continue/stop 决策。
+Observe 不输出 continuation flag，避免模型把“当前候选是否需要 repair”误解成“未来用户对话是否继续”。Check 从 Observe 结构确定性推导：仅当 `REVIEW` 精确为 `<none>` 且 `USER_REPLY` 非 `<none>` 时调用 `react_check_decision(false)`；其他、矛盾或 malformed 结果一律 continue repair。
+
+只有 authoritative Conversation 中的 User message 能证明用户 action、choice、intention 或 confirmation。carried Observe、候选 `USER_REPLY` 与 Assistant proposal 都不是用户输入；候选若把不存在的选择归给用户，Observe 必须判为 player-agency violation。
 
 Final 是低自由度 copy phase：MUST 输出 latest approved `[USER_REPLY]`，不得在 Observe 之后重新发挥。
 
@@ -305,10 +302,11 @@ Observe：
 ```text
 [REVIEW]
 <none> 或当前 Draft 与 Conversation 的剩余不一致
-
-[SHOULD_CONTINUE]
-true | false
 ```
+
+Sync Thought 必须使用 Draft tools 完成 projection，普通 prose 不构成写入证据。Prompt 明示 tool root 下获准的相对 Draft path 及其 `existing/missing` 状态：existing file 先读再决定，missing file 在存在已确认语义时直接 `write_file`。Observe 只审计，不调用或模拟工具；prose-only Thought、失败 ToolResult 或缺少 read/write evidence 都必须继续 repair。
+
+Sync Check 只有在整个 Observe 精确为 `[REVIEW]\n<none>` 时停止；任何其他文本、tool syntax、矛盾或 malformed output 都继续。React 成功退出后，父进程还会验证获准 Draft authority 中至少存在一个非空、合法 UTF-8 artifact；否则以 `DRAFT_SYNC_FAILED` fail closed。
 
 Draft Sync 不需要用户可见 Final。其 Final prompt 为空，让 Promptpile React 按原生语义 skip Final；不为一个没有产品语义的阶段再调用一次 LLM。
 
@@ -370,7 +368,7 @@ play 的 scene outcome 可以成为本次 play Draft 的事实材料；`@dayloom
 
 不新建 runtime framework。
 
-复用现有 `@dayloom/draft` file runtime，只做 world-only Dialogue 真正需要的泛化：
+package 内部使用一套最小 file runtime glue，统一承载 World RO 与 Draft RW 两种 authority：
 
 ```ts
 startFileRuntimeV1({
@@ -396,7 +394,7 @@ all Draft Sync
   → Draft only
 ```
 
-不新增 `worldRoot=null + draft=null` 的 file runtime，也不新增 runtime provider / manager / shared runtime package。
+不新增 `worldRoot=null + draft=null` 的 file runtime，也不新增 runtime provider / manager / shared runtime package。该 glue 不从 `@dayloom/draft` 导入实现。
 
 Promptpile wiring：
 
@@ -418,13 +416,15 @@ Conversation persistence 必须明确区分：
 -d <conversation>
 --output-dir <conversation>
 --continue
---output-format <caller terminal|stream-json>
+--output-format stream-json
 --max-step 4
 --max-step-policy error
 --observe-carryover 1
 ```
 
 Final 成功后由 Promptpile React 原生持久化到 authoritative Conversation。
+
+Dialogue 内部固定消费 Agent Event JSONL。调用方选择 `stream-json` 时原样转发；选择 `terminal` 时父进程捕获事件流，只投影 `session.completed.final.content`，Thought / Observe / Check 永不进入 stdout。
 
 ### Draft Sync
 
@@ -464,9 +464,10 @@ stdout captured/discarded
 12. close Dialogue runtime（如有）
 13. start Draft-only runtime
 14. prepare/run Draft Sync
-15. close Sync runtime
-16. cleanup operation root
-17. return exit status
+15. verify at least one non-empty UTF-8 Draft artifact
+16. close Sync runtime
+17. cleanup operation root（debug 模式除外）
+18. return exit status
 ```
 
 `init` 在第 7 步没有 Dayloom file runtime，但仍正常准备合法 Promptpile React config。
@@ -508,6 +509,11 @@ Sync execution failure
 → Conversation remains committed
 → Draft may be stale/partial
 → non-zero
+
+Sync React reports success but no usable Draft artifact
+→ Conversation remains committed
+→ DRAFT_SYNC_FAILED
+→ non-zero
 ```
 
 成功：
@@ -515,17 +521,20 @@ Sync execution failure
 ```text
 exit 0
 = Dialogue + Draft Sync 都成功
++ Draft postcondition 成功
 ```
 
 `--output-format` 只控制 Dialogue 的用户可见输出。
 
-- terminal：直接使用 Dialogue React terminal 输出；
+- terminal：内部仍运行 stream-json，只输出 approved `session.completed.final.content`；
 - stream-json：直接使用 Dialogue React Agent Event Protocol；
 - Sync stdout 永远不进入用户 stdout；
 - Sync stderr 可在失败时作为 diagnostics 暴露；
 - Dialogue 的 `session.completed` 只表示 Dialogue React 完成；整个 `draft-assistant` 是否成功最终看父进程 exit code。
 
 不额外包 Dayloom event envelope。
+
+React 子进程的 cwd 固定在对应 operation-local phase root。`PROMPTPILE_DUMP_LLM=1` 因此只会把 request/response dump 写入临时 operation，而不会污染调用者 cwd。普通运行无论成功失败都清理 operation root；显式设置 `PROMPTPILE_REACT_DEBUG=1|true|yes|on` 时保留成功或失败的完整 operation root，并把真实路径写到 stderr。
 
 ---
 
@@ -547,28 +556,18 @@ world-bound command 还必须保证 Archive target 与 Draft、Conversation auth
 
 ---
 
-## 13. 复用原则
+## 13. Package boundary 原则
 
-只复用语义一致的 primitive。
+`@dayloom/draft-assistant` 不运行时依赖 sibling product package `@dayloom/cli` 或 `@dayloom/draft`。它只依赖 publishable protocol / Promptpile / MCP packages，并在自己的 boundary 内保留必要的最小 glue：
 
-应复用：
-
-- `@dayloom/cli` World classification / availability；
-- `@dayloom/cli` Published World materialization；
-- `@dayloom/draft` Draft / Conversation path authority rules；
-- `@dayloom/draft` Promptpile boundary resolution；
-- caller LLM config reader / derived config；
+- Archive classification、Published head validation 与 World view materialization；
+- Draft / Conversation canonical authority；
+- caller LLM config reader 与 derived React config；
 - Conversation append；
-- process helpers；
-- file runtime / hook policy。
+- packaged binary resolution 与 process helpers；
+- file runtime、hook 与 tool artifact policy。
 
-不能为了复用而保留错误语义：
-
-- 旧 `@dayloom/draft` parser 要求所有 command 都有 `--world`，不能直接复用；
-- 旧 command resolver 会从 uninitialized World 推导 `init`，不能直接复用；
-- 旧 React invocation helper 固定 `--output-dir + --continue`，不能直接用于 Draft Sync。
-
-如果现有 helper 把多个职责绑在一起，只做实际需要的最小拆分/参数化；不复制整套实现，也不新建 shared framework。
+这些实现只覆盖本 package 的 authority contract，不引入新的 shared framework，也不反向导入 sibling package 的 parser、command resolver 或 orchestration。与 `@dayloom/cli` 的闭环发生在公开 Draft handoff，而不是运行时 import。
 
 ---
 
@@ -585,6 +584,16 @@ version: 与当前 Dayloom beta line 对齐
 ```
 
 monorepo root 的 `build` / `test` 必须包含 `@dayloom/draft-assistant`。
+
+package root 的 public API 只导出：
+
+```ts
+executeDraftAssistantV1
+DraftAssistantDependenciesV1
+DraftAssistantRunResultV1
+```
+
+其中后两项仅为 TypeScript type；runtime export 只有 `executeDraftAssistantV1`。内部 authority、runtime、prompt 和 process helper 不属于公共 API。
 
 Promptpile React 固定使用已经验证的：
 
@@ -603,7 +612,7 @@ empty Final prompt skip
 
 不要求 Promptpile React beta.8，也不修改 Promptpile React tool protocol。
 
-由于 boundary resolver 从 `@dayloom/draft` 自身 dependency tree 解析 React binary，`@dayloom/draft` 的 `promptpile-react` 必须精确 pin 到 beta.7。
+boundary resolver 只从 `@dayloom/draft-assistant` 自己的 dependency tree 解析 packaged binaries；`promptpile-react` 必须在本 package 精确 pin 到 beta.7。packed fresh-install smoke 必须证明仅安装本 package 及 publishable dependency closure 即可运行，不需要 `@dayloom/cli` 或 `@dayloom/draft`。
 
 ---
 
@@ -619,6 +628,7 @@ empty Final prompt skip
 - command inference / ambiguity / availability；
 - draft files / draft-dir，包括 prospective Draft file 与 empty Draft dir；
 - terminal / stream-json；
+- terminal 只投影 approved Final，内部 phase 不泄漏；
 - help / version；
 - package build / test / prepack / bin smoke；
 - monorepo root build / test。
@@ -653,6 +663,9 @@ empty Final prompt skip
 - play accepted outcome 可进入 Draft；
 - invented user action 不进入 Draft；
 - semantic idempotence；
+- exact Draft relative path / missing file direct write；
+- prose-only Sync 不得被当成写入成功；
+- exit 0 前必须存在非空、合法 UTF-8 Draft artifact；
 - Sync Final 确认被 skip；
 - Sync 不修改 authoritative Conversation。
 
@@ -662,9 +675,11 @@ empty Final prompt skip
 - Dialogue committed 后 Sync failure 不 rollback；
 - Sync output hidden；
 - stream-json 的 Dialogue `session.completed` 后若 Sync 失败，父进程仍 non-zero；
-- exit 0 only after both Reacts succeed。
+- exit 0 only after both Reacts succeed and the Draft postcondition passes；
+- `PROMPTPILE_DUMP_LLM` 输出隔离在 operation root；
+- debug 模式成功/失败现场路径真实存在，普通模式自动清理。
 
-### Real E2E
+### E2E
 
 先用 `--check` 做 Draft snapshot / lint 的廉价验证；真正的 Draft → CLI 闭环必须用 `--dry-run`，因为 `--dry-run` 才会把 Draft 应用到 temporary Workspace、执行 validation/repair 并形成 validated Patch，而不 publish。
 
@@ -694,6 +709,8 @@ revise:
 ```
 
 同时保留真实 Promptpile React carryover repair、max-step fail-closed，以及现有 `@dayloom/cli` / `@dayloom/draft` 回归测试。
+
+默认测试使用真实 Promptpile React / MCP runtime 和确定性 LLM stub，覆盖四个 command 与语义边界；packed fresh-install smoke 验证发布闭包。外部 API 验收使用 `examples/dayloom-tui/llm.toml` 完成 `init` 多轮 Dialogue → tool-backed Sync → UTF-8 Draft → CLI `--check` → 生产 LLM editor `--dry-run`，并确认 dry-run 不创建或发布 World。外部 API smoke 不作为普通 PR 的必跑测试，避免密钥、费用和供应商波动进入 hermetic CI。
 
 ---
 
