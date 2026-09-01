@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { materializeWorkspaceV1, type PublishedHeadV1 } from '@dayloom/cli';
+import { materializePublishedTreeV1, type PublishedHeadV1 } from './world.js';
 
 export async function materializeWorldViewV1(input: {
   archiveRoot: string;
@@ -7,6 +7,6 @@ export async function materializeWorldViewV1(input: {
   operationRoot: string;
 }): Promise<string> {
   const worldViewRoot = path.join(input.operationRoot, 'world-view');
-  await materializeWorkspaceV1({ worldRoot: input.archiveRoot, tree: input.head.tree, workspaceRoot: worldViewRoot });
+  await materializePublishedTreeV1({ worldRoot: input.archiveRoot, tree: input.head.tree, targetRoot: worldViewRoot });
   return worldViewRoot;
 }

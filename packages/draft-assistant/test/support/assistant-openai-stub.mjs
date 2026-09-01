@@ -3,6 +3,7 @@ import http from 'node:http';
 export function startAssistantOpenAiStub(options = {}) {
   const phases = [];
   let dialogueObserveCount = 0;
+  let syncThoughtCount = 0;
   let lastDecision = false;
   let sawRepairCarryover = false;
   return new Promise((resolve, reject) => {
@@ -17,9 +18,10 @@ export function startAssistantOpenAiStub(options = {}) {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const phase = classify(body);
         phases.push(phase);
+        const reply = options.reply ?? 'What should the central mystery conceal?';
         if (phase === 'dialogue-thought') {
           if (JSON.stringify(body.messages ?? []).includes('The candidate took away player agency.')) sawRepairCarryover = true;
-          return content(response, 'What should the central mystery conceal?');
+          return content(response, reply);
         }
         if (phase === 'dialogue-observe') {
           dialogueObserveCount += 1;
@@ -27,11 +29,16 @@ export function startAssistantOpenAiStub(options = {}) {
           lastDecision = reject;
           return content(response, reject
             ? '[REVIEW]\nThe candidate took away player agency. Repair it.\n\n[USER_REPLY]\n<none>\n\n[SHOULD_CONTINUE]\ntrue'
-            : '[REVIEW]\n<none>\n\n[USER_REPLY]\nWhat should the central mystery conceal?\n\n[SHOULD_CONTINUE]\nfalse');
+            : `[REVIEW]\n<none>\n\n[USER_REPLY]\n${reply}\n\n[SHOULD_CONTINUE]\nfalse`);
         }
-        if (phase === 'dialogue-final') return content(response, 'What should the central mystery conceal?');
+        if (phase === 'dialogue-final') return content(response, reply);
         if (phase === 'sync-thought') {
-          return tool(response, 'write-draft', 'mcp__draft__write_file', { path: 'intent.md', content: '# Initialization intent\nA quiet town with a central mystery.\n' });
+          syncThoughtCount += 1;
+          const transcript = JSON.stringify(body.messages ?? []);
+          const draftContent = typeof options.draftContent === 'function'
+            ? options.draftContent({ syncThoughtCount, transcript })
+            : options.draftContent ?? '# Initialization intent\nA quiet town with a central mystery.\n';
+          return tool(response, `write-draft-${syncThoughtCount}`, 'mcp__draft__write_file', { path: options.draftPath ?? 'intent.md', content: draftContent });
         }
         if (phase === 'sync-observe') { lastDecision = false; return content(response, '[REVIEW]\n<none>\n\n[SHOULD_CONTINUE]\nfalse'); }
         if (phase === 'check') return tool(response, `check-${phases.length}`, 'react_check_decision', { decision: lastDecision });

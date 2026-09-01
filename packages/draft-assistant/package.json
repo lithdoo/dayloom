@@ -17,7 +17,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/argv.test.js test/command.test.js test/authority.test.js test/prompts.test.js test/react.test.js test/run.test.js test/e2e.test.js",
+    "pretest": "npm run build -w @dayloom/archive-protocol && npm run build -w @dayloom/cli",
+    "test": "npm run build && node --test test/argv.test.js test/command.test.js test/authority.test.js test/prompts.test.js test/react.test.js test/run.test.js test/e2e.test.js test/semantic-e2e.test.js test/package-smoke.test.js",
     "prepack": "npm run build"
   },
   "files": [
@@ -27,8 +28,13 @@
     "package.json"
   ],
   "dependencies": {
-    "@dayloom/cli": "1.0.0-beta.1",
-    "@dayloom/draft": "1.0.0-beta.1"
+    "@dayloom/archive-protocol": "1.0.0-beta.1",
+    "@iarna/toml": "^2.2.5",
+    "@rustmcp/rust-mcp-filesystem": "0.4.3",
+    "promptpile": "0.1.0-beta.2",
+    "promptpile-mcp": "0.1.0-beta.3",
+    "promptpile-protocol": "0.1.0-beta.2",
+    "promptpile-react": "0.1.0-beta.7"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

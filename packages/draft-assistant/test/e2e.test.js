@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { executeCliV1 } from '@dayloom/cli';
-import { resolvePromptpileBoundariesV1, startFileRuntimeV1 } from '@dayloom/draft';
+import { executeCliV1 } from '../../cli/dist/index.js';
+import { resolvePromptpileBoundariesV1 } from '../dist/binaries.js';
+import { startFileRuntimeV1 } from '../dist/runtime.js';
 import { executeDraftAssistantV1 } from '../dist/run.js';
 import { capture, llmConfig, tempDir } from './support/helpers.mjs';
 import { startAssistantOpenAiStub } from './support/assistant-openai-stub.mjs';
@@ -59,12 +60,13 @@ test('real promptpile-react runs Dialogue then Draft Sync, persists only Dialogu
     ], { cwd: root, stdout: io.stdout, stderr: io.stderr });
     assert.equal(result.exitCode, 0, io.err());
     assert.equal(await readFile(draft, 'utf8'), '# Initialization intent\nA quiet town with a central mystery.\n');
-    assert.match(io.out(), /What should the central mystery conceal/);
+    assert.equal(io.out(), 'What should the central mystery conceal?\n');
     const second = await executeDraftAssistantV1([
       'init', '--draft', draft, '--conversation', conversation,
       '--llm-config', config, '--message', 'Keep the mystery understated.',
     ], { cwd: root, stdout: io.stdout, stderr: io.stderr });
     assert.equal(second.exitCode, 0, io.err());
+    assert.equal(io.out(), 'What should the central mystery conceal?\nWhat should the central mystery conceal?\n');
     const artifacts = await (await import('node:fs/promises')).readdir(conversation);
     assert.equal(artifacts.filter((name) => /user\.md$/.test(name)).length, 2);
     assert.equal(artifacts.filter((name) => /assistant\.md$/.test(name)).length, 2);

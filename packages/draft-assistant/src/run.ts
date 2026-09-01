@@ -2,18 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Writable } from 'node:stream';
-import type { CallerLlmConfigV1 } from '@dayloom/cli';
-import {
-  appendConversationUserV1,
-  readLlmConfigV1,
-  resolvePromptpileBoundariesV1,
-  startFileRuntimeV1,
-  writeDerivedReactConfigV1,
-  type FileRuntimeBindingV1,
-  type FileRuntimeV1,
-  type ProcessResultV1,
-  type PromptpileBoundariesV1,
-} from '@dayloom/draft';
+import { appendConversationUserV1 } from './conversation.js';
+import { readLlmConfigV1, writeDerivedReactConfigV1, type CallerLlmConfigV1 } from './config.js';
+import { resolvePromptpileBoundariesV1, type PromptpileBoundariesV1 } from './binaries.js';
+import { startFileRuntimeV1, type FileRuntimeBindingV1, type FileRuntimeV1 } from './runtime.js';
+import type { ProcessResultV1 } from './process.js';
 import { parseAssistantArgvV1, type AssistantCommandV1 } from './argv.js';
 import { resolveAssistantAuthorityV1 } from './authority.js';
 import { resolveAssistantCommandV1 } from './command.js';

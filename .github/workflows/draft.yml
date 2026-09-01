@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'packages/draft/**'
+      - 'packages/draft-assistant/**'
       - 'packages/cli/**'
       - 'packages/archive-protocol/**'
       - 'package.json'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'packages/draft/**'
+      - 'packages/draft-assistant/**'
       - 'packages/cli/**'
       - 'packages/archive-protocol/**'
       - 'package.json'
@@ -36,3 +38,4 @@ jobs:
       - run: npm run build -w @dayloom/archive-protocol
       - run: npm run build -w @dayloom/cli
       - run: npm test -w @dayloom/draft
+      - run: npm test -w @dayloom/draft-assistant
